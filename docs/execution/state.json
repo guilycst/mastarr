@@ -3346,7 +3346,7 @@
       "implementationCommit": "a4ad5a0fcfee724491513224f6b082a25be82e0a"
     },
     "W-04": {
-      "status": "changes_requested",
+      "status": "in_review",
       "owner": "/root",
       "baseSha": "4e5c46d503949a493067ae57d3395545a36021f8",
       "integratedSha": null,
@@ -3363,20 +3363,17 @@
         "Final W-04 handoff 704ec47524cef4108a3e947c0c0166f6894ed610 records review-decision and workflow slices, A-12/A-15/A-32/A-35/A-37/A-56 evidence, full offline guardrails and remaining F-05/G-01 gates.",
         "W-04 is in independent review from state checkpoint 704ec47524cef4108a3e947c0c0166f6894ed610; no integration decision is recorded until the reviewer clears both product paths.",
         "Independent W-04 round-one receipt 1b22197ff8fa81ec4d836c6ad113315ffabf4c9d integrated as a1f542a: R1 workflow deadline not bound to action_runs deadline_at, R2 rejection projection split across transactions, R3 AddStep trusts caller At; focused/race/vet and full offline guardrails pass, independent probes reproduce all three.",
-        "Correction round 1 dispatched from state checkpoint f4ebcea to /root/x05_implementer: fix review R1/R2/R3 in internal/workflows/ and internal/reviews/, add deadline-claim, rejection-recovery/crash-boundary, and trusted-clock AddStep regressions; product and handoff commits required, no state edits."
+        "Correction round 1 dispatched from state checkpoint f4ebcea to /root/x05_implementer: fix review R1/R2/R3 in internal/workflows/ and internal/reviews/, add deadline-claim, rejection-recovery/crash-boundary, and trusted-clock AddStep regressions; product and handoff commits required, no state edits.",
+        "Correction round one product 4a43bd68c281559c0cd80386415b05db4df9e19d and handoff c0b3824aa52c3e0001614417c71bf96002a6e2c3 complete from dispatch checkpoint e0b82fae28ee4419188562befa382d1917567ea6; R1/R2/R3 regressions and full offline guardrails pass, ready for independent correction review."
       ],
       "review": {
-        "status": "changes_requested",
-        "decision": "changes_requested",
+        "status": "pending",
+        "decision": "pending",
         "reviewer": "/root/x05_reviewer",
-        "commit": "1b22197ff8fa81ec4d836c6ad113315ffabf4c9d",
-        "findings": [
-          "R1 P1: linked workflow action_run has NULL deadline_at and remains due after workflow deadline without Sync.",
-          "R2 P1: rejection decision and blocked-step projection commit separately, leaving a crash window with workflow running and step queued.",
-          "R3 P2: AddStep trusts caller-supplied At and permits backdated append after actual deadline."
-        ],
-        "round": 1,
-        "integratedCommit": "a1f542a"
+        "commit": null,
+        "findings": [],
+        "round": 2,
+        "integratedCommit": null
       },
       "dispatch": {
         "assignedAt": "2026-09-16",
@@ -3405,10 +3402,10 @@
           "GOWORK=off go vet, go mod verify, generation/API/Vacuum, architecture/lint/planning/full guardrails",
           "Linux amd64/arm64 CGO-free builds"
         ],
-        "reviewPath": "docs/execution/handoffs/W-04-review-round1.md",
+        "reviewPath": "docs/execution/handoffs/W-04-review-round2.md",
         "handoffPath": "docs/execution/handoffs/W-04.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "correction_dispatched",
+        "status": "review_pending",
         "dependencyCommits": {
           "W-03-approved": "a4ad5a0fcfee724491513224f6b082a25be82e0a",
           "W-03-state-closure": "4e5c46d503949a493067ae57d3395545a36021f8"
@@ -3419,9 +3416,9 @@
         },
         "implementationCommit": "2821b5bf8926849423c93fa7e862fd38b83035bc",
         "handoffCommit": "704ec47524cef4108a3e947c0c0166f6894ed610",
-        "reviewSourceCommit": "2821b5bf8926849423c93fa7e862fd38b83035bc",
-        "reviewCommit": "1b22197ff8fa81ec4d836c6ad113315ffabf4c9d",
-        "reviewIntegrationCommit": "a1f542a",
+        "reviewSourceCommit": "4a43bd68c281559c0cd80386415b05db4df9e19d",
+        "reviewCommit": null,
+        "reviewIntegrationCommit": null,
         "previousAttempt": {
           "owner": "/root/x05_implementer",
           "status": "interrupted",
@@ -3489,18 +3486,21 @@
           "reason": "two bounded implementer attempts produced no workflow files; preserve the completed review slice and implement the minimum ordered composition directly",
           "status": "complete"
         },
-        "correctionStatus": "in_progress",
+        "correctionStatus": "review_pending",
         "correctionRound": 1,
         "correctionOwner": "/root/x05_implementer",
-        "correctionBaseSha": "f4ebcea",
-        "correctionDispatchCheckpoint": "f4ebcea",
-        "correctionReviewPath": "docs/execution/handoffs/W-04-review-round1.md",
+        "correctionBaseSha": "e0b82fae28ee4419188562befa382d1917567ea6",
+        "correctionDispatchCheckpoint": "e0b82fae28ee4419188562befa382d1917567ea6",
+        "correctionReviewPath": "docs/execution/handoffs/W-04-review-round2.md",
         "correctionHandoffPath": "docs/execution/handoffs/W-04-correction-round1.md",
         "correctionReviewer": "/root/x05_reviewer",
         "priorReviewCommit": "1b22197ff8fa81ec4d836c6ad113315ffabf4c9d",
         "priorReviewIntegrationCommit": "a1f542a",
-        "waitingOn": "/root/x05_implementer",
-        "waitingReason": "bounded correction implementation for R1/R2/R3"
+        "waitingOn": "/root/x05_reviewer",
+        "waitingReason": "independent review of correction round one",
+        "correctionImplementationCommit": "4a43bd68c281559c0cd80386415b05db4df9e19d",
+        "correctionHandoffCommit": "c0b3824aa52c3e0001614417c71bf96002a6e2c3",
+        "correctionReviewSourceCommit": "4a43bd68c281559c0cd80386415b05db4df9e19d"
       },
       "reviewHistory": [
         {
@@ -3511,6 +3511,14 @@
           "sourceCommit": "2821b5bf8926849423c93fa7e862fd38b83035bc",
           "receipt": "docs/execution/handoffs/W-04-review-round1.md",
           "integratedCommit": "a1f542a"
+        },
+        {
+          "round": 2,
+          "reviewer": "/root/x05_reviewer",
+          "commit": null,
+          "status": "review_pending",
+          "sourceCommit": "4a43bd68c281559c0cd80386415b05db4df9e19d",
+          "receipt": "docs/execution/handoffs/W-04-review-round2.md"
         }
       ]
     },
@@ -5457,7 +5465,7 @@
       ]
     }
   },
-  "nextAction": "W-04 correction round 1 is dispatched from f4ebcea to /root/x05_implementer. Await product and handoff SHAs fixing R1 action deadline fencing, R2 atomic rejection projection/recovery, and R3 trusted AddStep lifecycle time; then run independent review. Keep F-05 capability-blocked and G-01 Arr native writes blocked.",
+  "nextAction": "W-04 correction round 1 product 4a43bd68c281559c0cd80386415b05db4df9e19d and handoff c0b3824aa52c3e0001614417c71bf96002a6e2c3 are ready for independent review. Review against R1/R2/R3 and record an exact receipt before integration. Keep F-05 capability-blocked and G-01 Arr native writes blocked.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
