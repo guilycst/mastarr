@@ -1606,7 +1606,7 @@ func TestErroredDispatchPersistsReturnedPartialEffectsAndReconciles(t *testing.T
 	first := executionEffect("copy", "one.bin")
 	second := executionEffect("copy", "two.bin")
 	second.Ordinal = 1
-	second.Evidence = json.RawMessage(`{"approved_scope":"two.bin","digest":"sha256:synthetic"}`)
+	second.Evidence = json.RawMessage(`{"approved_scope":"two.bin","digest":"sha256:synthetic","_mastarr_execution_markers":["source_marker"]}`)
 	returned := first
 	returned.State = EffectApplied
 	returned.Evidence = json.RawMessage(`[` + `"handler_applied"` + `]`)
@@ -1653,7 +1653,7 @@ func TestErroredDispatchPersistsReturnedPartialEffectsAndReconciles(t *testing.T
 		t.Fatalf("omitted opaque evidence lost approved scope: %s (%v)", omittedEvidence["approved_scope"], err)
 	}
 	var markers []string
-	if err := json.Unmarshal(omittedEvidence["_mastarr_execution_markers"], &markers); err != nil || !equalStrings(markers, []string{"dispatch_result_unreported"}) {
+	if err := json.Unmarshal(omittedEvidence["_mastarr_execution_markers"], &markers); err != nil || !equalStrings(markers, []string{"source_marker", "dispatch_result_unreported"}) || strings.Count(string(effects[1].Evidence), `"_mastarr_execution_markers"`) != 1 {
 		t.Fatalf("omitted opaque evidence markers = %v (%v), want unreported marker", markers, err)
 	}
 	if !strings.Contains(string(effects[0].Evidence), "handler_applied") {
@@ -1683,6 +1683,7 @@ func TestErroredDispatchPersistsReturnedPartialEffectsAndReconciles(t *testing.T
 func TestExternalIDOnlyErroredDependencyForcesReconciliation(t *testing.T) {
 	journal, action := newMemoryAction("external-id-only-dispatch", domain.ActionFSCopy, domain.ActionQueued)
 	effect := executionEffect("copy", "payload.bin")
+	var reconcileExternalID string
 	handler := &scriptedHandler{
 		kind: domain.ActionFSCopy,
 		observeFn: func(_ context.Context, _ Action, _ int) (Observation, error) {
@@ -1691,7 +1692,8 @@ func TestExternalIDOnlyErroredDependencyForcesReconciliation(t *testing.T) {
 		dispatchFn: func(_ context.Context, _ Action, _ Attempt) (DispatchResult, error) {
 			return DispatchResult{ExternalID: "command-123"}, NewFailure(FailureDependency, errors.New("command status unavailable"))
 		},
-		reconcileFn: func(_ context.Context, _ Action, _ Attempt) (ReconcileResult, error) {
+		reconcileFn: func(_ context.Context, _ Action, attempt Attempt) (ReconcileResult, error) {
+			reconcileExternalID = attempt.ExternalID
 			applied := effect
 			applied.State = EffectApplied
 			applied.Evidence = json.RawMessage(`{"read_back":"command-123"}`)
@@ -1716,8 +1718,70 @@ func TestExternalIDOnlyErroredDependencyForcesReconciliation(t *testing.T) {
 	if len(secondRun.Results) != 1 || secondRun.Results[0].State != domain.ActionSucceeded || secondRun.Results[0].Outcome != domain.OutcomeApplied {
 		t.Fatalf("external-ID-only reconciliation result = %+v, want success", secondRun.Results)
 	}
+	if reconcileExternalID != "command-123" {
+		t.Fatalf("reconciliation external ID = %q, want command-123", reconcileExternalID)
+	}
 	if handler.dispatchCalls() != 1 || handler.reconcileCalls() != 1 {
 		t.Fatalf("external-ID-only calls = dispatch %d reconcile %d, want one dispatch and one reconciliation", handler.dispatchCalls(), handler.reconcileCalls())
+	}
+}
+
+func TestReadBackFailureRetainsDispatchExternalIDForReconciliation(t *testing.T) {
+	journal, action := newMemoryAction("external-id-read-back-failure", domain.ActionFSCopy, domain.ActionQueued)
+	effect := executionEffect("copy", "payload.bin")
+	var reconcileExternalID string
+	handler := &scriptedHandler{
+		kind: domain.ActionFSCopy,
+		observeFn: func(_ context.Context, _ Action, call int) (Observation, error) {
+			if call == 1 {
+				return Observation{State: ObserveNeedsAction, Effects: []Effect{effect}}, nil
+			}
+			return Observation{}, NewFailure(FailureDependency, errors.New("read-back unavailable"))
+		},
+		dispatchFn: func(_ context.Context, _ Action, _ Attempt) (DispatchResult, error) {
+			return DispatchResult{Accepted: true, Outcome: domain.OutcomeApplied, ExternalID: "read-back-command-123"}, nil
+		},
+		reconcileFn: func(_ context.Context, _ Action, attempt Attempt) (ReconcileResult, error) {
+			reconcileExternalID = attempt.ExternalID
+			applied := effect
+			applied.State = EffectApplied
+			return ReconcileResult{Outcome: domain.OutcomeApplied, Effects: []Effect{applied}}, nil
+		},
+	}
+
+	first := mustRunOnce(t, newTestExecutor(t, journal, handler, executionClock()))
+	if len(first.Results) != 1 || first.Results[0].State != domain.ActionReconciling || !first.Results[0].Dispatched {
+		t.Fatalf("read-back failure result = %+v, want dispatched reconciliation", first.Results)
+	}
+	attempts := mustAttempts(t, journal, action.ID)
+	if len(attempts) != 2 || attempts[1].ExternalID != "read-back-command-123" {
+		t.Fatalf("read-back failure attempts = %+v, want retained command identity", attempts)
+	}
+
+	second := mustRunOnce(t, newTestExecutor(t, journal, handler, func() time.Time { return executionTime().Add(10 * time.Second) }))
+	if len(second.Results) != 1 || second.Results[0].State != domain.ActionSucceeded || second.Results[0].Outcome != domain.OutcomeApplied {
+		t.Fatalf("read-back failure reconciliation = %+v, want applied success", second.Results)
+	}
+	if reconcileExternalID != "read-back-command-123" {
+		t.Fatalf("read-back failure reconciliation identity = %q, want read-back-command-123", reconcileExternalID)
+	}
+	if handler.dispatchCalls() != 1 || handler.reconcileCalls() != 1 {
+		t.Fatalf("read-back failure calls = dispatch %d reconcile %d, want one dispatch and one reconciliation", handler.dispatchCalls(), handler.reconcileCalls())
+	}
+}
+
+func TestLatestDispatchExternalIDUsesCurrentDispatchAttempt(t *testing.T) {
+	if got := latestDispatchExternalID([]Attempt{
+		{AttemptNumber: 2, Phase: AttemptDispatch, ExternalID: "old-command"},
+		{AttemptNumber: 3, Phase: AttemptDispatch},
+	}); got != "" {
+		t.Fatalf("latest dispatch external ID after an empty current attempt = %q, want empty", got)
+	}
+	if got := latestDispatchExternalID([]Attempt{
+		{AttemptNumber: 2, Phase: AttemptDispatch, ExternalID: "old-command"},
+		{AttemptNumber: 3, Phase: AttemptDispatch, ExternalID: "current-command"},
+	}); got != "current-command" {
+		t.Fatalf("latest dispatch external ID = %q, want current-command", got)
 	}
 }
 
@@ -1944,6 +2008,92 @@ func TestSQLReadBackRejectsPartialEffectSet(t *testing.T) {
 	}
 }
 
+func TestSQLExternalIDSurvivesRestartIntoReconciliation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sql-external-id-restart.sqlite")
+	store, journal, action := newSQLExecutionFixtureAtPath(t, path, "sql-external-id-restart")
+	effect := executionEffect("copy", "payload.bin")
+	var reconcileExternalID string
+	handler := &scriptedHandler{
+		kind: domain.ActionFSCopy,
+		observeFn: func(_ context.Context, _ Action, _ int) (Observation, error) {
+			return Observation{State: ObserveNeedsAction, Effects: []Effect{effect}}, nil
+		},
+		dispatchFn: func(_ context.Context, _ Action, _ Attempt) (DispatchResult, error) {
+			return DispatchResult{ExternalID: "sql-command-123"}, NewFailure(FailureDependency, errors.New("command status unavailable"))
+		},
+		reconcileFn: func(_ context.Context, _ Action, attempt Attempt) (ReconcileResult, error) {
+			reconcileExternalID = attempt.ExternalID
+			applied := effect
+			applied.State = EffectApplied
+			applied.Evidence = json.RawMessage(`{"read_back":"sql-command-123"}`)
+			return ReconcileResult{Outcome: domain.OutcomeApplied, Effects: []Effect{applied}}, nil
+		},
+	}
+	firstExecutor, err := New(journal, Options{WorkerID: "sql-external-id-worker", Now: executionClock(), LeaseDuration: time.Minute})
+	if err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	if err := firstExecutor.RegisterHandler(handler); err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	first := firstExecutor.RunAction(context.Background(), action.ID)
+	if first.State != domain.ActionReconciling {
+		store.Close()
+		t.Fatalf("SQL external-ID first result = %+v, want reconciling", first)
+	}
+	attempts, err := journal.ListAttempts(context.Background(), action.ID)
+	if err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	if len(attempts) != 2 || attempts[1].ExternalID != "sql-command-123" {
+		store.Close()
+		t.Fatalf("SQL external-ID dispatch attempts = %+v, want durable command ID", attempts)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := storage.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	reopenedJournal, err := NewSQLJournal(reopened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := New(reopenedJournal, Options{WorkerID: "sql-external-id-restart", Now: func() time.Time { return executionTime().Add(10 * time.Second) }, LeaseDuration: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.RegisterHandler(handler); err != nil {
+		t.Fatal(err)
+	}
+	second, err := restarted.RunOnce(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Considered != 1 || len(second.Results) != 1 || second.Results[0].State != domain.ActionSucceeded || second.Results[0].Outcome != domain.OutcomeApplied {
+		t.Fatalf("SQL external-ID restart result = %+v, want reconciled success", second)
+	}
+	if reconcileExternalID != "sql-command-123" {
+		t.Fatalf("SQL external-ID reconciliation identity = %q, want sql-command-123", reconcileExternalID)
+	}
+	if handler.dispatchCalls() != 1 || handler.reconcileCalls() != 1 {
+		t.Fatalf("SQL external-ID calls = dispatch %d reconcile %d, want one dispatch and one reconciliation", handler.dispatchCalls(), handler.reconcileCalls())
+	}
+	attempts, err = reopenedJournal.ListAttempts(context.Background(), action.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != 3 || attempts[2].Phase != AttemptReconcile || attempts[2].ExternalID != "sql-command-123" {
+		t.Fatalf("SQL external-ID restart attempts = %+v, want reconciler command ID", attempts)
+	}
+}
+
 func TestSQLReconciliationRejectsChangedEffectIdentity(t *testing.T) {
 	store, journal, action := newSQLExecutionFixture(t, "sql-reconcile-drift")
 	defer store.Close()
@@ -2005,6 +2155,11 @@ func executionTime() time.Time {
 func newSQLExecutionFixture(t *testing.T, actionID string) (*storage.Store, *SQLJournal, Action) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), actionID+".sqlite")
+	return newSQLExecutionFixtureAtPath(t, path, actionID)
+}
+
+func newSQLExecutionFixtureAtPath(t *testing.T, path, actionID string) (*storage.Store, *SQLJournal, Action) {
+	t.Helper()
 	store, err := storage.Open(path)
 	if err != nil {
 		t.Fatal(err)

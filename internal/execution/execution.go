@@ -1709,13 +1709,13 @@ func (executor *Executor) processObserved(ctx context.Context, action Action, ha
 		return executor.finishDispatchError(ctx, result, dispatchAttempt, dispatchResult, dispatchErr)
 	}
 	if err := dispatchResult.validate(action.ID); err != nil {
-		return executor.finishDispatchError(ctx, result, dispatchAttempt, DispatchResult{}, NewDispatchedFailure(FailureUncertain, err))
+		return executor.finishDispatchError(ctx, result, dispatchAttempt, dispatchResultIdentity(dispatchResult), NewDispatchedFailure(FailureUncertain, err))
 	}
 	// A returned success is only an input to the final read-back. The handler
 	// must prove the desired state through its read-only Observe implementation.
 	readBack, readErr := handler.Observe(dispatchCtx, action)
 	if readErr != nil {
-		return executor.finishDispatchError(ctx, result, dispatchAttempt, DispatchResult{}, NewDispatchedFailure(FailureUncertain, readErr))
+		return executor.finishDispatchError(ctx, result, dispatchAttempt, dispatchResultIdentity(dispatchResult), NewDispatchedFailure(FailureUncertain, readErr))
 	}
 	if err := readBack.validate(action.ID); err != nil || readBack.State != ObserveSatisfied || effectSetMismatch(observation.Effects, readBack.Effects, action.ID) {
 		if err == nil {
@@ -1725,10 +1725,10 @@ func (executor *Executor) processObserved(ctx context.Context, action Action, ha
 				err = errors.New("dispatch read-back did not prove desired state")
 			}
 		}
-		return executor.finishDispatchError(ctx, result, dispatchAttempt, DispatchResult{}, NewDispatchedFailure(FailureUncertain, err))
+		return executor.finishDispatchError(ctx, result, dispatchAttempt, dispatchResultIdentity(dispatchResult), NewDispatchedFailure(FailureUncertain, err))
 	}
 	if len(dispatchResult.Effects) > 0 && effectSetMismatch(observation.Effects, dispatchResult.Effects, action.ID) {
-		return executor.finishDispatchError(ctx, result, dispatchAttempt, DispatchResult{}, NewDispatchedFailure(FailureUncertain, errors.New("dispatch effects did not match the approved target set")))
+		return executor.finishDispatchError(ctx, result, dispatchAttempt, dispatchResultIdentity(dispatchResult), NewDispatchedFailure(FailureUncertain, errors.New("dispatch effects did not match the approved target set")))
 	}
 	finished := finishAttempt(dispatchAttempt, domain.AttemptSucceeded, CertaintyKnown, nil, executor.options)
 	finished.ExternalID = dispatchResult.ExternalID
@@ -2341,7 +2341,13 @@ func (executor *Executor) finishDispatchError(ctx context.Context, result Result
 		finished.OutcomeCertainty = CertaintyUncertain
 		finished.ErrorCode = string(FailureUncertain)
 		finished.ErrorDetail = safeDetail(dispatchErr)
-		finished.ExternalID = dispatchResult.ExternalID
+		// A later failure can be reported with an empty DispatchResult (for
+		// example, a read-back timeout after the upstream accepted the command).
+		// Preserve an already-known command identity so reconciliation can still
+		// correlate the uncertain operation after a restart.
+		if strings.TrimSpace(dispatchResult.ExternalID) != "" {
+			finished.ExternalID = dispatchResult.ExternalID
+		}
 		finished.Evidence = evidenceJSON(dispatchErrorEvidence(dispatchResult))
 		if _, err := executor.updateAttemptOwned(ctx, result.Action, finished); err != nil {
 			result.Err = err
@@ -2391,6 +2397,10 @@ func (executor *Executor) finishDispatchError(ctx context.Context, result Result
 
 func dispatchResultHasEvidence(result DispatchResult) bool {
 	return strings.TrimSpace(result.ExternalID) != "" || result.Accepted || result.Outcome.Valid() || len(result.Evidence) > 0 || len(result.Effects) > 0
+}
+
+func dispatchResultIdentity(result DispatchResult) DispatchResult {
+	return DispatchResult{ExternalID: result.ExternalID}
 }
 
 func dispatchErrorEvidence(result DispatchResult) []string {
@@ -2505,10 +2515,18 @@ func (executor *Executor) newAttempt(ctx context.Context, action Action, phase A
 }
 
 func (executor *Executor) newAttemptOwned(ctx context.Context, action Action, phase AttemptPhase, certainty OutcomeCertainty) (Attempt, error) {
+	return executor.newAttemptOwnedWithExternalID(ctx, action, phase, certainty, "")
+}
+
+func (executor *Executor) newAttemptOwnedWithExternalID(ctx context.Context, action Action, phase AttemptPhase, certainty OutcomeCertainty, externalID string) (Attempt, error) {
 	var created Attempt
 	err := executor.withClaimedTransaction(ctx, action, func(transactionCtx context.Context, journal Journal) error {
 		attempt, err := executor.nextAttemptInJournal(transactionCtx, journal, action, phase, certainty)
 		if err != nil {
+			return err
+		}
+		attempt.ExternalID = externalID
+		if err := attempt.validate(); err != nil {
 			return err
 		}
 		created, err = journal.CreateAttempt(transactionCtx, attempt)
@@ -2523,11 +2541,24 @@ func (executor *Executor) newAttemptOwned(ctx context.Context, action Action, ph
 	return created, nil
 }
 
+func (executor *Executor) newAttemptWithExternalID(ctx context.Context, action Action, phase AttemptPhase, certainty OutcomeCertainty, externalID string) (Attempt, error) {
+	attempt, err := executor.nextAttempt(ctx, action, phase, certainty)
+	if err != nil {
+		return Attempt{}, err
+	}
+	attempt.ExternalID = externalID
+	if err := attempt.validate(); err != nil {
+		return Attempt{}, err
+	}
+	return executor.journal.CreateAttempt(ctx, attempt)
+}
+
 func (executor *Executor) reconciliationAttempt(ctx context.Context, action Action) (Attempt, error) {
 	attempts, err := executor.journal.ListAttempts(ctx, action.ID)
 	if err != nil {
 		return Attempt{}, err
 	}
+	externalID := latestDispatchExternalID(attempts)
 	if len(attempts) > 0 {
 		latest := attempts[len(attempts)-1]
 		for _, candidate := range attempts {
@@ -2536,10 +2567,10 @@ func (executor *Executor) reconciliationAttempt(ctx context.Context, action Acti
 			}
 		}
 		if latest.Phase == AttemptReconcile && latest.State == domain.AttemptReconciling {
-			return latest, nil
+			return executor.bindReconciliationExternalID(ctx, action, latest, externalID, false)
 		}
 	}
-	return executor.newAttempt(ctx, action, AttemptReconcile, CertaintyUncertain)
+	return executor.newAttemptWithExternalID(ctx, action, AttemptReconcile, CertaintyUncertain, externalID)
 }
 
 func (executor *Executor) reconciliationAttemptOwned(ctx context.Context, action Action) (Attempt, error) {
@@ -2547,12 +2578,45 @@ func (executor *Executor) reconciliationAttemptOwned(ctx context.Context, action
 	if err != nil {
 		return Attempt{}, err
 	}
+	externalID := latestDispatchExternalID(attempts)
 	for _, candidate := range attempts {
 		if candidate.Phase == AttemptReconcile && candidate.State == domain.AttemptReconciling {
-			return candidate, nil
+			return executor.bindReconciliationExternalID(ctx, action, candidate, externalID, true)
 		}
 	}
-	return executor.newAttemptOwned(ctx, action, AttemptReconcile, CertaintyUncertain)
+	return executor.newAttemptOwnedWithExternalID(ctx, action, AttemptReconcile, CertaintyUncertain, externalID)
+}
+
+func latestDispatchExternalID(attempts []Attempt) string {
+	var latest Attempt
+	found := false
+	for _, attempt := range attempts {
+		if attempt.Phase != AttemptDispatch {
+			continue
+		}
+		if !found || attempt.AttemptNumber > latest.AttemptNumber {
+			latest = attempt
+			found = true
+		}
+	}
+	if !found {
+		return ""
+	}
+	return latest.ExternalID
+}
+
+func (executor *Executor) bindReconciliationExternalID(ctx context.Context, action Action, attempt Attempt, externalID string, claimed bool) (Attempt, error) {
+	if strings.TrimSpace(externalID) == "" || attempt.ExternalID == externalID {
+		return attempt, nil
+	}
+	if strings.TrimSpace(attempt.ExternalID) != "" {
+		return Attempt{}, fmt.Errorf("%w: reconciliation external ID conflicts with dispatch identity", ErrInvalidJournal)
+	}
+	attempt.ExternalID = externalID
+	if claimed {
+		return executor.updateAttemptOwned(ctx, action, attempt)
+	}
+	return executor.journal.UpdateAttempt(ctx, attempt)
 }
 
 func (executor *Executor) updateAttemptOwned(ctx context.Context, action Action, attempt Attempt) (Attempt, error) {
@@ -2869,24 +2933,14 @@ func appendEvidence(raw json.RawMessage, values ...string) json.RawMessage {
 	if len(trimmed) > 0 && trimmed[0] == '[' && json.Unmarshal(trimmed, &existing) == nil {
 		return evidenceJSON(append(existing, values...))
 	}
-	// Effect evidence is intentionally opaque. Preserve an object byte-for-byte
+	// Effect evidence is intentionally opaque. Preserve an object's fields
 	// while adding a namespaced execution marker, rather than replacing the
-	// handler's fields with the executor's string-list envelope.
+	// handler's fields with the executor's string-list envelope. If the marker
+	// field already exists, merge it through the decoded object so repeated
+	// annotations cannot emit duplicate JSON keys.
 	if len(trimmed) >= 2 && trimmed[0] == '{' && trimmed[len(trimmed)-1] == '}' && json.Valid(trimmed) {
-		marker, err := json.Marshal(values)
-		if err == nil {
-			body := bytes.TrimSpace(trimmed[1 : len(trimmed)-1])
-			field := append([]byte(`"_mastarr_execution_markers":`), marker...)
-			if len(body) == 0 {
-				return append(append(json.RawMessage{'{'}, field...), '}')
-			}
-			result := make([]byte, 0, len(trimmed)+len(field)+1)
-			result = append(result, '{')
-			result = append(result, body...)
-			result = append(result, ',')
-			result = append(result, field...)
-			result = append(result, '}')
-			return json.RawMessage(result)
+		if result, ok := mergeObjectEvidenceMarkers(trimmed, values); ok {
+			return result
 		}
 	}
 	// Non-object valid evidence still needs to survive annotation. Keep its
@@ -2904,6 +2958,44 @@ func appendEvidence(raw json.RawMessage, values ...string) json.RawMessage {
 		}
 	}
 	return evidenceJSON(values)
+}
+
+func mergeObjectEvidenceMarkers(raw json.RawMessage, values []string) (json.RawMessage, bool) {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
+		return nil, false
+	}
+	markers := make([]string, 0, len(values))
+	if existing, ok := object["_mastarr_execution_markers"]; ok {
+		if err := json.Unmarshal(existing, &markers); err != nil {
+			return nil, false
+		}
+	}
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		seen := false
+		for _, marker := range markers {
+			if marker == value {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			markers = append(markers, value)
+		}
+	}
+	encoded, err := json.Marshal(markers)
+	if err != nil {
+		return nil, false
+	}
+	object["_mastarr_execution_markers"] = encoded
+	encoded, err = json.Marshal(object)
+	if err != nil {
+		return nil, false
+	}
+	return json.RawMessage(encoded), true
 }
 
 func (executor *Executor) recordEffectsFor(ctx context.Context, action Action, attempt Attempt, reported []Effect, defaultState EffectState, claimed bool) error {
