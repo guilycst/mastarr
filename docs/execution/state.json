@@ -15,7 +15,9 @@
   "resumeDocument": "docs/execution/RESUME.md",
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
-  "activeImplementationTasks": [],
+  "activeImplementationTasks": [
+    "X-09"
+  ],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
   "guardrailBaseline": {
@@ -2408,12 +2410,43 @@
       "review": null
     },
     "X-09": {
-      "status": "planned",
-      "owner": null,
-      "baseSha": null,
+      "status": "in_progress",
+      "owner": "/root/x05_implementer",
+      "baseSha": "19f38fc617468db414a77f3652ecc0fce7907395",
       "integratedSha": null,
-      "evidence": [],
-      "review": null
+      "evidence": [
+        "dispatched after X-05 approval; owns only internal/adapters/jellyfin/write/ and its synthetic fixtures and handoff.",
+        "Implement the root Jellyfin refresh adapter over the published standalone client. Keep refresh acceptance separate from later library visibility, preserve the frozen refresh port, and leave item refresh unsupported unless the client contract and tested scope support it.",
+        "No Seerr writes, live services, credentials, local replace directives or go.work dependencies. Root adapters translate client DTOs and typed errors without leaking generated upstream types."
+      ],
+      "review": null,
+      "dispatch": {
+        "assignedAt": "2026-09-16",
+        "model": "gpt-5.6-luna",
+        "reasoning": "max",
+        "role": "implementer",
+        "baseSha": "19f38fc617468db414a77f3652ecc0fce7907395",
+        "ownedPaths": [
+          "internal/adapters/jellyfin/write/",
+          "docs/execution/handoffs/X-09.md"
+        ],
+        "checkout": "shared main",
+        "expectedChecks": [
+          "A-33",
+          "A-55",
+          "root adapter maps standalone Jellyfin refresh result and typed errors into frozen Mastarr ports",
+          "accepted refresh is distinct from eventual library visibility",
+          "explicit scope validation and idempotent already-accepted behavior",
+          "synthetic httptest fixtures, no Seerr writes and no generated DTO leakage",
+          "GOWORK=off root and nested Jellyfin tests/race/vet/mod verify",
+          "generation, API/Vacuum, architecture, planning, lint and fast guardrails",
+          "Linux amd64/arm64 CGO-free compile"
+        ],
+        "reviewPath": "docs/execution/handoffs/X-09-review-round1.md",
+        "handoffPath": "docs/execution/handoffs/X-09.md",
+        "nextReviewer": "/root/x05_reviewer",
+        "status": "implementation"
+      }
     },
     "W-01": {
       "status": "done",
@@ -4274,7 +4307,8 @@
         "923e31bbc22aac9782a9d72ca0d59cb8d857f1b8 and ba56aaf0f7b2aafc15923c2c92765f89f42a0007 product commits plus afabf91e3cedca9e4f594578a209de3116869493 handoff isolate provider namespaces, make context errors request-local, preserve metadata presence and contradictions, and retain the bounded transport-ownership blocker with all local checks passing.",
         "c55d73bacb004a4a8238342a019e4b42b01151b4 independent round-two review closes foreign-namespace, context, metadata and bounded-transport findings but reproduces a P1 where contradictory same-namespace primary and alias IDs collapse to nonmatch and can trigger a duplicate POST.",
         "8e4c722eae49051eabc4572f8ba7fb1176445f0f product and ac4370b4a6b434010a7fda67ffe834115c9c567e handoff add tri-state provider matching for Radarr TMDB, Sonarr TVDB and IMDb, reject contradictions before capability/payload dispatch, preserve valid aliases, and retain the documented partial transport blocker.",
-        "fe6c1e62f053ace5b42109a8cabec763c79fac83 independent round-three approval accepts the explicitly partial X-20 scope after provider contradiction, context, metadata and boundary checks; root metadata/history/mutation transport remains blocked pending standalone contract extensions."
+        "fe6c1e62f053ace5b42109a8cabec763c79fac83 independent round-three approval accepts the explicitly partial X-20 scope after provider contradiction, context, metadata and boundary checks; root metadata/history/mutation transport remains blocked pending standalone contract extensions.",
+        "19f38fc617468db414a77f3652ecc0fce7907395 records and pushes the approved partial X-20 checkpoint; no feature files changed in that state commit."
       ],
       "review": {
         "status": "approved",
@@ -4625,7 +4659,7 @@
       ]
     }
   },
-  "nextAction": "X-20 partial migration is review-approved at 8e4c722eae49051eabc4572f8ba7fb1176445f0f, with the standalone-client transport blocker recorded. Dispatch the next dependency-ready lane; keep G-01 open.",
+  "nextAction": "X-09 Jellyfin refresh adapter is dispatched from 19f38fc617468db414a77f3652ecc0fce7907395 to /root/x05_implementer; review the exact product and handoff before integration. X-20 transport and G-01 remain open.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
