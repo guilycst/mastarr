@@ -956,7 +956,8 @@
       "evidence": [
         "dispatched after D-03 and X-09 approvals; owns only internal/backup/, docs/operations/backup-restore.md and its handoff.",
         "Create consistent SQLite, encryption-key, retained-descriptor and trash backup/restore instructions plus an isolated restore check. Do not perform live migration or downgrade, and fail closed on incomplete backups.",
-        "Use synthetic temporary instances and fixture bytes only. Preserve encrypted-key requirements, descriptor/trash retention, startup validation and uncertainty/idempotency evidence; no credentials, private coordinates or live media."
+        "Use synthetic temporary instances and fixture bytes only. Preserve encrypted-key requirements, descriptor/trash retention, startup validation and uncertainty/idempotency evidence; no credentials, private coordinates or live media.",
+        "9b682b56306d450d582e4ec23f6f8e5e1df37243 D-04 product adds versioned SQLite/key/descriptor/trash backup, strict manifest verification and isolated restore checks; 0d8bccedf51cc25490167cb5692374807f2fc90c records the handoff."
       ],
       "review": null,
       "dispatch": {
@@ -985,7 +986,10 @@
         "reviewPath": "docs/execution/handoffs/D-04-review-round1.md",
         "handoffPath": "docs/execution/handoffs/D-04.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "implementation"
+        "status": "review_pending",
+        "implementationCommit": "9b682b56306d450d582e4ec23f6f8e5e1df37243",
+        "handoffCommit": "0d8bccedf51cc25490167cb5692374807f2fc90c",
+        "reviewSourceCommit": "9b682b56306d450d582e4ec23f6f8e5e1df37243"
       }
     },
     "F-01": {
@@ -4749,7 +4753,7 @@
       ]
     }
   },
-  "nextAction": "D-04 backup/restore procedure is dispatched from 2e298aa2a2a81e0a80e773a864dcb704ec549448 to /root/x05_implementer; review its exact product and handoff before integration. X-08 is queued for a later implementer. X-20 transport and G-01 remain open.",
+  "nextAction": "D-04 product 9b682b56306d450d582e4ec23f6f8e5e1df37243 and handoff 0d8bccedf51cc25490167cb5692374807f2fc90c are ready for independent review. X-08 is queued for a later implementer. X-20 transport and G-01 remain open.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
