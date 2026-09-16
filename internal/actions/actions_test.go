@@ -13,6 +13,7 @@ import (
 	"github.com/guilycst/mastarr/internal/domain"
 	"github.com/guilycst/mastarr/internal/execution"
 	"github.com/guilycst/mastarr/internal/filesystem/organize"
+	"github.com/guilycst/mastarr/internal/filesystem/placement"
 	"github.com/guilycst/mastarr/internal/ports"
 )
 
@@ -403,6 +404,7 @@ func TestTrashPreservesExplicitCustomRetention(t *testing.T) {
 type fakeDownloadControl struct {
 	mu                 sync.Mutex
 	observation        ports.DownloadObservation
+	observeCalls       int
 	stopCalls          int
 	removeCalls        int
 	relocateCalls      int
@@ -413,9 +415,13 @@ type fakeDownloadControl struct {
 	renameFolderEffect ports.ClientEffect
 }
 
-func (fake *fakeDownloadControl) Observe(context.Context, ports.DownloadRef) (ports.DownloadObservation, error) {
+func (fake *fakeDownloadControl) Observe(_ context.Context, ref ports.DownloadRef) (ports.DownloadObservation, error) {
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
+	fake.observeCalls++
+	if fake.observation.Ref != ref {
+		return ports.DownloadObservation{}, errors.New("unexpected download reference")
+	}
 	return fake.observation, nil
 }
 
@@ -503,7 +509,7 @@ func TestNativeMoveUsesLinkedClientAndNeverFilesystemMove(t *testing.T) {
 
 func TestNativeRenameSelectsExactFileOperation(t *testing.T) {
 	source := manifest("download", "incoming/movie.mkv", strings.Repeat("a", 64), "inode-1")
-	mapping := ports.FileMap{Source: source, Destination: domain.FileTarget{RootID: "library", RelativePath: "incoming/renamed.mkv"}}
+	mapping := ports.FileMap{Source: source, Destination: domain.FileTarget{RootID: "download", RelativePath: "incoming/renamed.mkv"}}
 	read := &fakeFilesystemRead{
 		entries: map[string]ports.FilesystemObservation{targetID(sourceTarget(mapping)): {Entry: source, ObservedAt: actionTestNow}},
 		missing: map[string]bool{targetID(mapping.Destination): true},
@@ -525,6 +531,181 @@ func TestNativeRenameSelectsExactFileOperation(t *testing.T) {
 	if client.renameFileCalls != 1 || client.renameFolderCalls != 0 || filesystem.moveCalls != 0 {
 		t.Fatalf("native rename dispatch counts: file=%d folder=%d filesystem-move=%d", client.renameFileCalls, client.renameFolderCalls, filesystem.moveCalls)
 	}
+}
+
+func TestNativeRenameRejectsDifferentRootsBeforeNativeCall(t *testing.T) {
+	source := manifest("download", "incoming/movie.mkv", strings.Repeat("a", 64), "inode-1")
+	mapping := ports.FileMap{Source: source, Destination: domain.FileTarget{RootID: "library", RelativePath: "incoming/renamed.mkv"}}
+	read := &fakeFilesystemRead{
+		entries: map[string]ports.FilesystemObservation{targetID(sourceTarget(mapping)): {Entry: source, ObservedAt: actionTestNow}},
+		missing: map[string]bool{targetID(mapping.Destination): true},
+	}
+	filesystem := &fakeFilesystemAction{}
+	ref := ports.DownloadRef{ConnectionID: "qbit", ExternalID: "hash-1"}
+	client := &fakeDownloadControl{observation: ports.DownloadObservation{Ref: ref, State: "stoppedUP", ObservedAt: actionTestNow}}
+	handler, err := NewRenameHandler(FilesystemConfig{Read: read, Action: filesystem, Options: HandlerOptions{
+		Now: testOptions().Now, LinkedClient: &LinkedClient{Control: client, Ref: ref},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	action := testAction(t, domain.ActionFSRename, FileIntent{Executor: executorNativeClient, Files: []ports.FileMap{mapping}, LinkedDownload: &ref})
+	for repetition := 0; repetition < 10; repetition++ {
+		result, dispatchErr := handler.Dispatch(context.Background(), action, execution.Attempt{ID: "native-cross-root"})
+		if !errors.Is(dispatchErr, ErrInvalidIntent) || result.Accepted || client.observeCalls != 0 || client.renameFileCalls != 0 || client.renameFolderCalls != 0 {
+			t.Fatalf("cross-root native rename must reject before any client call (run %d): result=%#v err=%v observe=%d file=%d folder=%d", repetition, result, dispatchErr, client.observeCalls, client.renameFileCalls, client.renameFolderCalls)
+		}
+	}
+}
+
+func TestImportReconcilePreservesPartialEffectStatesAndDoesNotRetry(t *testing.T) {
+	requested := []ports.ImportFile{
+		{Source: domain.FileTarget{RootID: "download", RelativePath: "movie.mkv"}, MovieOrEpisodeID: "101"},
+		{Source: domain.FileTarget{RootID: "download", RelativePath: "movie.en.srt"}, MovieOrEpisodeID: "101", Subtitle: true},
+	}
+	read := &fakeArrRead{
+		preview:  ports.ImportPreview{Revision: "preview-1", Files: requested, ObservedAt: actionTestNow},
+		imported: ports.ImportObservation{ExternalID: "201", Files: []ports.MediaFile{{Path: requested[0].Source, ExternalID: "801", MovieID: "101"}}, ObservedAt: actionTestNow},
+	}
+	handler, err := NewImportHandler(ImportConfig{Read: read, Write: &fakeArrWrite{}, Options: testOptions()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	action := testAction(t, domain.ActionArrImport, ImportIntent{ConnectionID: testConnection(), RegisteredExternalID: "201", PreviewRevision: "preview-1", Transfer: "copy", Files: requested})
+	for repetition := 0; repetition < 10; repetition++ {
+		result, reconcileErr := handler.Reconcile(context.Background(), action, execution.Attempt{ID: "import-reconcile"})
+		if reconcileErr != nil || result.SafeToRetry || len(result.Effects) != 2 {
+			t.Fatalf("partial import must remain unresolved and non-retryable (run %d): result=%#v err=%v", repetition, result, reconcileErr)
+		}
+		if result.Effects[0].State != execution.EffectAlreadySatisfied || result.Effects[1].State != execution.EffectPending {
+			t.Fatalf("partial import effect states changed (run %d): %#v", repetition, result.Effects)
+		}
+	}
+}
+
+func TestFilesystemReconcilePreservesPartialEffectStatesAndDoesNotRetry(t *testing.T) {
+	first := manifest("download", "one.mkv", strings.Repeat("a", 64), "inode-1")
+	second := manifest("download", "two.mkv", strings.Repeat("b", 64), "inode-2")
+	mappings := []ports.FileMap{
+		{Source: first, Destination: domain.FileTarget{RootID: "library", RelativePath: "one.mkv"}},
+		{Source: second, Destination: domain.FileTarget{RootID: "library", RelativePath: "two.mkv"}},
+	}
+	read := &fakeFilesystemRead{
+		entries: map[string]ports.FilesystemObservation{
+			targetID(sourceTarget(mappings[0])): {Entry: first, ObservedAt: actionTestNow},
+			targetID(mappings[0].Destination):   {Entry: destinationManifest(mappings[0].Destination, first), ObservedAt: actionTestNow},
+			targetID(sourceTarget(mappings[1])): {Entry: second, ObservedAt: actionTestNow},
+		},
+		missing: map[string]bool{targetID(mappings[1].Destination): true},
+	}
+	handler, err := NewCopyHandler(FilesystemConfig{Read: read, Action: &fakeFilesystemAction{}, Options: testOptions()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	action := testAction(t, domain.ActionFSCopy, FileIntent{Files: mappings})
+	for repetition := 0; repetition < 10; repetition++ {
+		result, reconcileErr := handler.Reconcile(context.Background(), action, execution.Attempt{ID: "filesystem-reconcile"})
+		if reconcileErr != nil || result.SafeToRetry || len(result.Effects) != 2 {
+			t.Fatalf("partial filesystem operation must remain unresolved and non-retryable (run %d): result=%#v err=%v", repetition, result, reconcileErr)
+		}
+		if result.Effects[0].State != execution.EffectAlreadySatisfied || result.Effects[1].State != execution.EffectPending {
+			t.Fatalf("partial filesystem effect states changed (run %d): %#v", repetition, result.Effects)
+		}
+	}
+}
+
+func destinationManifest(destination domain.FileTarget, source domain.FileManifestEntry) domain.FileManifestEntry {
+	source.RootID = destination.RootID
+	source.RelativePath = destination.RelativePath
+	return source
+}
+
+func TestFilesystemDispatchPreservesAffectedEffectOnErrorAsDispatched(t *testing.T) {
+	source := manifest("download", "movie.mkv", strings.Repeat("a", 64), "inode-1")
+	mapping := ports.FileMap{Source: source, Destination: domain.FileTarget{RootID: "library", RelativePath: "movie.mkv"}}
+	read := &fakeFilesystemRead{
+		entries: map[string]ports.FilesystemObservation{targetID(sourceTarget(mapping)): {Entry: source, ObservedAt: actionTestNow}},
+		missing: map[string]bool{targetID(mapping.Destination): true},
+	}
+	actionPort := &fakeFilesystemAction{
+		copyEffect: ports.FilesystemEffect{Outcome: domain.OutcomeApplied, Affected: []domain.FileManifestEntry{source}, Evidence: []string{"first_file_published"}, ObservedAt: actionTestNow},
+		err:        placement.ErrSourceChanged,
+	}
+	handler, err := NewCopyHandler(FilesystemConfig{Read: read, Action: actionPort, Options: testOptions()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	action := testAction(t, domain.ActionFSCopy, FileIntent{Files: []ports.FileMap{mapping}})
+	for repetition := 0; repetition < 10; repetition++ {
+		result, dispatchErr := handler.Dispatch(context.Background(), action, execution.Attempt{ID: "partial-copy"})
+		var failure *execution.Failure
+		if !errors.As(dispatchErr, &failure) || !failure.Dispatched || len(result.Effects) != 1 || result.Effects[0].State != execution.EffectApplied {
+			t.Fatalf("affected filesystem result must remain dispatched/uncertain (run %d): result=%#v err=%v failure=%#v", repetition, result, dispatchErr, failure)
+		}
+		if !strings.Contains(string(result.Effects[0].Evidence), "filesystem_affected") || !strings.Contains(string(result.Effects[0].Evidence), "first_file_published") {
+			t.Fatalf("affected evidence was discarded (run %d): %s", repetition, result.Effects[0].Evidence)
+		}
+	}
+}
+
+func TestFilesystemLinkedClientResolvesActionReferenceAndSharesReservation(t *testing.T) {
+	source := manifest("download", "movie.mkv", strings.Repeat("a", 64), "inode-1")
+	mapping := ports.FileMap{Source: source, Destination: domain.FileTarget{RootID: "library", RelativePath: "movie.mkv"}}
+	refA := ports.DownloadRef{ConnectionID: "qbit", ExternalID: "hash-a"}
+	refB := ports.DownloadRef{ConnectionID: "qbit", ExternalID: "hash-b"}
+	clientA := &fakeDownloadControl{observation: ports.DownloadObservation{Ref: refA, State: "stoppedUP", ObservedAt: actionTestNow}}
+	clientB := &fakeDownloadControl{observation: ports.DownloadObservation{Ref: refB, State: "stoppedUP", ObservedAt: actionTestNow}}
+	resolverCalls := make([]ports.DownloadRef, 0, 2)
+	resolver := func(ref ports.DownloadRef) (ports.DownloadControlPort, error) {
+		resolverCalls = append(resolverCalls, ref)
+		switch ref {
+		case refA:
+			return clientA, nil
+		case refB:
+			return clientB, nil
+		default:
+			return nil, errors.New("unexpected reference")
+		}
+	}
+	read := &fakeFilesystemRead{
+		entries: map[string]ports.FilesystemObservation{targetID(sourceTarget(mapping)): {Entry: source, ObservedAt: actionTestNow}},
+		missing: map[string]bool{targetID(mapping.Destination): true},
+	}
+	handler, err := NewCopyHandler(FilesystemConfig{Read: read, Action: &fakeFilesystemAction{}, Options: HandlerOptions{
+		Now: testOptions().Now, LinkedClient: &LinkedClient{Resolve: resolver},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	action := testAction(t, domain.ActionFSCopy, FileIntent{Files: []ports.FileMap{mapping}, LinkedDownload: &refB})
+	if _, err := handler.Dispatch(context.Background(), action, execution.Attempt{ID: "linked-reference"}); err != nil {
+		t.Fatal(err)
+	}
+	if clientA.observeCalls != 0 || clientB.observeCalls == 0 || len(resolverCalls) == 0 {
+		t.Fatalf("linked action was not routed by immutable reference: resolver=%#v clientA=%d clientB=%d", resolverCalls, clientA.observeCalls, clientB.observeCalls)
+	}
+	reservations := handler.Reservations(action)
+	wantClientKey := "client:" + refID(refB)
+	if !containsString(reservations, wantClientKey) {
+		t.Fatalf("linked filesystem reservation missing shared client key %q: %#v", wantClientKey, reservations)
+	}
+	clientHandlers, err := NewClientHandlers(ClientConfig{Control: clientB, Capabilities: fakeCapabilityPort{values: []domain.Capability{testCapability(clientStopOperation, domain.CapabilitySupported)}}, Options: testOptions()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientAction := testAction(t, domain.ActionClientStop, ClientIntent{Ref: refB})
+	if !containsString(clientHandlers.Stop.Reservations(clientAction), wantClientKey) {
+		t.Fatalf("client action reservation does not share linked key %q: %#v", wantClientKey, clientHandlers.Stop.Reservations(clientAction))
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestNativeClientRejectsMultiMapBeforeAnyNativeOrFilesystemCall(t *testing.T) {

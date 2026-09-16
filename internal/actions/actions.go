@@ -78,6 +78,14 @@ func (options HandlerOptions) normalized() HandlerOptions {
 type LinkedClient struct {
 	Control ports.DownloadControlPort
 	Ref     ports.DownloadRef
+	// Resolve selects the normalized control port for the exact immutable
+	// reference carried by a filesystem intent. Implementations must return a
+	// port that observes and mutates only the supplied reference.
+	Resolve func(ports.DownloadRef) (ports.DownloadControlPort, error)
+	// Controls is a convenience for static multi-instance wiring. Keys are the
+	// canonical refID (connection ID plus external ID); an absent key is a
+	// dependency failure and never falls back to another client.
+	Controls map[string]ports.DownloadControlPort
 	// RequireStopped defaults to true. It is retained as a field so a future
 	// reviewed client action can express a different prerequisite explicitly.
 	RequireStopped bool
@@ -200,6 +208,14 @@ func NewHandlers(deps Dependencies, options HandlerOptions) ([]execution.Handler
 	}
 	if deps.Refresh == nil || deps.RefreshCapabilities == nil {
 		return nil, fmt.Errorf("%w: refresh and capability ports", ErrDependencyRequired)
+	}
+	// Filesystem actions carry their own immutable download reference. The
+	// normalized multi-instance control port is therefore selected by that
+	// reference, rather than by a handler-wide torrent/NZB binding. Preserve an
+	// explicitly configured resolver or per-reference map, while making the
+	// shared dependency available to the default wiring.
+	if options.LinkedClient == nil {
+		options.LinkedClient = &LinkedClient{Control: deps.DownloadControl}
 	}
 	registration, err := NewRegistrationHandler(RegistrationConfig{Read: deps.ArrRead, Write: deps.ArrWrite, Capabilities: deps.ArrCapabilities, Options: options})
 	if err != nil {
@@ -541,6 +557,59 @@ func sortedStrings(values []string) []string {
 	result := append([]string(nil), values...)
 	sort.Strings(result)
 	return result
+}
+
+func appendEffectEvidence(raw json.RawMessage, values ...string) json.RawMessage {
+	if len(values) == 0 {
+		return append(json.RawMessage(nil), raw...)
+	}
+	var existing []string
+	if len(raw) > 0 && json.Unmarshal(raw, &existing) == nil {
+		return evidenceJSON(append(existing, values...))
+	}
+	return evidenceJSON(values)
+}
+
+// cloneEffects keeps read-back evidence independent from a caller-owned
+// observation. Raw evidence is copied as well because handlers may be called
+// concurrently by separate executor workers.
+func cloneEffects(effects []execution.Effect) []execution.Effect {
+	result := make([]execution.Effect, len(effects))
+	for index, value := range effects {
+		result[index] = value
+		result[index].Evidence = append(json.RawMessage(nil), value.Evidence...)
+	}
+	return result
+}
+
+// effectsAreSafeToRetry is intentionally strict. A retry is safe only when
+// every exact approved target is still pending/absent. Any already-applied,
+// failed, cancelled or unknown target keeps reconciliation unresolved so the
+// executor cannot re-dispatch the original batch blindly.
+func effectsAreSafeToRetry(effects []execution.Effect) bool {
+	if len(effects) == 0 {
+		return false
+	}
+	for _, value := range effects {
+		if value.State != execution.EffectPending {
+			return false
+		}
+	}
+	return true
+}
+
+func reconcileNeedsAction(effects []execution.Effect, evidence []string, retryEvidence string) execution.ReconcileResult {
+	effects = cloneEffects(effects)
+	if effectsAreSafeToRetry(effects) {
+		return execution.ReconcileResult{SafeToRetry: true, Evidence: append(append([]string(nil), evidence...), retryEvidence), Effects: effects}
+	}
+	// ReconcileResult has no aggregate partial outcome. Keep per-target evidence
+	// intact and leave the action unresolved; the durable executor will preserve
+	// uncertainty instead of authorizing the original batch again.
+	return execution.ReconcileResult{
+		Evidence: append(append([]string(nil), evidence...), "partial_effects_require_reconciliation"),
+		Effects:  effects,
+	}
 }
 
 func pathForChild(parent, child string) (string, bool) {

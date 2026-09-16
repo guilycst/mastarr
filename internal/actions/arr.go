@@ -183,12 +183,9 @@ func (handler *RegistrationHandler) Reconcile(ctx context.Context, action execut
 	case execution.ObserveSatisfied:
 		return execution.ReconcileResult{Outcome: domain.OutcomeApplied, Evidence: append(observation.Evidence, "reconciled"), Effects: terminalEffects(observation.Effects, domain.OutcomeApplied, handler.now(), "reconciled")}, nil
 	case execution.ObserveNeedsAction:
-		for index := range observation.Effects {
-			observation.Effects[index].State = execution.EffectPending
-		}
-		return execution.ReconcileResult{SafeToRetry: true, Evidence: append(observation.Evidence, "safe_to_retry_before_registration"), Effects: observation.Effects}, nil
+		return reconcileNeedsAction(observation.Effects, observation.Evidence, "safe_to_retry_before_registration"), nil
 	default:
-		return execution.ReconcileResult{Evidence: append(observation.Evidence, "registration_state_unknown"), Effects: unknownEffects(observation.Effects, handler.now())}, nil
+		return execution.ReconcileResult{Evidence: append(observation.Evidence, "registration_state_unknown"), Effects: cloneEffects(observation.Effects)}, nil
 	}
 }
 
@@ -394,12 +391,9 @@ func (handler *ImportHandler) Reconcile(ctx context.Context, action execution.Ac
 	case execution.ObserveSatisfied:
 		return execution.ReconcileResult{Outcome: domain.OutcomeApplied, Evidence: append(observation.Evidence, "import_reconciled"), Effects: terminalEffects(observation.Effects, domain.OutcomeApplied, handler.now(), "import_reconciled")}, nil
 	case execution.ObserveNeedsAction:
-		for index := range observation.Effects {
-			observation.Effects[index].State = execution.EffectPending
-		}
-		return execution.ReconcileResult{SafeToRetry: true, Evidence: append(observation.Evidence, "safe_to_retry_import"), Effects: observation.Effects}, nil
+		return reconcileNeedsAction(observation.Effects, observation.Evidence, "safe_to_retry_import"), nil
 	default:
-		return execution.ReconcileResult{Evidence: append(observation.Evidence, "import_state_unknown"), Effects: unknownEffects(observation.Effects, handler.now())}, nil
+		return execution.ReconcileResult{Evidence: append(observation.Evidence, "import_state_unknown"), Effects: cloneEffects(observation.Effects)}, nil
 	}
 }
 
@@ -737,28 +731,28 @@ func capabilityFor(ctx context.Context, port ports.CapabilityPort, connectionID 
 }
 
 func terminalEffects(effects []execution.Effect, outcome domain.EffectOutcome, observedAt time.Time, evidence string) []execution.Effect {
-	result := make([]execution.Effect, len(effects))
-	copy(result, effects)
+	result := cloneEffects(effects)
 	for index := range result {
 		// A partial action can contain targets already materialized by an
 		// earlier attempt. Preserve that read-proven state while terminalizing
 		// only pending targets reached by this dispatch.
-		if result[index].State != execution.EffectAlreadySatisfied || outcome == domain.OutcomeAlreadySatisfied {
+		if result[index].State == execution.EffectPending {
 			result[index].State = effectState(outcome)
 		}
 		result[index].ObservedAt = observedAt.UTC().Format(time.RFC3339Nano)
-		result[index].Evidence = evidenceJSON([]string{evidence})
+		result[index].Evidence = appendEffectEvidence(result[index].Evidence, evidence)
 	}
 	return result
 }
 
 func unknownEffects(effects []execution.Effect, observedAt time.Time) []execution.Effect {
-	result := make([]execution.Effect, len(effects))
-	copy(result, effects)
+	result := cloneEffects(effects)
 	for index := range result {
-		result[index].State = execution.EffectUnknown
+		if result[index].State == execution.EffectPending {
+			result[index].State = execution.EffectUnknown
+		}
 		result[index].ObservedAt = observedAt.UTC().Format(time.RFC3339Nano)
-		result[index].Evidence = evidenceJSON([]string{"read_back_unknown"})
+		result[index].Evidence = appendEffectEvidence(result[index].Evidence, "read_back_unknown")
 	}
 	return result
 }

@@ -129,7 +129,15 @@ func (handler *FilesystemHandler) Reservations(action execution.Action) []string
 	if err != nil {
 		return nil
 	}
-	keys := make([]string, 0, len(intent.Files)*2+len(intent.Manifest))
+	keys := make([]string, 0, len(intent.Files)*2+len(intent.Manifest)+1)
+	if intent.LinkedDownload != nil {
+		if err := validateRef(*intent.LinkedDownload); err == nil {
+			// Client stop/remove actions reserve the same identity. Keeping this
+			// key on linked filesystem actions serializes the prerequisite and
+			// prevents a concurrent client mutation from invalidating the plan.
+			keys = append(keys, "client:"+refID(*intent.LinkedDownload))
+		}
+	}
 	for _, mapping := range intent.Files {
 		keys = append(keys, "path:"+targetID(sourceTarget(mapping)), "path:"+targetID(mapping.Destination))
 	}
@@ -153,6 +161,12 @@ func (handler *FilesystemHandler) Observe(ctx context.Context, action execution.
 		return execution.Observation{}, err
 	}
 	if err := validateFileIntent(handler.kind, intent, handler.options.MaxFiles); err != nil {
+		return execution.Observation{}, err
+	}
+	if err := validateNativeClientScope(handler.kind, intent); err != nil {
+		// The native client can rename only within the source root and its
+		// containing directory. Keep this structural rejection ahead of the
+		// linked-client read so an invalid scope cannot trigger any native call.
 		return execution.Observation{}, err
 	}
 	if err := handler.checkLinkedClient(ctx, intent.LinkedDownload); err != nil {
@@ -195,6 +209,12 @@ func (handler *FilesystemHandler) Dispatch(ctx context.Context, action execution
 	if err := validateFileIntent(handler.kind, intent, handler.options.MaxFiles); err != nil {
 		return execution.DispatchResult{}, err
 	}
+	if err := validateNativeClientScope(handler.kind, intent); err != nil {
+		// Reject an unrepresentable native rename before even observing the
+		// linked client or filesystem. A qBittorrent basename operation can only
+		// address one path inside the source root and containing directory.
+		return execution.DispatchResult{}, err
+	}
 	observation, err := handler.Observe(ctx, action)
 	if err != nil {
 		return execution.DispatchResult{}, err
@@ -217,16 +237,20 @@ func (handler *FilesystemHandler) Dispatch(ctx context.Context, action execution
 	}
 	effect, err := handler.callAction(ctx, operationID, intent)
 	if err != nil {
-		return execution.DispatchResult{}, handler.failure(err, !isKnownPreDispatchFilesystemError(err))
+		// Filesystem ports may return an affected subset together with an error
+		// (for example, a later source-stability check can fail after earlier
+		// files were published). Preserve that subset as per-target evidence and
+		// classify the failure as dispatched/uncertain whenever the returned
+		// effect or error leaves any possibility of a mutation.
+		partial := filesystemDispatchResult(observation, intent, effect, handler.now(), false)
+		return partial, handler.failure(err, filesystemEffectMayHaveDispatched(effect, err))
 	}
 	outcome := effect.Outcome
 	if !outcome.Valid() {
-		return execution.DispatchResult{}, handler.failure(fmt.Errorf("%w: filesystem action returned an invalid effect outcome", ErrStateUnknown), true)
+		partial := filesystemDispatchResult(observation, intent, effect, handler.now(), false)
+		return partial, handler.failure(fmt.Errorf("%w: filesystem action returned an invalid effect outcome", ErrStateUnknown), true)
 	}
-	return execution.DispatchResult{
-		Accepted: true, Outcome: outcome, Evidence: append([]string{handler.operation + "_returned"}, effect.Evidence...),
-		Effects: terminalEffects(observation.Effects, outcome, handler.now(), "filesystem_read_back"),
-	}, nil
+	return filesystemDispatchResult(observation, intent, effect, handler.now(), true), nil
 }
 
 // Reconcile reads the exact target set. A retry is permitted only when the
@@ -240,34 +264,72 @@ func (handler *FilesystemHandler) Reconcile(ctx context.Context, action executio
 	case execution.ObserveSatisfied:
 		return execution.ReconcileResult{Outcome: domain.OutcomeApplied, Evidence: append(observation.Evidence, "filesystem_reconciled"), Effects: terminalEffects(observation.Effects, domain.OutcomeApplied, handler.now(), "filesystem_reconciled")}, nil
 	case execution.ObserveNeedsAction:
-		for index := range observation.Effects {
-			observation.Effects[index].State = execution.EffectPending
-		}
-		return execution.ReconcileResult{SafeToRetry: true, Evidence: append(observation.Evidence, "safe_to_retry_filesystem"), Effects: observation.Effects}, nil
+		return reconcileNeedsAction(observation.Effects, observation.Evidence, "safe_to_retry_filesystem"), nil
 	default:
-		return execution.ReconcileResult{Evidence: append(observation.Evidence, "filesystem_state_unknown"), Effects: unknownEffects(observation.Effects, handler.now())}, nil
+		return execution.ReconcileResult{Evidence: append(observation.Evidence, "filesystem_state_unknown"), Effects: cloneEffects(observation.Effects)}, nil
 	}
+}
+
+type linkedClientBinding struct {
+	control ports.DownloadControlPort
+	ref     ports.DownloadRef
+}
+
+func (handler *FilesystemHandler) resolveLinkedClient(reference *ports.DownloadRef) (linkedClientBinding, error) {
+	if reference == nil {
+		return linkedClientBinding{}, nil
+	}
+	if err := validateRef(*reference); err != nil {
+		return linkedClientBinding{}, err
+	}
+	linked := handler.options.LinkedClient
+	if linked == nil {
+		return linkedClientBinding{}, fmt.Errorf("%w: linked client is not configured", ErrDependencyRequired)
+	}
+	var (
+		control ports.DownloadControlPort
+		err     error
+	)
+	switch {
+	case linked.Resolve != nil:
+		control, err = linked.Resolve(*reference)
+	case linked.Controls != nil:
+		control = linked.Controls[refID(*reference)]
+		if control == nil {
+			err = fmt.Errorf("%w: linked client reference is not configured", ErrDependencyRequired)
+		}
+	case linked.Control != nil && (linked.Ref == (ports.DownloadRef{}) || linked.Ref == *reference):
+		// A normalized multi-instance control port may safely serve the exact
+		// reference supplied by the action. The legacy Ref field still fences
+		// single-client wiring when it is populated.
+		control = linked.Control
+	case linked.Control != nil:
+		err = fmt.Errorf("%w: linked client reference differs from approved action", ErrStateUnknown)
+	default:
+		err = fmt.Errorf("%w: linked client control is not configured", ErrDependencyRequired)
+	}
+	if err != nil {
+		return linkedClientBinding{}, err
+	}
+	if control == nil {
+		return linkedClientBinding{}, fmt.Errorf("%w: linked client resolver returned no control port", ErrDependencyRequired)
+	}
+	return linkedClientBinding{control: control, ref: *reference}, nil
 }
 
 func (handler *FilesystemHandler) checkLinkedClient(ctx context.Context, reference *ports.DownloadRef) error {
 	if reference == nil {
 		return nil
 	}
-	if handler.options.LinkedClient == nil || handler.options.LinkedClient.Control == nil {
-		return fmt.Errorf("%w: linked client is not configured", ErrDependencyRequired)
-	}
-	if err := validateRef(*reference); err != nil {
-		return err
-	}
-	linked := handler.options.LinkedClient
-	if linked.Ref != *reference {
-		return fmt.Errorf("%w: linked client reference differs from approved action", ErrStateUnknown)
-	}
-	observation, err := linked.Control.Observe(ctx, linked.Ref)
+	linked, err := handler.resolveLinkedClient(reference)
 	if err != nil {
 		return err
 	}
-	if observation.Ref != linked.Ref {
+	observation, err := linked.control.Observe(ctx, linked.ref)
+	if err != nil {
+		return err
+	}
+	if observation.Ref != linked.ref {
 		return fmt.Errorf("%w: linked client returned a different reference", ErrStateUnknown)
 	}
 	// v0.0.1 filesystem actions always require a stopped linked client. The
@@ -504,6 +566,75 @@ func (handler *FilesystemHandler) callAction(ctx context.Context, operationID st
 	}
 }
 
+// filesystemDispatchResult translates the action port's aggregate effect into
+// the exact approved target set. A port can finish some files before returning
+// an error; the affected entries are therefore marked individually while
+// untouched targets retain their pending observation state. On an error the
+// result is evidence accompanying the returned failure and is deliberately not
+// presented as an accepted aggregate outcome.
+func filesystemDispatchResult(observation execution.Observation, intent FileIntent, effect ports.FilesystemEffect, observedAt time.Time, accepted bool) execution.DispatchResult {
+	result := execution.DispatchResult{
+		Accepted: accepted,
+		Outcome:  effect.Outcome,
+		Evidence: append([]string{"filesystem_effect_returned"}, effect.Evidence...),
+		Effects:  cloneEffects(observation.Effects),
+	}
+	if !effect.Outcome.Valid() {
+		result.Outcome = ""
+	}
+	if accepted {
+		result.Effects = terminalEffects(observation.Effects, effect.Outcome, observedAt, "filesystem_read_back")
+		return result
+	}
+	if effect.ObservedAt.IsZero() {
+		effect.ObservedAt = observedAt
+	}
+	mappings, err := expandedMappings(intent.Files)
+	if err != nil {
+		return result
+	}
+	for index := range result.Effects {
+		if result.Effects[index].Ordinal < 0 {
+			result.Effects[index].Ordinal = int64(index)
+		}
+	}
+	for _, affected := range effect.Affected {
+		for index, mapping := range mappings {
+			if !sameFilesystemSource(affected, mapping.Source) || index >= len(result.Effects) {
+				continue
+			}
+			state := execution.EffectUnknown
+			switch effect.Outcome {
+			case domain.OutcomeApplied:
+				state = execution.EffectApplied
+			case domain.OutcomeAlreadySatisfied:
+				state = execution.EffectAlreadySatisfied
+			}
+			result.Effects[index].State = state
+			result.Effects[index].ObservedAt = effect.ObservedAt.UTC().Format(time.RFC3339Nano)
+			result.Effects[index].Evidence = appendEffectEvidence(result.Effects[index].Evidence, append([]string{"filesystem_affected"}, effect.Evidence...)...)
+		}
+	}
+	return result
+}
+
+func sameFilesystemSource(left, right domain.FileManifestEntry) bool {
+	if left.RootID != right.RootID || left.RelativePath != right.RelativePath || left.Type != right.Type || left.Size != right.Size || left.FileIdentity == "" || left.FileIdentity != right.FileIdentity {
+		return false
+	}
+	if left.Digest != "" && right.Digest != "" && !strings.EqualFold(strings.TrimPrefix(left.Digest, "sha256:"), strings.TrimPrefix(right.Digest, "sha256:")) {
+		return false
+	}
+	return true
+}
+
+func filesystemEffectMayHaveDispatched(effect ports.FilesystemEffect, err error) bool {
+	if len(effect.Affected) > 0 || effect.Outcome.Valid() || len(effect.Evidence) > 0 {
+		return true
+	}
+	return !isKnownPreDispatchFilesystemError(err)
+}
+
 // callNativeClient is the deliberately narrow bridge for the native-client
 // executor selected by fs.move/fs.rename. The client port owns its own
 // whole-torrent scope checks, native API read-back and error normalization;
@@ -511,41 +642,63 @@ func (handler *FilesystemHandler) callAction(ctx context.Context, operationID st
 // FilesystemEffect shape expected by the durable executor. No generated
 // upstream DTO or native command payload crosses this boundary.
 func (handler *FilesystemHandler) callNativeClient(ctx context.Context, operationID string, intent FileIntent) (ports.FilesystemEffect, error) {
-	if handler.options.LinkedClient == nil || handler.options.LinkedClient.Control == nil {
-		return ports.FilesystemEffect{}, fmt.Errorf("%w: native client control is not configured", ErrDependencyRequired)
-	}
 	if len(intent.Files) != 1 {
 		return ports.FilesystemEffect{}, fmt.Errorf("%w: native client executor requires one exact file map", ErrInvalidIntent)
 	}
+	if err := validateNativeClientScope(handler.kind, intent); err != nil {
+		return ports.FilesystemEffect{}, err
+	}
 	mapping := intent.Files[0]
-	client := handler.options.LinkedClient
+	client, err := handler.resolveLinkedClient(intent.LinkedDownload)
+	if err != nil {
+		return ports.FilesystemEffect{}, err
+	}
 	var effect ports.ClientEffect
-	var err error
 	switch handler.kind {
 	case domain.ActionFSMove:
-		effect, err = client.Control.Relocate(ctx, client.Ref, mapping.Destination)
+		effect, err = client.control.Relocate(ctx, client.ref, mapping.Destination)
 	case domain.ActionFSRename:
-		if path.Dir(mapping.Source.RelativePath) != path.Dir(mapping.Destination.RelativePath) {
-			return ports.FilesystemEffect{}, fmt.Errorf("%w: native rename cannot change the containing directory", ErrInvalidIntent)
-		}
 		newName := path.Base(mapping.Destination.RelativePath)
-		if newName == "." || newName == ".." || newName == "" {
-			return ports.FilesystemEffect{}, fmt.Errorf("%w: native rename destination name is invalid", ErrInvalidIntent)
-		}
 		if mapping.Source.Type == domain.ManifestDirectory {
-			effect, err = client.Control.RenameFolder(ctx, client.Ref, domain.FileTarget{RootID: mapping.Source.RootID, RelativePath: mapping.Source.RelativePath}, newName)
+			effect, err = client.control.RenameFolder(ctx, client.ref, domain.FileTarget{RootID: mapping.Source.RootID, RelativePath: mapping.Source.RelativePath}, newName)
 		} else {
-			effect, err = client.Control.RenameFile(ctx, client.Ref, domain.FileTarget{RootID: mapping.Source.RootID, RelativePath: mapping.Source.RelativePath}, newName)
+			effect, err = client.control.RenameFile(ctx, client.ref, domain.FileTarget{RootID: mapping.Source.RootID, RelativePath: mapping.Source.RelativePath}, newName)
 		}
 	default:
 		return ports.FilesystemEffect{}, fmt.Errorf("%w: native client executor is unsupported for %s", ErrInvalidIntent, handler.kind)
 	}
 	if err != nil {
-		return ports.FilesystemEffect{}, err
+		return nativeClientFilesystemEffect(effect, operationID), err
 	}
+	converted := nativeClientFilesystemEffect(effect, operationID)
 	if !effect.Outcome.Valid() {
-		return ports.FilesystemEffect{}, fmt.Errorf("%w: native client returned an invalid outcome", ErrStateUnknown)
+		return converted, fmt.Errorf("%w: native client returned an invalid outcome", ErrStateUnknown)
 	}
+	return converted, nil
+}
+
+func validateNativeClientScope(kind domain.ActionKind, intent FileIntent) error {
+	if strings.TrimSpace(intent.Executor) != executorNativeClient || kind != domain.ActionFSRename {
+		return nil
+	}
+	if len(intent.Files) != 1 {
+		return fmt.Errorf("%w: native client executor requires one exact file map", ErrInvalidIntent)
+	}
+	mapping := intent.Files[0]
+	if mapping.Source.RootID != mapping.Destination.RootID {
+		return fmt.Errorf("%w: native rename cannot change the configured root", ErrInvalidIntent)
+	}
+	if path.Dir(mapping.Source.RelativePath) != path.Dir(mapping.Destination.RelativePath) {
+		return fmt.Errorf("%w: native rename cannot change the containing directory", ErrInvalidIntent)
+	}
+	newName := path.Base(mapping.Destination.RelativePath)
+	if newName == "." || newName == ".." || newName == "" {
+		return fmt.Errorf("%w: native rename destination name is invalid", ErrInvalidIntent)
+	}
+	return nil
+}
+
+func nativeClientFilesystemEffect(effect ports.ClientEffect, operationID string) ports.FilesystemEffect {
 	evidence := append([]string{"executor=native_client"}, effect.Evidence...)
 	if effect.OperationID != "" {
 		evidence = append(evidence, "native_operation_id="+effect.OperationID)
@@ -553,7 +706,7 @@ func (handler *FilesystemHandler) callNativeClient(ctx context.Context, operatio
 	if operationID != "" {
 		evidence = append(evidence, "action_operation_id="+operationID)
 	}
-	return ports.FilesystemEffect{Outcome: effect.Outcome, ObservedAt: effect.ObservedAt, Evidence: evidence}, nil
+	return ports.FilesystemEffect{Outcome: effect.Outcome, ObservedAt: effect.ObservedAt, Evidence: evidence}
 }
 
 func isKnownPreDispatchFilesystemError(err error) bool {
