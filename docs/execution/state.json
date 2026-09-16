@@ -16,6 +16,7 @@
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
   "activeImplementationTasks": [
+    "X-22"
   ],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
@@ -4161,12 +4162,48 @@
       "review": null
     },
     "X-22": {
-      "status": "planned",
-      "owner": null,
-      "baseSha": null,
+      "status": "in_progress",
+      "owner": "/root/x05_implementer",
+      "baseSha": "40441e8910e69f77904983db4c4014f6c73864df",
       "integratedSha": null,
-      "evidence": [],
-      "review": null
+      "evidence": [
+        "dispatched after X-04 and X-18 approvals; owns the Seerr root adapter, synthetic fixtures, root module dependency metadata if required, and its handoff.",
+        "The standalone Seerr module is public and read-only. Preserve the root adapter port boundary, pagination coverage and unknown availability semantics; do not add Seerr writes or generated DTO leakage.",
+        "G-01 remains open. This lane must not mutate a live service and must record any unpublished-module bootstrap blocker instead of adding a local replace."
+      ],
+      "review": null,
+      "dispatch": {
+        "assignedAt": "2026-09-15",
+        "model": "gpt-5.6-luna",
+        "reasoning": "max",
+        "role": "implementer",
+        "baseSha": "40441e8910e69f77904983db4c4014f6c73864df",
+        "ownedPaths": [
+          "internal/adapters/seerr/",
+          "tests/fixtures/seerr/",
+          "go.mod",
+          "go.sum",
+          "docs/execution/handoffs/X-22.md"
+        ],
+        "expectedChecks": [
+          "A-08",
+          "A-09",
+          "A-54",
+          "standalone Seerr DTO and typed-error translation without generated-type leakage",
+          "public pseudo-version dependency with no local replace",
+          "synthetic read-only adapter fixtures for media and request pagination, topology and unknown states",
+          "GOWORK=off adapter tests/race/vet/mod verify, generation, Vacuum, lint and architecture",
+          "Linux amd64/arm64 CGO-free compile"
+        ],
+        "reviewPath": "docs/execution/handoffs/X-22-review-round1.md",
+        "handoffPath": "docs/execution/handoffs/X-22.md",
+        "nextReviewer": "/root/x05_reviewer",
+        "dependencyCommits": {
+          "X-04": "b5594b668185245304f70a0f46c1f77ae7b76d7b",
+          "X-18": "a0670e0a60b7b4920ff8a672bfa311d9b93a0ce1",
+          "C-06": "5e53134e40322b512efef1865d78da2da6368e5b"
+        }
+      }
     },
     "C-06": {
       "status": "done",
@@ -4311,7 +4348,7 @@
       ]
     }
   },
-  "nextAction": "X-19 is approved and integrated. Dispatch the next dependency-ready read migration lane after recording this checkpoint.",
+  "nextAction": "X-22 is dispatched to migrate the Seerr read adapter. Preserve read-only behavior and wait for the product handoff before independent review.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
