@@ -72,7 +72,7 @@ func TestNewArrWriteCapabilitiesStayBlockedAndNeverDispatch(t *testing.T) {
 			case "/api/v3/movie":
 				writeFixtureJSON(t, writer, []nativeTitle{})
 			case "/api/v3/movie/101":
-				writeFixtureJSON(t, writer, nativeTitle{ID: 101})
+				writeFixtureJSON(t, writer, nativeTitle{ID: 101, Title: "Synthetic Film", Path: "/synthetic/library/Synthetic Film", Monitored: boolPtr(false)})
 			case "/api/v3/history":
 				writeFixtureJSON(t, writer, []nativeHistory{})
 			default:
@@ -112,9 +112,61 @@ func TestNewArrWriteCapabilitiesStayBlockedAndNeverDispatch(t *testing.T) {
 	}
 }
 
+func TestArrWriteUsesStandaloneReadContractAndSanitizedErrorTranslation(t *testing.T) {
+	t.Run("strict catalog shape remains failed closed", func(t *testing.T) {
+		var calls atomic.Int32
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			if request.Method != http.MethodGet || request.URL.Path != "/api/v3/movie" {
+				t.Fatalf("unexpected request %s %s", request.Method, request.URL.Path)
+			}
+			calls.Add(1)
+			// A legacy title projection without path is intentionally not accepted
+			// by the standalone Radarr compatibility client. The write adapter must
+			// not fall back to its old permissive decoder.
+			writeFixtureJSON(t, writer, []map[string]any{{"id": 101, "title": "Synthetic Film", "monitored": false}})
+		}))
+		t.Cleanup(server.Close)
+
+		client, err := New(Config{ConnectionID: testConnection, Kind: domain.ConnectionRadarr, Endpoint: server.URL, APIKey: "synthetic-key", HTTPClient: server.Client()})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		_, err = client.listTitles(context.Background())
+		if err == nil || !hasCode(err, domain.OutcomeUnknown) {
+			t.Fatalf("listTitles error = %v, want failed-closed malformed evidence", err)
+		}
+		if calls.Load() != 1 {
+			t.Fatalf("catalog calls = %d, want one typed-client read and no fallback", calls.Load())
+		}
+	})
+
+	t.Run("native status maps without body leakage", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			if request.URL.Path != "/api/v3/movie" {
+				t.Fatalf("unexpected request path %s", request.URL.Path)
+			}
+			writer.WriteHeader(http.StatusUnauthorized)
+			_, _ = io.WriteString(writer, "private-api-key and private endpoint detail")
+		}))
+		t.Cleanup(server.Close)
+
+		client, err := New(Config{ConnectionID: testConnection, Kind: domain.ConnectionRadarr, Endpoint: server.URL, APIKey: "synthetic-key", HTTPClient: server.Client()})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		_, err = client.listTitles(context.Background())
+		if err == nil || !hasCode(err, domain.OutcomeUnauthorized) {
+			t.Fatalf("listTitles error = %v, want translated unauthorized", err)
+		}
+		if strings.Contains(err.Error(), "private-api-key") || strings.Contains(err.Error(), "endpoint detail") {
+			t.Fatalf("native error leaked response detail: %v", err)
+		}
+	})
+}
+
 func TestRadarrRegistrationDefaultsNoSearchAndPreservesExistingFields(t *testing.T) {
 	var mu sync.Mutex
-	title := nativeTitle{ID: 101, Title: "Synthetic Film", TMDBID: int64Ptr(4242), RootFolderPath: "/synthetic/old", QualityProfile: int64Ptr(3), Monitored: boolPtr(false)}
+	title := nativeTitle{ID: 101, Title: "Synthetic Film", Path: "/synthetic/library/Synthetic Film", TMDBID: int64Ptr(4242), RootFolderPath: "/synthetic/old", QualityProfile: int64Ptr(3), Monitored: boolPtr(false)}
 	var putCalls atomic.Int32
 	var payload map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -203,7 +255,7 @@ func TestRadarrRegistrationNewDefaultsUnmonitoredAndNoSearch(t *testing.T) {
 				t.Errorf("decode POST: %v", err)
 			}
 			mu.Lock()
-			title = nativeTitle{ID: 102, Title: "Synthetic Film", TMDBID: int64Ptr(4242), RootFolderPath: stringValue(payload["rootFolderPath"]), QualityProfile: int64Ptr(int64(payload["qualityProfileId"].(float64))), Monitored: boolPtr(payload["monitored"].(bool))}
+			title = nativeTitle{ID: 102, Title: "Synthetic Film", Path: "/synthetic/library/Synthetic Film", TMDBID: int64Ptr(4242), RootFolderPath: stringValue(payload["rootFolderPath"]), QualityProfile: int64Ptr(int64(payload["qualityProfileId"].(float64))), Monitored: boolPtr(payload["monitored"].(bool))}
 			mu.Unlock()
 			writeFixtureJSON(t, writer, title)
 		case request.Method == http.MethodGet && request.URL.Path == "/api/v3/movie/102":
@@ -241,7 +293,7 @@ func TestRadarrRegistrationNewDefaultsUnmonitoredAndNoSearch(t *testing.T) {
 }
 
 func TestExistingRegistrationAlreadySatisfiedDoesNotWrite(t *testing.T) {
-	title := nativeTitle{ID: 101, Title: "Synthetic Film", TMDBID: int64Ptr(4242), RootFolderPath: "/synthetic/library", QualityProfile: int64Ptr(7), Monitored: boolPtr(false)}
+	title := nativeTitle{ID: 101, Title: "Synthetic Film", Path: "/synthetic/library/Synthetic Film", TMDBID: int64Ptr(4242), RootFolderPath: "/synthetic/library", QualityProfile: int64Ptr(7), Monitored: boolPtr(false)}
 	var writes atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet || request.URL.Path != "/api/v3/movie" {
@@ -537,7 +589,7 @@ func TestArrWriteRejectsContradictoryReadbackIdentity(t *testing.T) {
 			request: ports.ImportRequest{RegisteredExternalID: "101", PreviewRevision: testPreview, Transfer: "copy", Files: []ports.ImportFile{{Source: domain.FileTarget{RootID: "downloads", RelativePath: "one.mkv"}, MovieOrEpisodeID: "101"}}},
 			handler: func(t testing.TB, writer http.ResponseWriter, request *http.Request) {
 				if request.URL.Path == "/api/v3/movie/101" {
-					writeFixtureJSON(t, writer, nativeTitle{ID: 101, MovieFile: &nativeFile{ID: 501, MovieID: 999, Path: "/synthetic/downloads/one.mkv", Size: 10}})
+					writeFixtureJSON(t, writer, nativeTitle{ID: 101, Title: "Synthetic Film", Path: "/synthetic/library/Synthetic Film", Monitored: boolPtr(false), MovieFile: &nativeFile{ID: 501, MovieID: 999, Path: "/synthetic/downloads/one.mkv", Size: 10}})
 					return
 				}
 				writeFixtureJSON(t, writer, []nativeHistory{})
@@ -549,7 +601,7 @@ func TestArrWriteRejectsContradictoryReadbackIdentity(t *testing.T) {
 			request: ports.ImportRequest{RegisteredExternalID: "101", PreviewRevision: testPreview, Transfer: "copy", Files: []ports.ImportFile{{Source: domain.FileTarget{RootID: "downloads", RelativePath: "one.mkv"}, MovieOrEpisodeID: "101"}}},
 			handler: func(t testing.TB, writer http.ResponseWriter, request *http.Request) {
 				if request.URL.Path == "/api/v3/movie/101" {
-					writeFixtureJSON(t, writer, nativeTitle{ID: 999, MovieFile: &nativeFile{ID: 501, MovieID: 999, Path: "/synthetic/downloads/one.mkv", Size: 10}})
+					writeFixtureJSON(t, writer, nativeTitle{ID: 999, Title: "Synthetic Film", Path: "/synthetic/library/Synthetic Film", Monitored: boolPtr(false), MovieFile: &nativeFile{ID: 501, MovieID: 999, Path: "/synthetic/downloads/one.mkv", Size: 10}})
 					return
 				}
 				writeFixtureJSON(t, writer, []nativeHistory{})
@@ -610,7 +662,7 @@ func TestSonarrReadbackRequiresNestedSeriesIdentity(t *testing.T) {
 						file = fmt.Sprintf(`{"id":801,"seriesId":%s,"path":"/synthetic/downloads/one.mkv","size":10}`, testCase.seriesID)
 					}
 					writer.Header().Set("Content-Type", "application/json")
-					_, _ = io.WriteString(writer, fmt.Sprintf(`[{"id":301,"seriesId":201,"episodeFileId":801,"episodeFile":%s}]`, file))
+					_, _ = io.WriteString(writer, fmt.Sprintf(`[{"id":301,"seriesId":201,"seasonNumber":1,"episodeNumber":1,"hasFile":true,"episodeFileId":801,"episodeFile":%s}]`, file))
 				case "/api/v3/history":
 					writeFixtureJSON(t, writer, []nativeHistory{})
 				default:
@@ -814,7 +866,7 @@ func TestArrWriteSanitizesWrappedContextErrors(t *testing.T) {
 			transport := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 				return nil, fmt.Errorf("private endpoint and transport detail: %w", testCase.cause)
 			})
-			client, err := newClient(Config{ConnectionID: testConnection, Kind: domain.ConnectionRadarr, Endpoint: "http://fixture.invalid/private-prefix", HTTPClient: &http.Client{Transport: transport}}, blockedCapabilities())
+			client, err := newClient(Config{ConnectionID: testConnection, Kind: domain.ConnectionRadarr, Endpoint: "http://fixture.invalid/private-prefix", APIKey: "synthetic-key", HTTPClient: &http.Client{Transport: transport}}, blockedCapabilities())
 			if err != nil {
 				t.Fatalf("newClient: %v", err)
 			}
@@ -833,7 +885,7 @@ func TestArrWriteSanitizesWrappedContextBodyErrors(t *testing.T) {
 	transport := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Body: contextErrorBody{err: fmt.Errorf("private body detail: %w", context.Canceled)}}, nil
 	})
-	client, err := newClient(Config{ConnectionID: testConnection, Kind: domain.ConnectionRadarr, Endpoint: "http://fixture.invalid", HTTPClient: &http.Client{Transport: transport}}, blockedCapabilities())
+	client, err := newClient(Config{ConnectionID: testConnection, Kind: domain.ConnectionRadarr, Endpoint: "http://fixture.invalid", APIKey: "synthetic-key", HTTPClient: &http.Client{Transport: transport}}, blockedCapabilities())
 	if err != nil {
 		t.Fatalf("newClient: %v", err)
 	}
@@ -863,7 +915,7 @@ func TestArrWritePreservesContextDeadlineIdentity(t *testing.T) {
 		<-request.Context().Done()
 		return nil, request.Context().Err()
 	})
-	client, err := newClient(Config{ConnectionID: testConnection, Kind: domain.ConnectionRadarr, Endpoint: "http://arr.invalid", HTTPClient: &http.Client{Transport: transport}, ReconcileTimeout: time.Hour}, blockedCapabilities())
+	client, err := newClient(Config{ConnectionID: testConnection, Kind: domain.ConnectionRadarr, Endpoint: "http://arr.invalid", APIKey: "synthetic-key", HTTPClient: &http.Client{Transport: transport}, ReconcileTimeout: time.Hour}, blockedCapabilities())
 	if err != nil {
 		t.Fatalf("newClient: %v", err)
 	}

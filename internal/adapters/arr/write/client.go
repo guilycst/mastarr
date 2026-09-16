@@ -24,6 +24,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	radarrnative "github.com/guilycst/mastarr/clients/radarr"
+	sonarrnative "github.com/guilycst/mastarr/clients/sonarr"
 	"github.com/guilycst/mastarr/internal/domain"
 	"github.com/guilycst/mastarr/internal/ports"
 )
@@ -88,16 +90,19 @@ type PreviewResolver func(context.Context, domain.ConfigID, ports.ImportRequest)
 // Client implements the explicit Arr write port. It performs a read-before-
 // write and a bounded read-back after any synthetic native dispatch.
 type Client struct {
-	config       Config
-	endpoint     *url.URL
-	http         *http.Client
-	capabilities capabilities
-	rootPaths    map[domain.ConfigID]string
-	mappings     []pathMapping
-	maxRecords   int
-	maxFiles     int
-	maxResponse  int64
-	reconcile    time.Duration
+	config        Config
+	endpoint      *url.URL
+	http          *http.Client
+	capabilities  capabilities
+	rootPaths     map[domain.ConfigID]string
+	mappings      []pathMapping
+	maxRecords    int
+	maxFiles      int
+	maxResponse   int64
+	reconcile     time.Duration
+	sonarr        *sonarrnative.Client
+	radarr        *radarrnative.Client
+	contextErrors *nativeContextErrors
 }
 
 var _ ports.MediaManagerWritePort = (*Client)(nil)
@@ -160,11 +165,49 @@ func newClient(config Config, caps capabilities) (*Client, error) {
 	copyClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
+	contextErrors := &nativeContextErrors{base: copyClient.Transport}
+	copyClient.Transport = contextErrors
+	var sonarrClient *sonarrnative.Client
+	var radarrClient *radarrnative.Client
+	// The standalone modules own authentication, strict generated decoding,
+	// response bounds and transport error normalization for all typed reads.
+	// Keep the cloned client and its deadline aligned with the legacy adapter so
+	// the synthetic write/reconciliation seam retains the same upper bound.
+	switch config.Kind {
+	case domain.ConnectionSonarr:
+		sonarrClient, err = sonarrnative.New(sonarrnative.Config{
+			Endpoint:         config.Endpoint,
+			APIKey:           config.APIKey,
+			HTTPClient:       &copyClient,
+			RequestTimeout:   copyClient.Timeout,
+			MaxResponseBytes: config.MaxResponseSize,
+			MaxItems:         config.MaxRecords,
+			MaxEpisodes:      config.MaxFiles,
+			MaxFiles:         config.MaxFiles,
+		})
+		if err != nil {
+			return nil, errors.New("Sonarr compatibility client setup failed")
+		}
+	case domain.ConnectionRadarr:
+		radarrClient, err = radarrnative.New(radarrnative.Config{
+			Endpoint:         config.Endpoint,
+			APIKey:           config.APIKey,
+			HTTPClient:       &copyClient,
+			RequestTimeout:   copyClient.Timeout,
+			MaxResponseBytes: config.MaxResponseSize,
+			MaxItems:         config.MaxRecords,
+			MaxMovieFiles:    config.MaxFiles,
+		})
+		if err != nil {
+			return nil, errors.New("Radarr compatibility client setup failed")
+		}
+	}
 	return &Client{
 		config: config, endpoint: endpoint, http: &copyClient, capabilities: caps,
 		rootPaths: paths, mappings: mappings, maxRecords: config.MaxRecords,
 		maxFiles: config.MaxFiles, maxResponse: config.MaxResponseSize,
-		reconcile: config.ReconcileTimeout,
+		reconcile: config.ReconcileTimeout, sonarr: sonarrClient, radarr: radarrClient,
+		contextErrors: contextErrors,
 	}, nil
 }
 
@@ -267,7 +310,7 @@ func (client *Client) Register(ctx context.Context, connectionID domain.ConfigID
 	if id == 0 {
 		return result, malformed(operationRegistration, "native registration omitted title identity")
 	}
-	readback, err := client.readTitle(ctx, id)
+	readback, err := client.readRegistrationTitle(ctx, id)
 	if err != nil {
 		return result, err
 	}
@@ -461,18 +504,9 @@ func (client *Client) observeImport(ctx context.Context, externalID string) (por
 			files = append(files, file)
 		}
 	} else {
-		body, status, readErr := client.request(ctx, operationObserve, http.MethodGet, "/api/v3/episode", url.Values{
-			"seriesId": {strconv.FormatInt(id, 10)}, "includeEpisodeFile": {"true"},
-		}, nil)
+		episodes, readErr := client.observeSonarrEpisodes(ctx, id)
 		if readErr != nil {
 			return result, importHistory{}, readErr
-		}
-		if status < 200 || status >= 300 {
-			return result, importHistory{}, normalizeStatus(operationObserve, status)
-		}
-		var episodes []nativeEpisode
-		if err := decodeStrictJSON(body, &episodes); err != nil {
-			return result, importHistory{}, malformed(operationObserve, "episode read-back is malformed")
 		}
 		byFile := make(map[int64]int)
 		byPath := make(map[domain.FileTarget]int64)
@@ -594,18 +628,20 @@ func decodeHistory(body []byte) ([]nativeHistory, error) {
 }
 
 type nativeTitle struct {
-	ID             int64          `json:"id"`
-	Title          string         `json:"title"`
-	TMDBID         *int64         `json:"tmdbId"`
-	TVDBID         *int64         `json:"tvdbId"`
-	IMDBID         string         `json:"imdbId"`
-	RootFolderPath string         `json:"rootFolderPath"`
-	QualityProfile *int64         `json:"qualityProfileId"`
-	Monitored      *bool          `json:"monitored"`
-	SeriesType     string         `json:"seriesType"`
-	SeasonFolder   *bool          `json:"seasonFolder"`
-	Seasons        []nativeSeason `json:"seasons"`
-	MovieFile      *nativeFile    `json:"movieFile"`
+	ID             int64             `json:"id"`
+	Title          string            `json:"title"`
+	Path           string            `json:"path"`
+	TMDBID         *int64            `json:"tmdbId"`
+	TVDBID         *int64            `json:"tvdbId"`
+	IMDBID         string            `json:"imdbId"`
+	ProviderIDs    map[string]string `json:"providerIds"`
+	RootFolderPath string            `json:"rootFolderPath"`
+	QualityProfile *int64            `json:"qualityProfileId"`
+	Monitored      *bool             `json:"monitored"`
+	SeriesType     string            `json:"seriesType"`
+	SeasonFolder   *bool             `json:"seasonFolder"`
+	Seasons        []nativeSeason    `json:"seasons"`
+	MovieFile      *nativeFile       `json:"movieFile"`
 }
 
 type nativeSeason struct {
@@ -616,8 +652,11 @@ type nativeSeason struct {
 type nativeEpisode struct {
 	ID            int64       `json:"id"`
 	SeriesID      int64       `json:"seriesId"`
+	SeasonNumber  int32       `json:"seasonNumber"`
+	EpisodeNumber int32       `json:"episodeNumber"`
+	HasFile       bool        `json:"hasFile"`
 	EpisodeFileID int64       `json:"episodeFileId"`
-	EpisodeFile   *nativeFile `json:"episodeFile"`
+	EpisodeFile   *nativeFile `json:"episodeFile,omitempty"`
 }
 
 type nativeFile struct {
@@ -629,41 +668,11 @@ type nativeFile struct {
 }
 
 func (client *Client) listTitles(ctx context.Context) ([]nativeTitle, error) {
-	body, status, err := client.request(ctx, operationRegistration, http.MethodGet, catalogPath(client.config.Kind), nil, nil)
-	if err != nil {
-		return nil, err
-	}
-	if status < 200 || status >= 300 {
-		return nil, normalizeStatus(operationRegistration, status)
-	}
-	var titles []nativeTitle
-	if err := decodeStrictJSON(body, &titles); err != nil {
-		return nil, malformed(operationRegistration, "title catalog is malformed")
-	}
-	if len(titles) > client.maxRecords {
-		return nil, upstreamFailure(domain.OutcomeUnknown, operationRegistration, "title catalog exceeds configured bound")
-	}
-	for _, title := range titles {
-		if title.ID <= 0 {
-			return nil, malformed(operationRegistration, "title identity is missing")
-		}
-	}
-	return titles, nil
+	return client.listTitlesNative(ctx)
 }
 
 func (client *Client) readTitle(ctx context.Context, id int64) (nativeTitle, error) {
-	body, status, err := client.request(ctx, operationObserve, http.MethodGet, catalogPath(client.config.Kind)+"/"+strconv.FormatInt(id, 10), nil, nil)
-	if err != nil {
-		return nativeTitle{}, err
-	}
-	if status < 200 || status >= 300 {
-		return nativeTitle{}, normalizeStatus(operationObserve, status)
-	}
-	var title nativeTitle
-	if err := decodeStrictJSON(body, &title); err != nil || title.ID <= 0 || title.ID != id {
-		return nativeTitle{}, malformed(operationObserve, "title read-back is malformed")
-	}
-	return title, nil
+	return client.readTitleNative(ctx, id)
 }
 
 type registrationPayloadDTO struct {
@@ -1340,7 +1349,17 @@ func nativeHasProviderID(title nativeTitle, wanted string, kind domain.Connectio
 			return true
 		}
 	}
-	return strings.TrimSpace(title.IMDBID) == wanted
+	if strings.TrimSpace(title.IMDBID) == wanted {
+		return true
+	}
+	for key, value := range title.ProviderIDs {
+		if strings.EqualFold(key, "tmdbId") || strings.EqualFold(key, "tvdbId") || strings.EqualFold(key, "imdbId") || strings.EqualFold(key, "tvmazeId") {
+			if strings.TrimSpace(value) == wanted {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func parsePositiveID(value string) (int64, error) {
