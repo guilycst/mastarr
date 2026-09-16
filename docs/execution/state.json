@@ -2535,18 +2535,19 @@
         "0ca424094dbce6700d5823ecbf6bb6e409a4178a independent correction review round three closes durable capture/delete fencing but requests one new P1: failed metadata update plus cleanup failure can orphan a published object; 69b4241367bd29ab17d1422e4e8a64e0994a15a3 integrates the receipt. Capture recovery intent/adoption remains open.",
         "b4724473923d2b7059eca519252d119bff9a850e correction round three adds durable pre-publication capture intent, object-bound recovery/adoption and explicit uncertain cleanup; 6333ea37169bbf9c63b1065e6be50bff36c5d224 records metadata/cleanup failure, new-row and staged-publication recovery regressions and full checks.",
         "c29adbaccdd9b5d671fe72b00ba740c81269cc1f independent correction review round four closes prior capture recovery and identity findings but requests one P1: Delete can abort an active stage-to-final publication from separate absence observations and orphan the bound object; cedf380c236bbae96be31b37937e50769239446a integrates the receipt. A durable publication fence and terminal outcome check remain open.",
-        "cc7c530e4114112cceeaba28000ab59d893efc59 correction round four adds a durable cross-service capture fence and exact terminal outcome matching so Delete cannot abort publication or orphan the bound object; 3da7d80323818f69eed9dd7ff1c2f164345005a0 records the regression and full offline guardrails."
+        "cc7c530e4114112cceeaba28000ab59d893efc59 correction round four adds a durable cross-service capture fence and exact terminal outcome matching so Delete cannot abort publication or orphan the bound object; 3da7d80323818f69eed9dd7ff1c2f164345005a0 records the regression and full offline guardrails.",
+        "0bd2bb566fc4feb44141ef28a93ab2880c93bf13 independent correction review round five closes direct forward/reverse publication-delete races and terminal conflict handling but requests one P1: same-operation fence reuse lacks owner/generation/lease, allowing a second executor to release a live first fence; 7e9bb099040adcbc04b459fcfd59968d65918983 integrates the receipt. Owner-fenced restart recovery remains open."
       ],
       "review": {
         "status": "changes_requested",
         "decision": "changes_requested",
         "reviewer": "/root/x05_reviewer",
-        "commit": "c29adbaccdd9b5d671fe72b00ba740c81269cc1f",
-        "integratedCommit": "cedf380c236bbae96be31b37937e50769239446a",
+        "commit": "0bd2bb566fc4feb44141ef28a93ab2880c93bf13",
+        "integratedCommit": "7e9bb099040adcbc04b459fcfd59968d65918983",
         "findings": [
-          "P1: reconcileCaptureBeforeDelete observes final and stage absence without a cross-service publication fence; concurrent stage-to-final recovery can be aborted, leaving the exact object while Delete marks unavailable metadata deleted. finishCaptureIntent also accepts any terminal outcome instead of checking the requested result."
+          "P1: acquireCaptureFence returns the same event for same-operation reuse without owner/generation/lease, so a second executor can release a live first fence and an opposing Delete fence can then be acquired. Require owner-fenced restart takeover/release."
         ],
-        "round": 4
+        "round": 5
       },
       "dispatch": {
         "assignedAt": "2026-09-16",
@@ -2574,7 +2575,7 @@
         "reviewPath": "docs/execution/handoffs/X-08-review-round1.md",
         "handoffPath": "docs/execution/handoffs/X-08.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "review_pending",
+        "status": "implementation",
         "implementationCommit": "2e1169c3cf1a2763227ac28ac8e7d96a82fe047b",
         "productCommits": [
           "2e1169c3cf1a2763227ac28ac8e7d96a82fe047b",
@@ -2582,26 +2583,20 @@
         ],
         "handoffCommit": "caabffc946cedec237e89f688abfe7ab2d2c58da",
         "reviewSourceCommit": "d07779afd4a9b052b8f91159debb0c7af6df3632",
-        "correctionStatus": "review_pending",
-        "correctionRound": 4,
+        "correctionStatus": "implementation",
+        "correctionRound": 5,
         "correctionOwner": "/root/x05_implementer",
-        "correctionBaseSha": "b4724473923d2b7059eca519252d119bff9a850e",
-        "correctionReviewPath": "docs/execution/handoffs/X-08-review-round5.md",
-        "correctionHandoffPath": "docs/execution/handoffs/X-08-correction-round4.md",
+        "correctionBaseSha": "cc7c530e4114112cceeaba28000ab59d893efc59",
+        "correctionReviewPath": "docs/execution/handoffs/X-08-review-round6.md",
+        "correctionHandoffPath": "docs/execution/handoffs/X-08-correction-round5.md",
         "correctionReviewer": "/root/x05_reviewer",
         "priorReviewCommit": "cedb49af4ee4dfb99bba0d4abacfff46aca1f0a3",
         "priorReviewIntegrationCommit": "9cb06d0f071a525e53ada11a4fe3f1d3612b33e4",
-        "priorCorrectionRound": 3,
-        "priorCorrectionImplementationCommit": "b4724473923d2b7059eca519252d119bff9a850e",
-        "priorCorrectionHandoffCommit": "6333ea37169bbf9c63b1065e6be50bff36c5d224",
-        "priorCorrectionReviewCommit": "c29adbaccdd9b5d671fe72b00ba740c81269cc1f",
-        "priorCorrectionReviewIntegrationCommit": "cedf380c236bbae96be31b37937e50769239446a",
-        "correctionImplementationCommit": "cc7c530e4114112cceeaba28000ab59d893efc59",
-        "correctionHandoffCommit": "3da7d80323818f69eed9dd7ff1c2f164345005a0",
-        "correctionProductCommits": [
-          "cc7c530e4114112cceeaba28000ab59d893efc59"
-        ],
-        "correctionReviewSourceCommit": "cc7c530e4114112cceeaba28000ab59d893efc59"
+        "priorCorrectionRound": 4,
+        "priorCorrectionImplementationCommit": "cc7c530e4114112cceeaba28000ab59d893efc59",
+        "priorCorrectionHandoffCommit": "3da7d80323818f69eed9dd7ff1c2f164345005a0",
+        "priorCorrectionReviewCommit": "0bd2bb566fc4feb44141ef28a93ab2880c93bf13",
+        "priorCorrectionReviewIntegrationCommit": "7e9bb099040adcbc04b459fcfd59968d65918983"
       },
       "implementationCommit": "d07779afd4a9b052b8f91159debb0c7af6df3632",
       "handoffCommit": "caabffc946cedec237e89f688abfe7ab2d2c58da",
@@ -2642,6 +2637,15 @@
           "sourceCommit": "b4724473923d2b7059eca519252d119bff9a850e",
           "receipt": "docs/execution/handoffs/X-08-review-round4.md",
           "integratedCommit": "cedf380c236bbae96be31b37937e50769239446a"
+        },
+        {
+          "round": 5,
+          "reviewer": "/root/x05_reviewer",
+          "commit": "0bd2bb566fc4feb44141ef28a93ab2880c93bf13",
+          "status": "changes_requested",
+          "sourceCommit": "cc7c530e4114112cceeaba28000ab59d893efc59",
+          "receipt": "docs/execution/handoffs/X-08-review-round5.md",
+          "integratedCommit": "7e9bb099040adcbc04b459fcfd59968d65918983"
         }
       ]
     },
@@ -4952,7 +4956,7 @@
       ]
     }
   },
-  "nextAction": "X-08 correction round four is ready for independent review at cc7c530e4114112cceeaba28000ab59d893efc59; handoff 3da7d80323818f69eed9dd7ff1c2f164345005a0. X-20 remains capability-blocked and G-01 remains open.",
+  "nextAction": "X-08 correction round five is dispatched for owner-fenced capture lease/restart recovery after review receipt 0bd2bb566fc4feb44141ef28a93ab2880c93bf13. X-20 remains capability-blocked and G-01 remains open.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
