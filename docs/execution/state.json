@@ -2913,7 +2913,7 @@
       "nextAction": "Implement W-01 correction round 1 from dca41abdd99361cee7de0c7dcc10892323c773f2, addressing R1-R5, then review the correction independently."
     },
     "W-02": {
-      "status": "in_review",
+      "status": "in_progress",
       "owner": "/root/x05_implementer",
       "baseSha": "16ad883172e4ebac45ea6f67309bc111708fa405",
       "integratedSha": "ff23e1b939f04c1136cba8134d3c9ae505094dba",
@@ -2971,7 +2971,8 @@
         "62668bedf67bfe25ceac528890d7e96c0a8b9d8e W-02 correction round ten review closed the ExternalID P1 under fresh/restart/read-back failure races and found P2 marker merge loss: null marker values are overwritten, duplicate marker keys collapse to the last value, and duplicate ordinary keys lose source evidence. Full guardrails and cross-builds passed.",
         "8ab9eee2a50c195dda9fadf5160358d2fb535b11 state checkpoint dispatched W-02 correction round eleven to /root/x05_implementer from e46ab80265c6bfbcde7c51f29cfa04c0df421f19; owned paths remain internal/execution/ and docs/execution/handoffs/W-02-correction-round11.md, shared main, with GOWORK=off focused/race/vet/offline guardrail/module/cross-build checks.",
         "6b85c3afde31cf2772f9dc5e84a7982de504635b W-02 correction round eleven validates unique object keys, strictly handles marker arrays, and uses lossless _mastarr_prior fallback for null/non-array/invalid-member/duplicate-key evidence. Focused normal/race regressions and full offline guardrails passed.",
-        "a9609d0affcc2ec811ca860f22576771acf9a88a records the W-02 correction round eleven handoff and exact checks."
+        "a9609d0affcc2ec811ca860f22576771acf9a88a records the W-02 correction round eleven handoff and exact checks.",
+        "5c7b7933f9d694e4ad768d4211a119dda06b511a W-02 correction round eleven review closed all listed marker cases, ExternalID and prior regressions, but found P2 raw invalid UTF-8 and escaped unpaired surrogate marker strings are re-encoded as U+FFFD, losing opaque evidence. Full offline guardrails and 18 cross-builds passed."
       ],
       "review": {
         "status": "approved",
@@ -3024,36 +3025,34 @@
         ],
         "reviewer": "/root/x05_reviewer",
         "reviewCommit": "fc67e8b5ea2ade046bfca38fd68f87690a552b99",
-        "correctionRound": 11,
+        "correctionRound": 12,
         "correctionOwner": "/root/x05_implementer",
-        "correctionBaseSha": "e46ab80265c6bfbcde7c51f29cfa04c0df421f19",
-        "correctionReviewPath": "docs/execution/handoffs/W-02-review-round11.md",
+        "correctionBaseSha": "6b85c3afde31cf2772f9dc5e84a7982de504635b",
+        "correctionReviewPath": "docs/execution/handoffs/W-02-review-round12.md",
         "correctionReviewer": "/root/x05_reviewer",
         "correctionCheckout": "shared main",
-        "correctionStatus": "review_pending",
+        "correctionStatus": "implementation",
         "reviewerReroute": {
           "previousReviewer": "/root/d02_reviewer",
           "status": "rerouted_before_dispatch",
           "reason": "previously selected reviewer was unavailable after two platform-filter errors on the F-05 review lane",
           "newReviewer": "/root/x05_reviewer"
         },
-        "status": "review_pending",
-        "correctionHandoffPath": "docs/execution/handoffs/W-02-correction-round11.md",
+        "status": "implementation",
+        "correctionHandoffPath": "docs/execution/handoffs/W-02-correction-round12.md",
         "correctionReason": "W-03 review R2b found DispatchResult effects are discarded on non-nil handler errors; preserve partial effect certainty and evidence in the durable attempt journal.",
-        "priorCorrectionRound": 10,
-        "priorCorrectionImplementationCommit": "e46ab80265c6bfbcde7c51f29cfa04c0df421f19",
-        "priorCorrectionHandoffCommit": "8ef12618496f623421cbfb638fdda3d8b93c7ba0",
-        "priorCorrectionReviewCommit": "62668bedf67bfe25ceac528890d7e96c0a8b9d8e",
-        "priorCorrectionReviewIntegrationCommit": "0e47084576175afd6625898dcfd73944c09494a3",
+        "priorCorrectionRound": 11,
+        "priorCorrectionImplementationCommit": "6b85c3afde31cf2772f9dc5e84a7982de504635b",
+        "priorCorrectionHandoffCommit": "a9609d0affcc2ec811ca860f22576771acf9a88a",
+        "priorCorrectionReviewCommit": "5c7b7933f9d694e4ad768d4211a119dda06b511a",
+        "priorCorrectionReviewIntegrationCommit": "6051d88f724fe6fe85159b34c5c35d594d3d1e01",
         "priorCrossLaneFindingReceipt": "d11938398a0a7b2dbd4cc530212e35c751a73fb8",
         "priorCrossLaneFindingIntegration": "d386489beb52cbb247d6326f34d201e2c596cd43",
         "priorCrossLaneFindingSourceTask": "W-03",
-        "correctionImplementationCommit": "6b85c3afde31cf2772f9dc5e84a7982de504635b",
-        "correctionHandoffCommit": "a9609d0affcc2ec811ca860f22576771acf9a88a",
-        "correctionProductCommits": [
-          "6b85c3afde31cf2772f9dc5e84a7982de504635b"
-        ],
-        "correctionReviewSourceCommit": "6b85c3afde31cf2772f9dc5e84a7982de504635b",
+        "correctionImplementationCommit": null,
+        "correctionHandoffCommit": null,
+        "correctionProductCommits": [],
+        "correctionReviewSourceCommit": null,
         "correctionDispatchCheckpoint": "8ab9eee2a50c195dda9fadf5160358d2fb535b11"
       },
       "reviewHistory": [
@@ -3164,6 +3163,15 @@
           "status": "review_pending",
           "sourceCommit": "6b85c3afde31cf2772f9dc5e84a7982de504635b",
           "receipt": "docs/execution/handoffs/W-02-review-round11.md"
+        },
+        {
+          "round": 11,
+          "reviewer": "/root/x05_reviewer",
+          "commit": "5c7b7933f9d694e4ad768d4211a119dda06b511a",
+          "status": "changes_requested",
+          "sourceCommit": "6b85c3afde31cf2772f9dc5e84a7982de504635b",
+          "receipt": "docs/execution/handoffs/W-02-review-round11.md",
+          "integratedCommit": "6051d88f724fe6fe85159b34c5c35d594d3d1e01"
         }
       ],
       "implementationCommit": "ff23e1b939f04c1136cba8134d3c9ae505094dba",
@@ -5236,7 +5244,7 @@
       ]
     }
   },
-  "nextAction": "W-02 correction round eleven is ready for independent review at 6b85c3afde31cf2772f9dc5e84a7982de504635b; handoff a9609d0affcc2ec811ca860f22576771acf9a88a. W-03 waits on this executor review, F-05 remains capability-blocked, and G-01 keeps Arr writes blocked.",
+  "nextAction": "W-02 correction round twelve is in implementation from 6b85c3afde31cf2772f9dc5e84a7982de504635b, preserving raw invalid UTF-8 and escaped unpaired surrogate marker evidence; W-03 waits on the corrected executor, F-05 remains capability-blocked, and G-01 keeps Arr writes blocked.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
