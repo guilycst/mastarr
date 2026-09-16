@@ -3346,7 +3346,7 @@
       "implementationCommit": "a4ad5a0fcfee724491513224f6b082a25be82e0a"
     },
     "W-04": {
-      "status": "changes_requested",
+      "status": "in_review",
       "owner": "/root",
       "baseSha": "4e5c46d503949a493067ae57d3395545a36021f8",
       "integratedSha": null,
@@ -3369,18 +3369,17 @@
         "Correction round two dispatched from c1f0fee400eda67e6440f82c3f472a56e111a1b0 to /root/x05_implementer for R2a/R2b only: rejected current step must project WorkflowNeedsReview, and same-decision fresh-key replay must preserve immutable actor/caller/reason evidence. Product remains scoped to internal/reviews/ and internal/workflows/.",
         "Correction round two product c05777cda74b8e3940d633c01495aae86a89b73b and handoff 8f012eb0a9e1b7bc6ee227460886d477d7979c01 complete from a2e1fdeb5b8bad2a7280beb739b9157ff9a5ff28; R2a rejected-step needs_review projection and R2b immutable replay attribution regressions pass, ready for independent review.",
         "Independent W-04 correction round-two receipt 128674e1de36944720a8dbccd010fa110c2b9f4c integrated as 86f629a: R2a needs_review projection and R2b immutable replay attribution closed; R2c present non-reject decision markers (approve/unknown/empty/null) are re-queued instead of failing closed. Focused/race/vet/full offline guardrails pass; one P2 remains.",
-        "Correction round three dispatched from c48134c3b571c83b5825100ffd7f280c7c19ed0b to /root/x05_implementer for R2c only: present non-reject decision markers must fail closed with unchanged durable state; four-case Sync regression required."
+        "Correction round three dispatched from c48134c3b571c83b5825100ffd7f280c7c19ed0b to /root/x05_implementer for R2c only: present non-reject decision markers must fail closed with unchanged durable state; four-case Sync regression required.",
+        "Correction round three product 780c00e92498660c08b6ac67259bbb4147c58531 and handoff 83429eac6e73575a4d6642dcd29b105c6d218285 complete from 52bda9ca5c2b820c39c84b8a4f54695315937fae; R2c contradictory decision-marker fail-closed regression passes, ready for independent review."
       ],
       "review": {
-        "status": "changes_requested",
-        "decision": "changes_requested",
+        "status": "pending",
+        "decision": "pending",
         "reviewer": "/root/x05_reviewer",
-        "commit": "128674e1de36944720a8dbccd010fa110c2b9f4c",
-        "findings": [
-          "R2c P2: present contradictory decision markers other than reject are treated as ordinary blocked state and Sync changes blocked to queued instead of returning ErrWorkflowConflict with unchanged evidence."
-        ],
-        "round": 3,
-        "integratedCommit": "86f629a"
+        "commit": null,
+        "findings": [],
+        "round": 4,
+        "integratedCommit": null
       },
       "dispatch": {
         "assignedAt": "2026-09-16",
@@ -3409,10 +3408,10 @@
           "GOWORK=off go vet, go mod verify, generation/API/Vacuum, architecture/lint/planning/full guardrails",
           "Linux amd64/arm64 CGO-free builds"
         ],
-        "reviewPath": "docs/execution/handoffs/W-04-review-round3.md",
+        "reviewPath": "docs/execution/handoffs/W-04-review-round4.md",
         "handoffPath": "docs/execution/handoffs/W-04.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "correction_dispatched",
+        "status": "review_pending",
         "dependencyCommits": {
           "W-03-approved": "a4ad5a0fcfee724491513224f6b082a25be82e0a",
           "W-03-state-closure": "4e5c46d503949a493067ae57d3395545a36021f8"
@@ -3423,9 +3422,9 @@
         },
         "implementationCommit": "2821b5bf8926849423c93fa7e862fd38b83035bc",
         "handoffCommit": "704ec47524cef4108a3e947c0c0166f6894ed610",
-        "reviewSourceCommit": "c05777cda74b8e3940d633c01495aae86a89b73b",
-        "reviewCommit": "128674e1de36944720a8dbccd010fa110c2b9f4c",
-        "reviewIntegrationCommit": "86f629a",
+        "reviewSourceCommit": "780c00e92498660c08b6ac67259bbb4147c58531",
+        "reviewCommit": null,
+        "reviewIntegrationCommit": null,
         "previousAttempt": {
           "owner": "/root/x05_implementer",
           "status": "interrupted",
@@ -3493,21 +3492,21 @@
           "reason": "two bounded implementer attempts produced no workflow files; preserve the completed review slice and implement the minimum ordered composition directly",
           "status": "complete"
         },
-        "correctionStatus": "in_progress",
+        "correctionStatus": "review_pending",
         "correctionRound": 3,
         "correctionOwner": "/root/x05_implementer",
-        "correctionBaseSha": "c48134c3b571c83b5825100ffd7f280c7c19ed0b",
-        "correctionDispatchCheckpoint": "c48134c3b571c83b5825100ffd7f280c7c19ed0b",
+        "correctionBaseSha": "52bda9ca5c2b820c39c84b8a4f54695315937fae",
+        "correctionDispatchCheckpoint": "52bda9ca5c2b820c39c84b8a4f54695315937fae",
         "correctionReviewPath": "docs/execution/handoffs/W-04-review-round4.md",
         "correctionHandoffPath": "docs/execution/handoffs/W-04-correction-round3.md",
         "correctionReviewer": "/root/x05_reviewer",
         "priorReviewCommit": "128674e1de36944720a8dbccd010fa110c2b9f4c",
         "priorReviewIntegrationCommit": "c48134c3b571c83b5825100ffd7f280c7c19ed0b",
-        "waitingOn": "/root/x05_implementer",
-        "waitingReason": "bounded correction implementation for R2c",
-        "correctionImplementationCommit": null,
-        "correctionHandoffCommit": null,
-        "correctionReviewSourceCommit": null,
+        "waitingOn": "/root/x05_reviewer",
+        "waitingReason": "independent review of correction round three",
+        "correctionImplementationCommit": "780c00e92498660c08b6ac67259bbb4147c58531",
+        "correctionHandoffCommit": "83429eac6e73575a4d6642dcd29b105c6d218285",
+        "correctionReviewSourceCommit": "780c00e92498660c08b6ac67259bbb4147c58531",
         "priorCorrectionRound": 2,
         "priorCorrectionImplementationCommit": "c05777cda74b8e3940d633c01495aae86a89b73b",
         "priorCorrectionHandoffCommit": "8f012eb0a9e1b7bc6ee227460886d477d7979c01"
@@ -3539,6 +3538,14 @@
           "sourceCommit": "c05777cda74b8e3940d633c01495aae86a89b73b",
           "receipt": "docs/execution/handoffs/W-04-review-round3.md",
           "integratedCommit": "86f629a"
+        },
+        {
+          "round": 4,
+          "reviewer": "/root/x05_reviewer",
+          "commit": null,
+          "status": "review_pending",
+          "sourceCommit": "780c00e92498660c08b6ac67259bbb4147c58531",
+          "receipt": "docs/execution/handoffs/W-04-review-round4.md"
         }
       ]
     },
@@ -5485,7 +5492,7 @@
       ]
     }
   },
-  "nextAction": "W-04 correction round 3 is dispatched from c48134c3b571c83b5825100ffd7f280c7c19ed0b to /root/x05_implementer. Fix R2c fail-closed decision-marker handling, add approve/unknown/empty/null Sync regressions with unchanged blocked evidence, then submit product and handoff SHAs for independent review. Keep F-05 capability-blocked and G-01 Arr native writes blocked.",
+  "nextAction": "W-04 correction round 3 product 780c00e92498660c08b6ac67259bbb4147c58531 and handoff 83429eac6e73575a4d6642dcd29b105c6d218285 are ready for independent review. Recheck R2c and all prior W-04 evidence, then record an exact receipt before integration. Keep F-05 capability-blocked and G-01 Arr native writes blocked.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
