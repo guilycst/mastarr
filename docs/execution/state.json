@@ -2419,9 +2419,19 @@
         "Implement the root Jellyfin refresh adapter over the published standalone client. Keep refresh acceptance separate from later library visibility, preserve the frozen refresh port, and leave item refresh unsupported unless the client contract and tested scope support it.",
         "No Seerr writes, live services, credentials, local replace directives or go.work dependencies. Root adapters translate client DTOs and typed errors without leaking generated upstream types.",
         "38f4999910b01097b55ee1f09dd463bc9add981b X-09 product commit adds the Jellyfin refresh adapter and synthetic tests; 4ca6fbed07cc1766cc620f180e9a58ad80927de5 records its handoff.",
-        "f2bf30f97068f98606251b668528afd18e479e3f coordinator commit wires clients/jellyfin v0.0.0-20260915195508-4eee8e84eff5 into the root module without replace or go.work."
+        "f2bf30f97068f98606251b668528afd18e479e3f coordinator commit wires clients/jellyfin v0.0.0-20260915195508-4eee8e84eff5 into the root module without replace or go.work.",
+        "4f611b5a988c89b73143a05ff792763de091edbb independent review requests one P1 capability-gate correction; 2535a1200392337eae1735acd200cd4ff47b9d6d integrates the review receipt."
       ],
-      "review": null,
+      "review": {
+        "status": "changes_requested",
+        "decision": "changes_requested",
+        "reviewer": "/root/x05_reviewer",
+        "commit": "4f611b5a988c89b73143a05ff792763de091edbb",
+        "findings": [
+          "P1: Capabilities reports jellyfin.refresh.library supported and Refresh dispatches POST without a version-bound native observation; fail closed as unknown with zero-POST missing, unknown and mismatch regressions before enabling the capability."
+        ],
+        "round": 1
+      },
       "dispatch": {
         "assignedAt": "2026-09-16",
         "model": "gpt-5.6-luna",
@@ -2447,12 +2457,33 @@
         "reviewPath": "docs/execution/handoffs/X-09-review-round1.md",
         "handoffPath": "docs/execution/handoffs/X-09.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "review_pending",
+        "status": "correction_pending",
         "implementationCommit": "38f4999910b01097b55ee1f09dd463bc9add981b",
         "handoffCommit": "4ca6fbed07cc1766cc620f180e9a58ad80927de5",
         "reviewSourceCommit": "38f4999910b01097b55ee1f09dd463bc9add981b",
-        "manifestIntegrationCommit": "f2bf30f97068f98606251b668528afd18e479e3f"
-      }
+        "manifestIntegrationCommit": "f2bf30f97068f98606251b668528afd18e479e3f",
+        "reviewCommit": "4f611b5a988c89b73143a05ff792763de091edbb",
+        "reviewIntegrationCommit": "2535a1200392337eae1735acd200cd4ff47b9d6d",
+        "reviewRound": 1,
+        "correctionRound": 1,
+        "correctionOwner": "/root/x05_implementer",
+        "correctionBaseSha": "38f4999910b01097b55ee1f09dd463bc9add981b",
+        "correctionReviewPath": "docs/execution/handoffs/X-09-review-round2.md",
+        "correctionHandoffPath": "docs/execution/handoffs/X-09-correction-round1.md",
+        "correctionReviewer": "/root/x05_reviewer",
+        "correctionStatus": "implementation"
+      },
+      "reviewHistory": [
+        {
+          "round": 1,
+          "reviewer": "/root/x05_reviewer",
+          "commit": "4f611b5a988c89b73143a05ff792763de091edbb",
+          "status": "changes_requested",
+          "sourceCommit": "38f4999910b01097b55ee1f09dd463bc9add981b",
+          "receipt": "docs/execution/handoffs/X-09-review-round1.md",
+          "integratedCommit": "2535a1200392337eae1735acd200cd4ff47b9d6d"
+        }
+      ]
     },
     "W-01": {
       "status": "done",
@@ -4665,7 +4696,7 @@
       ]
     }
   },
-  "nextAction": "X-09 product 38f4999910b01097b55ee1f09dd463bc9add981b and handoff 4ca6fbed07cc1766cc620f180e9a58ad80927de5 are ready for independent review; root dependency wiring is f2bf30f97068f98606251b668528afd18e479e3f. X-20 transport and G-01 remain open.",
+  "nextAction": "X-09 correction round one is dispatched after review receipt 4f611b5a988c89b73143a05ff792763de091edbb: make Jellyfin refresh capability unknown and zero-dispatch until a version-bound observation matches. X-20 transport and G-01 remain open.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
