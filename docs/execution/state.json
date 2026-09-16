@@ -3353,7 +3353,8 @@
       "evidence": [
         "dispatched from 4e5c46d503949a493067ae57d3395545a36021f8 after W-03 approval product a4ad5a0fcfee724491513224f6b082a25be82e0a and state closure 4e5c46d503949a493067ae57d3395545a36021f8.",
         "Own only internal/workflows/, internal/reviews/ and docs/execution/handoffs/W-04.md. Implement ordered workflows and review decisions on existing planning, execution and storage ports; do not edit state.json, API/UI contracts, adapters, clients, storage schemas or workers.",
-        "Keep W-03 gates intact: F-05 filesystem organize operations remain explicit fail-closed where unsupported; G-01 Arr native registration/import writes remain blocked; Seerr remains read-only."
+        "Keep W-03 gates intact: F-05 filesystem organize operations remain explicit fail-closed where unsupported; G-01 Arr native registration/import writes remain blocked; Seerr remains read-only.",
+        "The first W-04 implementation attempt was interrupted after a bounded window with no files or handoff; no product changes were made and the checkout remains at the recorded base."
       ],
       "review": null,
       "dispatch": {
@@ -3386,7 +3387,7 @@
         "reviewPath": "docs/execution/handoffs/W-04-review-round1.md",
         "handoffPath": "docs/execution/handoffs/W-04.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "implementation",
+        "status": "interrupted",
         "dependencyCommits": {
           "W-03-approved": "a4ad5a0fcfee724491513224f6b082a25be82e0a",
           "W-03-state-closure": "4e5c46d503949a493067ae57d3395545a36021f8"
@@ -3399,7 +3400,12 @@
         "handoffCommit": null,
         "reviewSourceCommit": null,
         "reviewCommit": null,
-        "reviewIntegrationCommit": null
+        "reviewIntegrationCommit": null,
+        "previousAttempt": {
+          "owner": "/root/x05_implementer",
+          "status": "interrupted",
+          "reason": "bounded implementation window exceeded without files or handoff; coordinator is narrowing the first retry slice while preserving the same owned paths"
+        }
       },
       "reviewHistory": []
     },
@@ -5346,7 +5352,7 @@
       ]
     }
   },
-  "nextAction": "W-04 implementation is dispatched from 4e5c46d503949a493067ae57d3395545a36021f8. The implementer owns only internal/workflows/ and internal/reviews/; await its product and handoff, then send the independent review. Keep F-05 capability-blocked and G-01 Arr native writes blocked.",
+  "nextAction": "W-04 first implementation attempt was interrupted without product changes. Record this checkpoint, then dispatch a narrower review-decision slice within internal/reviews/ before composing ordered recipes in internal/workflows/; keep the same independent reviewer and capability gates.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
