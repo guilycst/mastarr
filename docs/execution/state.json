@@ -963,18 +963,19 @@
         "ec768b048cb46121c8bd09ea87d79dc79de2308e independent correction review round two requests two P1 fixes; 04eac468167386f4810bb327941785a7c90ea4d5 integrates the receipt. Publication identity/cleanup binding and immutable restore manifest binding remain blockers; all prior findings and guardrails pass.",
         "6adb5a5cf2ce7d9effd5d4ba6c2a8737d9e28b3a correction round two binds verified staging identity through publication/cleanup and snapshots exact restore manifest bytes; fe0b2b3e7299e5ea7dac8be6bec9d819d81fa115 records the handoff and checks.",
         "e5e51d9d7476c88b54732a0f4a5b42ccd8e8754d independent correction review round three requests one P1: a held staging root does not bind child contents after final verification; 7980ac79d30179d0f6165957b272db7675932ad8 integrates the receipt. Prior substitution/cleanup and source-manifest findings are accepted; exact child-set/report binding remains a blocker.",
-        "91e63363c9a2c15bce8964d19508a1888a97ba51 correction round three verifies the complete staged child set and destination read-back across publication, returning the report proven by the published destination; dc743ca02c9925985294db26c0c5c5ff42805d40 records the handoff and full checks."
+        "91e63363c9a2c15bce8964d19508a1888a97ba51 correction round three verifies the complete staged child set and destination read-back across publication, returning the report proven by the published destination; dc743ca02c9925985294db26c0c5c5ff42805d40 records the handoff and full checks.",
+        "766903206caba0c59e4febed252b2a19e41ccd5b independent correction review round four requests one P1: final child/read-back validation remains separate from native publication and changed content can become visible at the destination; 22fd87f285880c7cdacf55ea406b0eba8bfb518c integrates the receipt. Successful report mismatch is closed, but reject-and-publish-nothing is not."
       ],
       "review": {
         "status": "changes_requested",
         "decision": "changes_requested",
         "reviewer": "/root/x05_reviewer",
-        "commit": "e5e51d9d7476c88b54732a0f4a5b42ccd8e8754d",
-        "integratedCommit": "7980ac79d30179d0f6165957b272db7675932ad8",
+        "commit": "766903206caba0c59e4febed252b2a19e41ccd5b",
+        "integratedCommit": "22fd87f285880c7cdacf55ea406b0eba8bfb518c",
         "findings": [
-          "P1: verified staging contents can change after final Verify/read-back without detection; Create can publish an unexpected child and Restore can publish a changed manifest while returning the earlier report. Bind the complete child set and report through publication or fail closed."
+          "P1: final child/read-back validation and native rename are separate; a child or manifest mutation after the last check can be published and return ErrPublicationUncertain with the changed destination visible. The required fail-closed reject-and-publish-nothing boundary remains open."
         ],
-        "round": 3
+        "round": 4
       },
       "dispatch": {
         "assignedAt": "2026-09-16",
@@ -1002,31 +1003,25 @@
         "reviewPath": "docs/execution/handoffs/D-04-review-round1.md",
         "handoffPath": "docs/execution/handoffs/D-04.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "review_pending",
+        "status": "implementation",
         "implementationCommit": "9b682b56306d450d582e4ec23f6f8e5e1df37243",
         "handoffCommit": "0d8bccedf51cc25490167cb5692374807f2fc90c",
         "reviewSourceCommit": "9b682b56306d450d582e4ec23f6f8e5e1df37243",
         "reviewCommit": "ca64d535cb891889553e62ae516a917ef72fc962",
         "reviewIntegrationCommit": "bfc411a663a430a009d8d7b97864fb502179b9f0",
         "reviewRound": 1,
-        "correctionRound": 3,
+        "correctionRound": 4,
         "correctionOwner": "/root/x05_implementer",
-        "correctionBaseSha": "6adb5a5cf2ce7d9effd5d4ba6c2a8737d9e28b3a",
-        "correctionReviewPath": "docs/execution/handoffs/D-04-review-round4.md",
-        "correctionHandoffPath": "docs/execution/handoffs/D-04-correction-round3.md",
+        "correctionBaseSha": "91e63363c9a2c15bce8964d19508a1888a97ba51",
+        "correctionReviewPath": "docs/execution/handoffs/D-04-review-round5.md",
+        "correctionHandoffPath": "docs/execution/handoffs/D-04-correction-round4.md",
         "correctionReviewer": "/root/x05_reviewer",
-        "correctionStatus": "review_pending",
-        "priorCorrectionRound": 2,
-        "priorCorrectionImplementationCommit": "6adb5a5cf2ce7d9effd5d4ba6c2a8737d9e28b3a",
-        "priorCorrectionHandoffCommit": "fe0b2b3e7299e5ea7dac8be6bec9d819d81fa115",
-        "priorCorrectionReviewCommit": "e5e51d9d7476c88b54732a0f4a5b42ccd8e8754d",
-        "priorCorrectionReviewIntegrationCommit": "7980ac79d30179d0f6165957b272db7675932ad8",
-        "correctionImplementationCommit": "91e63363c9a2c15bce8964d19508a1888a97ba51",
-        "correctionHandoffCommit": "dc743ca02c9925985294db26c0c5c5ff42805d40",
-        "correctionProductCommits": [
-          "91e63363c9a2c15bce8964d19508a1888a97ba51"
-        ],
-        "correctionReviewSourceCommit": "91e63363c9a2c15bce8964d19508a1888a97ba51"
+        "correctionStatus": "implementation",
+        "priorCorrectionRound": 3,
+        "priorCorrectionImplementationCommit": "91e63363c9a2c15bce8964d19508a1888a97ba51",
+        "priorCorrectionHandoffCommit": "dc743ca02c9925985294db26c0c5c5ff42805d40",
+        "priorCorrectionReviewCommit": "766903206caba0c59e4febed252b2a19e41ccd5b",
+        "priorCorrectionReviewIntegrationCommit": "22fd87f285880c7cdacf55ea406b0eba8bfb518c"
       },
       "reviewHistory": [
         {
@@ -1055,6 +1050,15 @@
           "sourceCommit": "6adb5a5cf2ce7d9effd5d4ba6c2a8737d9e28b3a",
           "receipt": "docs/execution/handoffs/D-04-review-round3.md",
           "integratedCommit": "7980ac79d30179d0f6165957b272db7675932ad8"
+        },
+        {
+          "round": 4,
+          "reviewer": "/root/x05_reviewer",
+          "commit": "766903206caba0c59e4febed252b2a19e41ccd5b",
+          "status": "changes_requested",
+          "sourceCommit": "91e63363c9a2c15bce8964d19508a1888a97ba51",
+          "receipt": "docs/execution/handoffs/D-04-review-round4.md",
+          "integratedCommit": "22fd87f285880c7cdacf55ea406b0eba8bfb518c"
         }
       ]
     },
@@ -4818,7 +4822,7 @@
       ]
     }
   },
-  "nextAction": "D-04 correction round three is ready for independent review at 91e63363c9a2c15bce8964d19508a1888a97ba51; handoff dc743ca02c9925985294db26c0c5c5ff42805d40. X-08 remains queued; X-20 transport and G-01 remain open.",
+  "nextAction": "D-04 correction round four is dispatched for a fail-closed final-check/publication boundary after review receipt 766903206caba0c59e4febed252b2a19e41ccd5b. X-08 remains queued; X-20 transport and G-01 remain open.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
