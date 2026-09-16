@@ -414,12 +414,17 @@ func (service *Service) Approve(ctx context.Context, request ApprovalRequest) (A
 			if existingDecision.PlanID != normalized.PlanID || existingDecision.PlanRevision != normalized.Revision || existingDecision.PlanDigest != normalized.Digest || existingDecision.Decision != string(normalized.Decision) {
 				return ErrDecisionConflict
 			}
-			if err := ensureWorkflowBinding(ctx, tx, queries, normalized, snapshot.Plan, decisionID, actionID, false); err != nil {
+			workflowDeadline, err := ensureWorkflowBinding(ctx, tx, queries, normalized, snapshot.Plan, decisionID, actionID, false)
+			if err != nil {
 				return err
 			}
 			if normalized.Decision == DecisionApprove {
-				if _, err := queries.GetActionRun(ctx, actionID); err != nil {
+				action, actionErr := queries.GetActionRun(ctx, actionID)
+				if actionErr != nil {
 					return fmt.Errorf("%w: approved decision has no action run", ErrDecisionConflict)
+				}
+				if !sameNullableString(action.DeadlineAt, workflowDeadline) {
+					return fmt.Errorf("%w: approved action deadline is not bound to workflow", ErrDecisionConflict)
 				}
 			}
 			result = ApprovalResult{DecisionID: decisionID, PlanID: normalized.PlanID, Revision: normalized.Revision, Digest: normalized.Digest, Decision: normalized.Decision, WorkflowID: normalized.WorkflowID, WorkflowStepID: normalized.WorkflowStepID, Replayed: true}
@@ -443,7 +448,8 @@ func (service *Service) Approve(ctx context.Context, request ApprovalRequest) (A
 				return fmt.Errorf("%w: %v", ErrPlanConflict, err)
 			}
 		}
-		if err := ensureWorkflowBinding(ctx, tx, queries, normalized, snapshot.Plan, decisionID, actionID, true); err != nil {
+		workflowDeadline, err := ensureWorkflowBinding(ctx, tx, queries, normalized, snapshot.Plan, decisionID, actionID, true)
+		if err != nil {
 			return err
 		}
 		if _, err := queries.CreateReviewDecision(ctx, &sqlc.CreateReviewDecisionParams{
@@ -455,7 +461,7 @@ func (service *Service) Approve(ctx context.Context, request ApprovalRequest) (A
 		result = ApprovalResult{DecisionID: decisionID, PlanID: normalized.PlanID, Revision: normalized.Revision, Digest: normalized.Digest, Decision: normalized.Decision, WorkflowID: normalized.WorkflowID, WorkflowStepID: normalized.WorkflowStepID}
 		if normalized.Decision == DecisionApprove {
 			if _, err := queries.CreateActionRun(ctx, &sqlc.CreateActionRunParams{
-				ID: actionID, PlanID: normalized.PlanID, PlanRevision: normalized.Revision, PlanDigest: normalized.Digest, State: string(domain.ActionQueued), DesiredStateJson: string(snapshot.DesiredState), Version: 1, OutcomeJson: `{}`, UnresolvedCount: 0,
+				ID: actionID, PlanID: normalized.PlanID, PlanRevision: normalized.Revision, PlanDigest: normalized.Digest, State: string(domain.ActionQueued), DesiredStateJson: string(snapshot.DesiredState), DeadlineAt: workflowDeadline, Version: 1, OutcomeJson: `{}`, UnresolvedCount: 0,
 				CreatedAt: normalized.At.Format(time.RFC3339Nano), UpdatedAt: normalized.At.Format(time.RFC3339Nano),
 			}); err != nil {
 				return fmt.Errorf("%w: create action run: %v", ErrDecisionConflict, err)
@@ -585,32 +591,34 @@ func validateApprovalPrerequisites(plan planning.Plan) error {
 // + step linkage in one transaction and makes cancellation a serializable
 // gate. Workflow-specific prerequisite ordering is checked by workflows before
 // this function is called.
-func ensureWorkflowBinding(ctx context.Context, tx *sql.Tx, queries *sqlc.Queries, request normalizedApproval, plan planning.Plan, decisionID, actionID string, creating bool) error {
+func ensureWorkflowBinding(ctx context.Context, tx *sql.Tx, queries *sqlc.Queries, request normalizedApproval, plan planning.Plan, decisionID, actionID string, creating bool) (sql.NullString, error) {
 	if request.WorkflowID == "" && request.WorkflowStepID == "" {
-		return nil
+		return sql.NullString{}, nil
 	}
 	if request.WorkflowID == "" || request.WorkflowStepID == "" {
-		return fmt.Errorf("%w: workflow and step must be supplied together", ErrInvalidDecision)
+		return sql.NullString{}, fmt.Errorf("%w: workflow and step must be supplied together", ErrInvalidDecision)
 	}
 	run, err := queries.GetWorkflowRun(ctx, request.WorkflowID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ErrPrerequisite
+		return sql.NullString{}, ErrPrerequisite
 	}
 	if err != nil {
-		return fmt.Errorf("load workflow binding: %w", err)
+		return sql.NullString{}, fmt.Errorf("load workflow binding: %w", err)
 	}
 	if run.State == string(domain.WorkflowCancelled) || run.State == string(domain.WorkflowDeadlineExceeded) || run.State == string(domain.WorkflowFailed) || run.State == string(domain.WorkflowSucceeded) {
-		return ErrWorkflowClosed
+		return sql.NullString{}, ErrWorkflowClosed
 	}
+	workflowDeadline := sql.NullString{}
 	if run.DeadlineAt.Valid {
 		deadline, parseErr := time.Parse(time.RFC3339Nano, run.DeadlineAt.String)
 		if parseErr != nil || !request.Now.Before(deadline.UTC()) {
-			return ErrWorkflowClosed
+			return sql.NullString{}, ErrWorkflowClosed
 		}
+		workflowDeadline = sql.NullString{String: deadline.UTC().Format(time.RFC3339Nano), Valid: true}
 	}
 	steps, err := queries.ListWorkflowSteps(ctx, request.WorkflowID)
 	if err != nil {
-		return fmt.Errorf("load workflow steps: %w", err)
+		return sql.NullString{}, fmt.Errorf("load workflow steps: %w", err)
 	}
 	var matched *sqlc.WorkflowStep
 	for _, step := range steps {
@@ -620,61 +628,79 @@ func ensureWorkflowBinding(ctx context.Context, tx *sql.Tx, queries *sqlc.Querie
 		}
 	}
 	if matched == nil || !matched.ActionPlanID.Valid || !matched.ActionPlanRevision.Valid || matched.ActionPlanID.String != request.PlanID || matched.ActionPlanRevision.Int64 != request.Revision {
-		return fmt.Errorf("%w: workflow step is not bound to the requested plan", ErrPrerequisite)
+		return sql.NullString{}, fmt.Errorf("%w: workflow step is not bound to the requested plan", ErrPrerequisite)
 	}
 	if matched.State != string(domain.StepQueued) && matched.State != string(domain.StepBlocked) {
-		return ErrDecisionConflict
+		return sql.NullString{}, ErrDecisionConflict
 	}
 	metadata := map[string]json.RawMessage{}
 	if strings.TrimSpace(matched.OutcomeJson) != "" {
 		if err := json.Unmarshal([]byte(matched.OutcomeJson), &metadata); err != nil || metadata == nil {
-			return fmt.Errorf("%w: workflow step evidence is malformed", ErrDecisionConflict)
+			return sql.NullString{}, fmt.Errorf("%w: workflow step evidence is malformed", ErrDecisionConflict)
 		}
 	}
 	if raw, ok := metadata["decisionId"]; ok {
 		var existingDecision string
 		if json.Unmarshal(raw, &existingDecision) != nil || existingDecision != decisionID {
-			return ErrDecisionConflict
+			return sql.NullString{}, ErrDecisionConflict
 		}
 	}
 	if raw, ok := metadata["actionRunId"]; ok && request.Decision == DecisionApprove {
 		var existingAction string
 		if json.Unmarshal(raw, &existingAction) != nil || existingAction != actionID {
-			return ErrDecisionConflict
+			return sql.NullString{}, ErrDecisionConflict
 		}
 	}
 	if raw, ok := metadata["actionRunId"]; ok && request.Decision == DecisionReject && string(raw) != "null" {
-		return ErrDecisionConflict
+		return sql.NullString{}, ErrDecisionConflict
 	}
 	decisionJSON, _ := json.Marshal(decisionID)
 	metadata["decisionId"] = decisionJSON
 	gateJSON, _ := json.Marshal(string(plan.RequiredApproval))
 	metadata["approvalRequired"] = gateJSON
+	stepState := domain.StepQueued
 	if request.Decision == DecisionApprove {
 		actionJSON, _ := json.Marshal(actionID)
 		metadata["actionRunId"] = actionJSON
 	} else {
+		decisionJSON, _ := json.Marshal(string(DecisionReject))
+		metadata["decision"] = decisionJSON
+		if request.Reason != "" {
+			reasonJSON, _ := json.Marshal(request.Reason)
+			metadata["decisionReason"] = reasonJSON
+		}
 		delete(metadata, "actionRunId")
+		stepState = domain.StepBlocked
 	}
 	encoded, marshalErr := json.Marshal(metadata)
 	if marshalErr != nil {
-		return fmt.Errorf("%w: encode workflow step binding: %v", ErrInvalidDecision, marshalErr)
+		return sql.NullString{}, fmt.Errorf("%w: encode workflow step binding: %v", ErrInvalidDecision, marshalErr)
 	}
 	if creating || string(encoded) != matched.OutcomeJson {
-		result, execErr := tx.ExecContext(ctx, `UPDATE workflow_steps SET outcome_json = ?, updated_at = ?, state = ? WHERE id = ? AND workflow_id = ? AND state IN ('queued', 'blocked')`, string(encoded), request.At.Format(time.RFC3339Nano), string(domain.StepQueued), request.WorkflowStepID, request.WorkflowID)
+		result, execErr := tx.ExecContext(ctx, `UPDATE workflow_steps SET outcome_json = ?, updated_at = ?, state = ? WHERE id = ? AND workflow_id = ? AND state IN ('queued', 'blocked')`, string(encoded), request.At.Format(time.RFC3339Nano), string(stepState), request.WorkflowStepID, request.WorkflowID)
 		if execErr != nil {
-			return fmt.Errorf("%w: bind workflow step: %v", ErrDecisionConflict, execErr)
+			return sql.NullString{}, fmt.Errorf("%w: bind workflow step: %v", ErrDecisionConflict, execErr)
 		}
 		if affected, affectedErr := result.RowsAffected(); affectedErr != nil || affected != 1 {
-			return fmt.Errorf("%w: workflow step changed while binding", ErrDecisionConflict)
+			return sql.NullString{}, fmt.Errorf("%w: workflow step changed while binding", ErrDecisionConflict)
 		}
 	}
 	if request.Decision == DecisionApprove {
 		if _, err := tx.ExecContext(ctx, `UPDATE workflow_runs SET state = CASE WHEN state = 'awaiting_approval' THEN 'running' ELSE state END, updated_at = ? WHERE id = ?`, request.At.Format(time.RFC3339Nano), request.WorkflowID); err != nil {
-			return fmt.Errorf("%w: advance workflow state: %v", ErrDecisionConflict, err)
+			return sql.NullString{}, fmt.Errorf("%w: advance workflow state: %v", ErrDecisionConflict, err)
 		}
 	}
-	return nil
+	return workflowDeadline, nil
+}
+
+func sameNullableString(left, right sql.NullString) bool {
+	if left.Valid != right.Valid {
+		return false
+	}
+	if !left.Valid {
+		return true
+	}
+	return left.String == right.String
 }
 
 func createIdempotency(ctx context.Context, queries *sqlc.Queries, request normalizedApproval, requestDigest string, result ApprovalResult) error {

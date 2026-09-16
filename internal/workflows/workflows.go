@@ -15,7 +15,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -596,11 +595,6 @@ func (service *Service) ApproveStep(ctx context.Context, request ApprovalRequest
 	if err != nil {
 		return reviews.ApprovalResult{}, err
 	}
-	if request.Decision == reviews.DecisionReject {
-		if err := service.markRejected(ctx, workflow.ID, selected.ID, decision.DecisionID, now); err != nil {
-			return reviews.ApprovalResult{}, err
-		}
-	}
 	return decision, nil
 }
 
@@ -634,12 +628,13 @@ func (service *Service) AddStep(ctx context.Context, request AddStepRequest) (Wo
 	if len(request.IdempotencyScope) > maxKindBytes || len(request.IdempotencyKey) > 200 || request.IdempotencyKey == "" {
 		return Workflow{}, fmt.Errorf("%w: idempotency scope/key is invalid", ErrInvalidRecipe)
 	}
-	now := request.At
-	if now.IsZero() {
-		now = service.currentTime()
-	}
-	request.At = now.UTC()
-	resolved, err := service.resolveStep(ctx, request.Step, request.At)
+	trustedNow := service.currentTime()
+	callerAt := request.At
+	// Caller timestamps are metadata only. Lifecycle and plan-expiry decisions
+	// must use the service clock so an old timestamp cannot append to an
+	// expired workflow or revive an expired plan.
+	request.At = trustedNow
+	resolved, err := service.resolveStep(ctx, request.Step, trustedNow)
 	if err != nil {
 		return Workflow{}, err
 	}
@@ -679,6 +674,9 @@ func (service *Service) AddStep(ctx context.Context, request AddStepRequest) (Wo
 		}
 		if err := ensureOpen(row, request.At); err != nil {
 			return err
+		}
+		if !callerAt.IsZero() && callerAt.After(trustedNow) {
+			return fmt.Errorf("%w: append time is in the future", ErrInvalidRecipe)
 		}
 		steps, err := queries.ListWorkflowSteps(ctx, workflowID)
 		if err != nil {
@@ -877,25 +875,6 @@ func (service *Service) Cancel(ctx context.Context, request CancelRequest) (Work
 // CancelWorkflow is a convenience form for scheduler and API adapters.
 func (service *Service) CancelWorkflow(ctx context.Context, workflowID string) (Workflow, error) {
 	return service.Cancel(ctx, CancelRequest{WorkflowID: workflowID})
-}
-
-func (service *Service) markRejected(ctx context.Context, workflowID, stepID, decisionID string, at time.Time) error {
-	return withTx(ctx, service.store, func(tx *sql.Tx, queries *sqlc.Queries) error {
-		step, err := findWorkflowStep(ctx, queries, workflowID, stepID)
-		if err != nil {
-			return err
-		}
-		metadata, err := decodeMetadata(step.OutcomeJson)
-		if err != nil {
-			return err
-		}
-		metadata["decisionId"], _ = json.Marshal(decisionID)
-		metadata["decision"], _ = json.Marshal(string(reviews.DecisionReject))
-		if err := updateStepState(ctx, tx, step, domain.StepBlocked, metadata, at); err != nil {
-			return err
-		}
-		return nil
-	})
 }
 
 func (service *Service) normalizeCreate(ctx context.Context, request CreateRequest) (CreateRequest, []resolvedStep, storedRecipe, string, error) {
@@ -1548,7 +1527,3 @@ func withTx(ctx context.Context, store *storage.Store, fn func(*sql.Tx, *sqlc.Qu
 	}
 	return tx.Commit()
 }
-
-// Keep these imports and helpers intentionally local: workflow translation
-// must not expose sqlc or generated upstream types to the API/domain layer.
-var _ = sort.Slice

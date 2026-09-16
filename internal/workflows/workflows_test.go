@@ -3,6 +3,7 @@ package workflows
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/guilycst/mastarr/internal/ports"
 	"github.com/guilycst/mastarr/internal/reviews"
 	"github.com/guilycst/mastarr/internal/storage"
+	"github.com/guilycst/mastarr/internal/storage/sqlc"
 )
 
 var workflowTestNow = time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
@@ -104,6 +106,177 @@ func TestCancelClosesWorkflowAndPreventsLaterDispatch(t *testing.T) {
 	}
 }
 
+func TestApprovedWorkflowActionDeadlineFencesSQLiteDueAndClaim(t *testing.T) {
+	service, reviewService, store := newWorkflowService(t)
+	plan := workflowRegistrationPlan(t, "workflow-action-deadline", planning.ApprovalRegistration)
+	if _, err := reviewService.StorePlan(context.Background(), reviews.PlanSaveRequest{Plan: plan}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := workflowTestNow.Add(time.Minute)
+	workflow, err := service.Create(context.Background(), CreateRequest{
+		Name: "deadline-bound action", Steps: []StepSpec{{ID: "register", PlanID: plan.ID}},
+		DeadlineAt: deadline, At: workflowTestNow, IdempotencyKey: "create-action-deadline",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	approval, err := service.ApproveStep(context.Background(), ApprovalRequest{
+		WorkflowID: workflow.ID, StepID: "register", Decision: reviews.DecisionApprove,
+		IdempotencyKey: "approve-action-deadline", At: workflowTestNow,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var actionDeadline sql.NullString
+	if err := store.DB().QueryRow("SELECT deadline_at FROM action_runs WHERE id = ?", approval.ActionRunID).Scan(&actionDeadline); err != nil {
+		t.Fatal(err)
+	}
+	if !actionDeadline.Valid || actionDeadline.String != deadline.Format(time.RFC3339Nano) {
+		t.Fatalf("action deadline = %#v, want workflow deadline %s", actionDeadline, deadline.Format(time.RFC3339Nano))
+	}
+
+	expiredAt := deadline.Add(time.Second).Format(time.RFC3339Nano)
+	due, err := store.Queries().ListDueActionRuns(context.Background(), &sqlc.ListDueActionRunsParams{
+		Now: sql.NullString{String: expiredAt, Valid: true}, Limit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 0 {
+		t.Fatalf("due action runs after workflow deadline = %d, want zero", len(due))
+	}
+	_, err = store.Queries().ClaimActionRun(context.Background(), &sqlc.ClaimActionRunParams{
+		WorkerID:   sql.NullString{String: "worker-after-deadline", Valid: true},
+		LeaseUntil: sql.NullString{String: deadline.Add(time.Minute).Format(time.RFC3339Nano), Valid: true},
+		Now:        expiredAt, ID: approval.ActionRunID, Version: 1,
+	})
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("claim after workflow deadline error = %v, want sql.ErrNoRows", err)
+	}
+}
+
+func TestRejectedReviewAtomicallyProjectsBlockedStepAcrossRestart(t *testing.T) {
+	service, reviewService, store := newWorkflowService(t)
+	plan := workflowRegistrationPlan(t, "workflow-rejection", planning.ApprovalRegistration)
+	if _, err := reviewService.StorePlan(context.Background(), reviews.PlanSaveRequest{Plan: plan}); err != nil {
+		t.Fatal(err)
+	}
+	workflow, err := service.Create(context.Background(), CreateRequest{
+		Name: "rejected registration", Steps: []StepSpec{{ID: "register", PlanID: plan.ID}},
+		At: workflowTestNow, IdempotencyKey: "create-rejection",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err := reviewService.Approve(context.Background(), reviews.ApprovalRequest{
+		PlanID: plan.ID, Revision: plan.Revision, Digest: plan.Digest,
+		Decision: reviews.DecisionReject, Reason: "needs a narrower scope", Actor: "operator",
+		IdempotencyKey: "reject-registration", At: workflowTestNow,
+		WorkflowID: workflow.ID, WorkflowStepID: "register",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state, outcome string
+	if err := store.DB().QueryRow("SELECT state, outcome_json FROM workflow_steps WHERE id = ?", "register").Scan(&state, &outcome); err != nil {
+		t.Fatal(err)
+	}
+	if state != string(domain.StepBlocked) {
+		t.Fatalf("durable rejected step state = %q, want %q", state, domain.StepBlocked)
+	}
+	var metadata map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(outcome), &metadata); err != nil {
+		t.Fatal(err)
+	}
+	var recordedDecision, recordedReason string
+	if err := json.Unmarshal(metadata["decision"], &recordedDecision); err != nil || recordedDecision != string(reviews.DecisionReject) {
+		t.Fatalf("durable rejection decision = %q, want %q", recordedDecision, reviews.DecisionReject)
+	}
+	if err := json.Unmarshal(metadata["decisionReason"], &recordedReason); err != nil || recordedReason != "needs a narrower scope" {
+		t.Fatalf("durable rejection reason = %q, want persisted reason", recordedReason)
+	}
+	var actionCount int
+	if err := store.DB().QueryRow("SELECT count(*) FROM action_runs WHERE id = ?", decision.ActionRunID).Scan(&actionCount); err != nil {
+		t.Fatal(err)
+	}
+	if actionCount != 0 || decision.ActionRunID != "" {
+		t.Fatalf("rejected decision action = %q/count %d, want no action", decision.ActionRunID, actionCount)
+	}
+
+	// A fresh service instance must observe the committed rejection without
+	// relying on a client retry or a second post-decision transaction.
+	restartedReviews, err := reviews.NewWithOptions(reviews.Options{Store: store, Now: func() time.Time { return workflowTestNow }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := NewWithOptions(Options{Store: store, Reviews: restartedReviews, Now: func() time.Time { return workflowTestNow }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projected, err := restarted.Sync(context.Background(), workflow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projected.Steps[0].State != domain.StepBlocked || projected.State != domain.WorkflowRunning {
+		t.Fatalf("restarted rejection projection = state %q/step %q, want running/blocked", projected.State, projected.Steps[0].State)
+	}
+	if _, err := restarted.ApproveStep(context.Background(), ApprovalRequest{
+		WorkflowID: workflow.ID, StepID: "register", Decision: reviews.DecisionApprove,
+		IdempotencyKey: "approve-after-rejection", At: workflowTestNow,
+	}); !errors.Is(err, reviews.ErrDecisionConflict) {
+		t.Fatalf("approval after durable rejection error = %v, want reviews.ErrDecisionConflict", err)
+	}
+}
+
+func TestAddStepUsesTrustedClockForDeadlineAndCallerTimestamp(t *testing.T) {
+	service, reviewService, _ := newWorkflowService(t)
+	first := workflowRegistrationPlan(t, "workflow-clock-first", planning.ApprovalRegistration)
+	second := workflowRegistrationPlan(t, "workflow-clock-second", planning.ApprovalRegistration)
+	expiring := workflowRegistrationPlanAt(t, "workflow-clock-expiring", planning.ApprovalRegistration, workflowTestNow, workflowTestNow.Add(time.Minute))
+	for _, plan := range []planning.Plan{first, second, expiring} {
+		if _, err := reviewService.StorePlan(context.Background(), reviews.PlanSaveRequest{Plan: plan}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deadline := workflowTestNow.Add(time.Minute)
+	workflow, err := service.Create(context.Background(), CreateRequest{
+		Name: "trusted lifecycle clock", Steps: []StepSpec{{ID: "first-expired", PlanID: first.ID}},
+		DeadlineAt: deadline, At: workflowTestNow, IdempotencyKey: "create-trusted-clock",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.now = func() time.Time { return deadline.Add(time.Minute) }
+	if _, err := service.AddStep(context.Background(), AddStepRequest{
+		WorkflowID: workflow.ID, Step: StepSpec{ID: "backdated", PlanID: second.ID},
+		IdempotencyKey: "append-backdated", At: workflowTestNow,
+	}); !errors.Is(err, ErrWorkflowClosed) {
+		t.Fatalf("backdated append after trusted deadline error = %v, want ErrWorkflowClosed", err)
+	}
+
+	service.now = func() time.Time { return workflowTestNow }
+	openWorkflow, err := service.Create(context.Background(), CreateRequest{
+		Name: "future timestamp", Steps: []StepSpec{{ID: "first-open", PlanID: first.ID}},
+		At: workflowTestNow, IdempotencyKey: "create-future-timestamp",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.AddStep(context.Background(), AddStepRequest{
+		WorkflowID: openWorkflow.ID, Step: StepSpec{ID: "future", PlanID: second.ID},
+		IdempotencyKey: "append-future", At: workflowTestNow.Add(time.Second),
+	}); !errors.Is(err, ErrInvalidRecipe) {
+		t.Fatalf("future append timestamp error = %v, want ErrInvalidRecipe", err)
+	}
+	service.now = func() time.Time { return workflowTestNow.Add(2 * time.Minute) }
+	if _, err := service.AddStep(context.Background(), AddStepRequest{
+		WorkflowID: openWorkflow.ID, Step: StepSpec{ID: "expired-plan", PlanID: expiring.ID},
+		IdempotencyKey: "append-expired-plan", At: workflowTestNow,
+	}); !errors.Is(err, ErrPrerequisite) {
+		t.Fatalf("append with expired plan and backdated timestamp error = %v, want ErrPrerequisite", err)
+	}
+}
+
 func TestAddStepUpdatesRecipeAndReplaysIdempotently(t *testing.T) {
 	service, reviewService, _ := newWorkflowService(t)
 	first := workflowRegistrationPlan(t, "workflow-add-first", planning.ApprovalRegistration)
@@ -189,6 +362,10 @@ func newWorkflowService(t *testing.T) (*Service, *reviews.Service, *storage.Stor
 }
 
 func workflowRegistrationPlan(t *testing.T, id string, gate planning.ApprovalKind) planning.Plan {
+	return workflowRegistrationPlanAt(t, id, gate, workflowTestNow, workflowTestNow.Add(time.Hour))
+}
+
+func workflowRegistrationPlanAt(t *testing.T, id string, gate planning.ApprovalKind, createdAt, expiresAt time.Time) planning.Plan {
 	t.Helper()
 	connection := domain.ConfigID("sonarr-main")
 	monitored := false
@@ -196,7 +373,7 @@ func workflowRegistrationPlan(t *testing.T, id string, gate planning.ApprovalKin
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := planning.Build(planning.Request{ID: id, Action: domain.ActionArrRegistration, Desired: desired, Binding: planning.Binding{SourceID: "discovery-1", SourceRevision: "coverage-1", ConnectionRevisions: map[domain.ConfigID]string{connection: "config-1"}}, Preconditions: []planning.Precondition{{Kind: "source_identity", Target: "discovery-1", Expected: "coverage-1", Required: true}}, RequiredApproval: gate, CreatedAt: workflowTestNow, ExpiresAt: workflowTestNow.Add(time.Hour)})
+	plan, err := planning.Build(planning.Request{ID: id, Action: domain.ActionArrRegistration, Desired: desired, Binding: planning.Binding{SourceID: "discovery-1", SourceRevision: "coverage-1", ConnectionRevisions: map[domain.ConfigID]string{connection: "config-1"}}, Preconditions: []planning.Precondition{{Kind: "source_identity", Target: "discovery-1", Expected: "coverage-1", Required: true}}, RequiredApproval: gate, CreatedAt: createdAt, ExpiresAt: expiresAt})
 	if err != nil {
 		t.Fatal(err)
 	}
