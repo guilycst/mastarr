@@ -3098,7 +3098,7 @@
       "reviewIntegrationCommit": "02c0b2113d4327119eb55fe419915ea1c99e6093"
     },
     "W-03": {
-      "status": "in_review",
+      "status": "in_progress",
       "owner": "/root/x05_implementer",
       "baseSha": "a040db83627735e62fb90d8db8b2c06198eedef4",
       "integratedSha": null,
@@ -3108,15 +3108,21 @@
         "Own only internal/actions/ and docs/execution/handoffs/W-03.md. Implement independent registration, import, placement, organize, client, descriptor and refresh handlers on the durable execution ports. Enforce linked-client prerequisites and preserve observe-before-write, idempotency, cancellation and uncertainty semantics. Keep G-01 Arr native writes and Seerr writes blocked.",
         "fc2bab90bd3db21c6801842babee6b473e2742da W-03 product implements typed Arr, filesystem, client, descriptor and Jellyfin refresh handlers; 19b13f86411c74ae2bec249e0481de8ebcf16187 records the handoff and full checks.",
         "Handlers use bounded intents, observe-before-write, capability and linked-client gates, idempotency, cancellation/deadline handling, per-effect evidence and native-client routing. F-05 organize writes remain fail-closed, G-01 keeps Arr registration/import disabled, and planning imports require an explicit preview revision envelope.",
-        "Focused/race/vet, root internal tests, generation/Vacuum, architecture/lint/planning, full offline guardrails, all module verification and Linux amd64/arm64 CGO-free builds passed."
+        "Focused/race/vet, root internal tests, generation/Vacuum, architecture/lint/planning, full offline guardrails, all module verification and Linux amd64/arm64 CGO-free builds passed.",
+        "577a15a61947ac44ec7621d381b63a4a6cb87a1a independent review round one requests four P1 corrections against fc2bab90bd3db21c6801842babee6b473e2742da; 3336ff668d1e47daee8407d3c8067fe125b06964 integrates the receipt. Six deterministic race regressions failed 10/10: partial Arr/filesystem effects were relabeled pending and SafeToRetry, affected filesystem effects were discarded after a port call, native rename crossed source and destination roots, and a filesystem handler was bound to one client while omitting client reservations."
       ],
       "review": {
-        "status": "pending",
-        "decision": "pending",
+        "status": "changes_requested",
+        "decision": "changes_requested",
         "reviewer": "/root/x05_reviewer",
-        "commit": null,
-        "integratedCommit": null,
-        "findings": [],
+        "commit": "577a15a61947ac44ec7621d381b63a4a6cb87a1a",
+        "integratedCommit": "3336ff668d1e47daee8407d3c8067fe125b06964",
+        "findings": [
+          "P1 R1: partial Arr import and partial filesystem materialization are relabeled pending with SafeToRetry=true, violating the no-effect reconciliation contract.",
+          "P1 R2: when FilesystemActionPort returns an affected effect plus ErrSourceChanged, the handler reports Dispatched=false and loses the effect evidence.",
+          "P1 R3: native rename accepts a source-root download to a destination-root library request, calls RenameFile only in the source root, and reports the library target applied.",
+          "P1 R4: one globally registered filesystem handler is hard-bound to one LinkedClient.Ref, rejects other valid stopped refs, and Reservations omits client:<ref>."
+        ],
         "round": 1
       },
       "dispatch": {
@@ -3151,7 +3157,7 @@
         "reviewPath": "docs/execution/handoffs/W-03-review-round1.md",
         "handoffPath": "docs/execution/handoffs/W-03.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "review_pending",
+        "status": "implementation",
         "dependencyCommits": {
           "W-01": "6af605497e62ac182d0d4d4e222cac81aa4232e1",
           "W-02": "ff23e1b939f04c1136cba8134d3c9ae505094dba",
@@ -3170,10 +3176,29 @@
         "implementationCommit": "fc2bab90bd3db21c6801842babee6b473e2742da",
         "handoffCommit": "19b13f86411c74ae2bec249e0481de8ebcf16187",
         "reviewSourceCommit": "fc2bab90bd3db21c6801842babee6b473e2742da",
-        "correctionStatus": null,
+        "correctionStatus": "implementation",
         "reviewCommit": null,
-        "reviewIntegrationCommit": null
-      }
+        "reviewIntegrationCommit": null,
+        "correctionRound": 1,
+        "correctionOwner": "/root/x05_implementer",
+        "correctionBaseSha": "fc2bab90bd3db21c6801842babee6b473e2742da",
+        "correctionReviewPath": "docs/execution/handoffs/W-03-review-round2.md",
+        "correctionHandoffPath": "docs/execution/handoffs/W-03-correction-round1.md",
+        "correctionReviewer": "/root/x05_reviewer",
+        "priorReviewCommit": "577a15a61947ac44ec7621d381b63a4a6cb87a1a",
+        "priorReviewIntegrationCommit": "3336ff668d1e47daee8407d3c8067fe125b06964"
+      },
+      "reviewHistory": [
+        {
+          "round": 1,
+          "reviewer": "/root/x05_reviewer",
+          "commit": "577a15a61947ac44ec7621d381b63a4a6cb87a1a",
+          "status": "changes_requested",
+          "sourceCommit": "fc2bab90bd3db21c6801842babee6b473e2742da",
+          "receipt": "docs/execution/handoffs/W-03-review-round1.md",
+          "integratedCommit": "3336ff668d1e47daee8407d3c8067fe125b06964"
+        }
+      ]
     },
     "W-04": {
       "status": "planned",
@@ -5126,7 +5151,7 @@
       ]
     }
   },
-  "nextAction": "W-03 action handlers are ready for independent review at fc2bab90bd3db21c6801842babee6b473e2742da; handoff 19b13f86411c74ae2bec249e0481de8ebcf16187. F-05 Linux organize mutations remain capability-blocked, G-01 keeps Arr writes blocked, and W-04 follows after W-03 approval.",
+  "nextAction": "W-03 correction round one is dispatched for effect-certainty propagation, cross-root native rename rejection, and per-client filesystem reservations; F-05 remains capability-blocked and G-01 keeps Arr writes blocked.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
