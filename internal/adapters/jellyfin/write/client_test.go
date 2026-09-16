@@ -19,12 +19,14 @@ import (
 const testConnection = domain.ConfigID("jellyfin-main")
 
 type refreshFixture struct {
-	mu         sync.Mutex
-	status     int
-	token      string
-	requests   []refreshRequest
-	body       string
-	visibility atomic.Bool
+	mu           sync.Mutex
+	status       int
+	systemStatus int
+	token        string
+	requests     []refreshRequest
+	body         string
+	systemBody   string
+	visibility   atomic.Bool
 }
 
 type refreshRequest struct {
@@ -41,6 +43,23 @@ func (fixture *refreshFixture) ServeHTTP(writer http.ResponseWriter, request *ht
 		token:  request.Header.Get("X-Emby-Token"),
 	})
 	fixture.mu.Unlock()
+	if request.Method == http.MethodGet && request.URL.Path == "/System/Info/Public" {
+		if request.Header.Get("X-Emby-Token") != fixture.token {
+			writer.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		status := fixture.systemStatus
+		if status == 0 {
+			status = http.StatusOK
+		}
+		writer.WriteHeader(status)
+		body := fixture.systemBody
+		if body == "" {
+			body = `{"ProductName":"Jellyfin","Version":"10.10.7"}`
+		}
+		_, _ = io.WriteString(writer, body)
+		return
+	}
 	if request.Method != http.MethodPost || request.URL.Path != "/Library/Refresh" {
 		writer.WriteHeader(http.StatusNotFound)
 		return
@@ -49,7 +68,11 @@ func (fixture *refreshFixture) ServeHTTP(writer http.ResponseWriter, request *ht
 		writer.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	writer.WriteHeader(fixture.status)
+	status := fixture.status
+	if status == 0 {
+		status = http.StatusAccepted
+	}
+	writer.WriteHeader(status)
 	if fixture.body != "" {
 		_, _ = io.WriteString(writer, fixture.body)
 	}
@@ -73,6 +96,10 @@ func newFixtureClient(t *testing.T, fixture *refreshFixture, config Config) (*Cl
 		t.Fatalf("New: %v", err)
 	}
 	return client, server
+}
+
+func matchingRuntimeConfig() Config {
+	return Config{ExpectedProduct: "Jellyfin", ExpectedVersion: "10.10.7"}
 }
 
 func (fixture *refreshFixture) requestSnapshot() []refreshRequest {
@@ -107,7 +134,7 @@ func hasEvidence(values []string, want string) bool {
 
 func TestLibraryRefreshMapsAcceptanceAndSeparatesAvailability(t *testing.T) {
 	fixture := &refreshFixture{status: http.StatusAccepted, token: "fixture-jellyfin-token"}
-	client, server := newFixtureClient(t, fixture, Config{})
+	client, server := newFixtureClient(t, fixture, matchingRuntimeConfig())
 	defer server.Close()
 
 	result, err := client.Refresh(context.Background(), testConnection, ports.RefreshRequest{Scope: ports.RefreshLibrary})
@@ -121,7 +148,7 @@ func TestLibraryRefreshMapsAcceptanceAndSeparatesAvailability(t *testing.T) {
 		t.Fatalf("refresh evidence = %#v", result.Evidence)
 	}
 	requests := fixture.requestSnapshot()
-	if len(requests) != 1 || requests[0].method != http.MethodPost || requests[0].path != "/Library/Refresh" || requests[0].token != fixture.token {
+	if len(requests) != 2 || requests[0].method != http.MethodGet || requests[0].path != "/System/Info/Public" || requests[0].token != fixture.token || requests[1].method != http.MethodPost || requests[1].path != "/Library/Refresh" || requests[1].token != fixture.token {
 		t.Fatalf("native requests = %#v", requests)
 	}
 	if fixture.visibility.Load() {
@@ -192,7 +219,7 @@ func TestRefreshStatusErrorsAreSanitizedAndNormalized(t *testing.T) {
 	for _, testCase := range cases {
 		t.Run(http.StatusText(testCase.status), func(t *testing.T) {
 			fixture := &refreshFixture{status: testCase.status, token: "fixture-jellyfin-token", body: `{"secret":"fixture-secret"}`}
-			client, server := newFixtureClient(t, fixture, Config{})
+			client, server := newFixtureClient(t, fixture, matchingRuntimeConfig())
 			defer server.Close()
 
 			_, err := client.Refresh(context.Background(), testConnection, ports.RefreshRequest{Scope: ports.RefreshLibrary})
@@ -218,11 +245,13 @@ func TestRefreshPreservesContextCancellationIdentity(t *testing.T) {
 		}
 	})
 	client, err := New(Config{
-		ConnectionID:   testConnection,
-		Endpoint:       "https://jellyfin.invalid",
-		APIKey:         "fixture-jellyfin-token",
-		HTTPClient:     &http.Client{Transport: transport},
-		RequestTimeout: 5 * time.Millisecond,
+		ConnectionID:    testConnection,
+		Endpoint:        "https://jellyfin.invalid",
+		APIKey:          "fixture-jellyfin-token",
+		HTTPClient:      &http.Client{Transport: transport},
+		RequestTimeout:  5 * time.Millisecond,
+		ExpectedProduct: "Jellyfin",
+		ExpectedVersion: "10.10.7",
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -243,7 +272,7 @@ func TestRefreshPreservesContextCancellationIdentity(t *testing.T) {
 
 func TestCapabilitiesKeepRefreshScopesIndependent(t *testing.T) {
 	fixture := &refreshFixture{status: http.StatusAccepted, token: "fixture-jellyfin-token"}
-	client, server := newFixtureClient(t, fixture, Config{})
+	client, server := newFixtureClient(t, fixture, matchingRuntimeConfig())
 	defer server.Close()
 
 	capabilities, err := client.Capabilities(context.Background(), testConnection)
@@ -261,8 +290,136 @@ func TestCapabilitiesKeepRefreshScopesIndependent(t *testing.T) {
 			t.Fatalf("capability %s: %v", capability.Name, err)
 		}
 	}
-	if requests := fixture.requestSnapshot(); len(requests) != 0 {
-		t.Fatalf("capability read unexpectedly contacted native endpoint: %#v", requests)
+	requests := fixture.requestSnapshot()
+	if len(requests) != 1 || requests[0].method != http.MethodGet || requests[0].path != "/System/Info/Public" {
+		t.Fatalf("capability runtime observation = %#v", requests)
+	}
+	if hasEvidence(capabilities[0].Evidence, "refresh_request_accepted") {
+		t.Fatal("capability observation claimed a refresh request was accepted")
+	}
+}
+
+func TestRefreshVersionGateBlocksUnverifiedRuntime(t *testing.T) {
+	cases := []struct {
+		name            string
+		config          Config
+		systemStatus    int
+		systemBody      string
+		wantState       domain.CapabilityState
+		wantRefreshCode domain.UpstreamErrorCode
+		wantSystemReads int
+	}{
+		{
+			name:            "missing version",
+			config:          matchingRuntimeConfig(),
+			systemBody:      `{"ProductName":"Jellyfin"}`,
+			wantState:       domain.CapabilityUnknown,
+			wantRefreshCode: domain.OutcomeUnknown,
+			wantSystemReads: 2,
+		},
+		{
+			name:            "unknown version",
+			config:          matchingRuntimeConfig(),
+			systemBody:      `{"ProductName":"Jellyfin","Version":"unknown"}`,
+			wantState:       domain.CapabilityUnknown,
+			wantRefreshCode: domain.OutcomeUnknown,
+			wantSystemReads: 2,
+		},
+		{
+			name:            "unavailable version endpoint",
+			config:          matchingRuntimeConfig(),
+			systemStatus:    http.StatusInternalServerError,
+			systemBody:      `{"secret":"fixture-secret"}`,
+			wantState:       domain.CapabilityUnknown,
+			wantRefreshCode: domain.OutcomeUnavailable,
+			wantSystemReads: 2,
+		},
+		{
+			name:            "mismatched version",
+			config:          matchingRuntimeConfig(),
+			systemBody:      `{"ProductName":"Jellyfin","Version":"10.11.0"}`,
+			wantState:       domain.CapabilityUnsupported,
+			wantRefreshCode: domain.OutcomeUnsupported,
+			wantSystemReads: 2,
+		},
+		{
+			name:            "missing configured fence",
+			config:          Config{},
+			systemBody:      `{"ProductName":"Jellyfin","Version":"10.10.7"}`,
+			wantState:       domain.CapabilityUnknown,
+			wantRefreshCode: domain.OutcomeUnknown,
+			wantSystemReads: 0,
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := &refreshFixture{
+				token:        "fixture-jellyfin-token",
+				systemStatus: testCase.systemStatus,
+				systemBody:   testCase.systemBody,
+			}
+			client, server := newFixtureClient(t, fixture, testCase.config)
+			defer server.Close()
+
+			capabilities, err := client.Capabilities(context.Background(), testConnection)
+			if err != nil {
+				t.Fatalf("Capabilities: %v", err)
+			}
+			if len(capabilities) != 2 || capabilities[0].State != testCase.wantState {
+				t.Fatalf("capabilities = %#v, want library state %s", capabilities, testCase.wantState)
+			}
+			if hasEvidence(capabilities[0].Evidence, "refresh_request_accepted") {
+				t.Fatal("blocked capability claimed a refresh request was accepted")
+			}
+
+			_, err = client.Refresh(context.Background(), testConnection, ports.RefreshRequest{Scope: ports.RefreshLibrary})
+			assertCode(t, err, testCase.wantRefreshCode)
+
+			requests := fixture.requestSnapshot()
+			postCount := 0
+			getCount := 0
+			for _, request := range requests {
+				switch {
+				case request.method == http.MethodPost && request.path == "/Library/Refresh":
+					postCount++
+				case request.method == http.MethodGet && request.path == "/System/Info/Public":
+					getCount++
+				}
+			}
+			if postCount != 0 {
+				t.Fatalf("blocked refresh dispatched %d native POST requests: %#v", postCount, requests)
+			}
+			if getCount != testCase.wantSystemReads {
+				t.Fatalf("system-info reads = %d, want %d; requests = %#v", getCount, testCase.wantSystemReads, requests)
+			}
+		})
+	}
+}
+
+func TestMatchingRuntimeObservationEnablesOnlyLibraryRefresh(t *testing.T) {
+	fixture := &refreshFixture{status: http.StatusAccepted, token: "fixture-jellyfin-token"}
+	client, server := newFixtureClient(t, fixture, matchingRuntimeConfig())
+	defer server.Close()
+
+	capabilities, err := client.Capabilities(context.Background(), testConnection)
+	if err != nil {
+		t.Fatalf("Capabilities: %v", err)
+	}
+	if capabilities[0].State != domain.CapabilitySupported || capabilities[0].Version != "10.10.7" {
+		t.Fatalf("library capability = %#v", capabilities[0])
+	}
+	if !hasEvidence(capabilities[0].Evidence, "runtime_compatibility_matched") || hasEvidence(capabilities[0].Evidence, "refresh_request_accepted") {
+		t.Fatalf("library capability evidence = %#v", capabilities[0].Evidence)
+	}
+
+	result, err := client.Refresh(context.Background(), testConnection, ports.RefreshRequest{Scope: ports.RefreshLibrary})
+	if err != nil || !result.Accepted {
+		t.Fatalf("Refresh = %#v, %v", result, err)
+	}
+	requests := fixture.requestSnapshot()
+	if len(requests) != 3 || requests[0].method != http.MethodGet || requests[0].path != "/System/Info/Public" || requests[1].method != http.MethodGet || requests[1].path != "/System/Info/Public" || requests[2].method != http.MethodPost || requests[2].path != "/Library/Refresh" {
+		t.Fatalf("native request order = %#v", requests)
 	}
 }
 

@@ -23,7 +23,6 @@ const (
 	operationRefresh        = "jellyfin.refresh"
 	operationRefreshLibrary = "jellyfin.refresh.library"
 	operationRefreshItem    = "jellyfin.refresh.item"
-	compatibilityVersion    = "jellyfin-refresh-compat-0.0.1"
 )
 
 // Config contains one Jellyfin refresh connection. Token, APIKey and
@@ -41,6 +40,14 @@ type Config struct {
 
 	RequestTimeout  time.Duration
 	MaxResponseSize int64
+
+	// ExpectedVersion is the required native runtime compatibility fence for
+	// library refresh. ExpectedProduct, when provided, is an additional exact
+	// product fence. A fresh GET /System/Info/Public observation must match the
+	// configured fence before a POST /Library/Refresh is allowed. An empty
+	// ExpectedVersion deliberately leaves the mutation blocked.
+	ExpectedProduct string
+	ExpectedVersion string
 }
 
 // Client translates the standalone Jellyfin refresh client into the frozen
@@ -109,6 +116,9 @@ func (client *Client) Refresh(ctx context.Context, connectionID domain.ConfigID,
 		if request.ExternalID != "" {
 			return result, invalidInput(operationRefreshLibrary)
 		}
+		if _, err := client.observeCompatibleRuntime(ctx); err != nil {
+			return result, err
+		}
 		accepted, err := client.upstream.Refresh(ctx, upstream.RefreshRequest{Scope: upstream.RefreshLibraryScope})
 		if err != nil {
 			return result, normalizeError(operationRefreshLibrary, err)
@@ -132,9 +142,10 @@ func (client *Client) Refresh(ctx context.Context, connectionID domain.ConfigID,
 	}
 }
 
-// Capabilities reports independent refresh scope gates. Library support means
-// only that Jellyfin accepted the native refresh request through the pinned
-// compatibility contract; it does not claim scan completion or availability.
+// Capabilities reports independent refresh scope gates. Library support is
+// reported only after a fresh native system-info observation matches the
+// explicit ExpectedProduct and ExpectedVersion fence. It does not claim scan
+// completion or availability and never sends a refresh request.
 func (client *Client) Capabilities(ctx context.Context, connectionID domain.ConfigID) ([]domain.Capability, error) {
 	if client == nil {
 		return nil, upstreamFailure(operationRefresh, domain.OutcomeUnknown, 0, false, "refresh client is unavailable")
@@ -148,22 +159,78 @@ func (client *Client) Capabilities(ctx context.Context, connectionID domain.Conf
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	now := time.Now().UTC()
+	runtime, runtimeErr := client.observeCompatibleRuntime(ctx)
+	if runtimeErr != nil {
+		if errors.Is(runtimeErr, context.Canceled) || errors.Is(runtimeErr, context.DeadlineExceeded) {
+			return nil, runtimeErr
+		}
+		state := domain.CapabilityUnknown
+		reason := "Jellyfin refresh runtime compatibility is unknown"
+		if code, ok := upstreamCode(runtimeErr); ok && code == domain.OutcomeUnsupported {
+			state = domain.CapabilityUnsupported
+			reason = "Jellyfin refresh runtime version does not match the configured compatibility fence"
+		}
+		return client.capabilityResults(state, reason, runtime), nil
+	}
+	return client.capabilityResults(domain.CapabilitySupported, "", runtime), nil
+}
+
+type runtimeObservation struct {
+	ProductName string
+	Version     string
+	ObservedAt  time.Time
+}
+
+func (client *Client) observeCompatibleRuntime(ctx context.Context) (runtimeObservation, error) {
+	result := runtimeObservation{}
+	if strings.TrimSpace(client.config.ExpectedVersion) == "" {
+		return result, upstreamFailure(operationRefresh, domain.OutcomeUnknown, 0, false, "refresh compatibility version is not configured")
+	}
+	info, err := client.upstream.GetSystemInfo(ctx)
+	if err != nil {
+		return result, normalizeError(operationRefresh+".version", err)
+	}
+	result = runtimeObservation{ProductName: info.ProductName, Version: info.Version, ObservedAt: info.ObservedAt}
+	version := strings.TrimSpace(info.Version)
+	if version == "" || strings.EqualFold(version, "unknown") {
+		return result, upstreamFailure(operationRefresh+".version", domain.OutcomeUnknown, 0, false, "refresh runtime version was not observed")
+	}
+	if info.Version != client.config.ExpectedVersion {
+		return result, upstreamFailure(operationRefresh+".version", domain.OutcomeUnsupported, 0, false, "refresh runtime version is incompatible")
+	}
+	if client.config.ExpectedProduct != "" && info.ProductName != client.config.ExpectedProduct {
+		return result, upstreamFailure(operationRefresh+".version", domain.OutcomeUnsupported, 0, false, "refresh runtime product is incompatible")
+	}
+	return result, nil
+}
+
+func (client *Client) capabilityResults(state domain.CapabilityState, reason string, runtime runtimeObservation) []domain.Capability {
+	observedAt := runtime.ObservedAt
+	if observedAt.IsZero() {
+		observedAt = time.Now().UTC()
+	}
+	evidence := []string{"GET /System/Info/Public", "availability_requires_later_read"}
+	if state == domain.CapabilitySupported {
+		evidence = append(evidence, "POST /Library/Refresh", "runtime_compatibility_matched")
+	} else {
+		evidence = append(evidence, "runtime_compatibility_blocked")
+	}
 	return []domain.Capability{
 		{
-			Name: operationRefreshLibrary, State: domain.CapabilitySupported,
-			Version:    compatibilityVersion,
-			Evidence:   []string{"POST /Library/Refresh", "refresh_request_accepted", "availability_requires_later_read"},
-			ObservedAt: now,
+			Name: operationRefreshLibrary, State: state,
+			Version:    runtime.Version,
+			Reason:     reason,
+			Evidence:   append([]string(nil), evidence...),
+			ObservedAt: observedAt,
 		},
 		{
 			Name: operationRefreshItem, State: domain.CapabilityUnsupported,
-			Version:    compatibilityVersion,
+			Version:    runtime.Version,
 			Reason:     "item refresh has no positive version-pinned fixture",
 			Evidence:   []string{"item_scope_unsupported", "positive_item_refresh_fixture_required"},
-			ObservedAt: now,
+			ObservedAt: observedAt,
 		},
-	}, nil
+	}
 }
 
 func configuredToken(config Config) string {
@@ -215,6 +282,14 @@ func normalizeError(operation string, err error) error {
 		return upstreamFailure(operation, normalizeCode(source.Code), source.Status, source.Retryable, "upstream refresh request failed")
 	}
 	return upstreamFailure(operation, domain.OutcomeUnknown, 0, false, "upstream refresh request failed")
+}
+
+func upstreamCode(err error) (domain.UpstreamErrorCode, bool) {
+	var source domain.UpstreamError
+	if !errors.As(err, &source) {
+		return "", false
+	}
+	return source.Code, true
 }
 
 func normalizeCode(code upstream.ErrorCode) domain.UpstreamErrorCode {
