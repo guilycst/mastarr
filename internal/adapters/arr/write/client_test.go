@@ -315,6 +315,99 @@ func TestExistingRegistrationAlreadySatisfiedDoesNotWrite(t *testing.T) {
 	}
 }
 
+func TestRadarrProviderIdentityKeepsNamespacesDistinct(t *testing.T) {
+	var writes atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/api/v3/movie" {
+			writes.Add(1)
+			http.Error(writer, "foreign provider evidence must not authorize a write", http.StatusTeapot)
+			return
+		}
+		// The requested provider is a TMDB identity. A numerically equal TVDB
+		// value is evidence for another namespace and must not match Radarr.
+		writeFixtureJSON(t, writer, []nativeTitle{{
+			ID: 101, Title: "Synthetic Film", Path: "/synthetic/library/Synthetic Film",
+			TMDBID: int64Ptr(9999), ProviderIDs: map[string]string{"tvdbId": "4242"}, Monitored: boolPtr(false),
+			RootFolderPath: "/synthetic/library", QualityProfile: int64Ptr(7),
+		}})
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := New(Config{
+		ConnectionID: testConnection, Kind: domain.ConnectionRadarr,
+		Endpoint: server.URL, APIKey: "synthetic-key", HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	result, err := client.Register(context.Background(), testConnection, ports.RegistrationRequest{
+		ProviderID: "4242", Kind: domain.MediaMovie,
+		Fields: ports.RegistrationFields{RootFolder: "/synthetic/library", QualityProfileID: "7"},
+	})
+	if err == nil || !hasCode(err, domain.OutcomeUnsupported) {
+		t.Fatalf("Register error = %v result=%#v, want G-01 blocked result after nonmatching foreign namespace", err, result)
+	}
+	if result.Effect.Outcome != "" || writes.Load() != 0 {
+		t.Fatalf("result=%#v writes=%d, want no effect and no native write", result, writes.Load())
+	}
+}
+
+func TestNativeProviderIdentityRejectsContradictorySameNamespaceEvidence(t *testing.T) {
+	if nativeHasProviderID(nativeTitle{
+		TMDBID:      int64Ptr(9999),
+		ProviderIDs: map[string]string{"tmdbId": "4242"},
+	}, "4242", domain.ConnectionRadarr) {
+		t.Fatal("contradictory Radarr primary and alias evidence unexpectedly matched")
+	}
+	if !nativeHasProviderID(nativeTitle{
+		ProviderIDs: map[string]string{"TMDBID": "4242"},
+	}, "4242", domain.ConnectionRadarr) {
+		t.Fatal("same-namespace Radarr alias did not match")
+	}
+	if nativeHasProviderID(nativeTitle{
+		TVDBID:      int64Ptr(201),
+		ProviderIDs: map[string]string{"tvdbId": "202"},
+	}, "202", domain.ConnectionSonarr) {
+		t.Fatal("contradictory Sonarr primary and alias evidence unexpectedly matched")
+	}
+	if nativeHasProviderID(nativeTitle{
+		ProviderIDs: map[string]string{"tmdbId": "4242"},
+	}, "4242", domain.ConnectionSonarr) {
+		t.Fatal("foreign Radarr namespace unexpectedly matched Sonarr")
+	}
+}
+
+func TestSonarrMetadataProjectionPreservesTypedFieldsWhenOmitted(t *testing.T) {
+	var catalogCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/api/v3/series" {
+			http.Error(writer, "unexpected synthetic metadata route", http.StatusNotFound)
+			return
+		}
+		if catalogCalls.Add(1) == 1 {
+			// This is the standalone-client projection. The registration-only
+			// metadata read below deliberately omits seriesType and seasonFolder.
+			writeFixtureJSON(t, writer, []nativeTitle{{
+				ID: 201, Title: "Synthetic Anime", Path: "/synthetic/library/Synthetic Anime",
+				Monitored: boolPtr(false), SeriesType: "anime", SeasonFolder: boolPtr(true),
+			}})
+			return
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `[{"id":201,"rootFolderPath":"/synthetic/library","qualityProfileId":7,"monitored":false}]`)
+	}))
+	t.Cleanup(server.Close)
+
+	client := syntheticClient(t, server, domain.ConnectionSonarr, syntheticCapabilities())
+	titles, err := client.listTitles(context.Background())
+	if err != nil {
+		t.Fatalf("listTitles: %v", err)
+	}
+	if len(titles) != 1 || titles[0].SeriesType != "anime" || titles[0].SeasonFolder == nil || !*titles[0].SeasonFolder {
+		t.Fatalf("titles = %#v, want omitted metadata projection to preserve anime and season-folder fields", titles)
+	}
+}
+
 func TestSonarrImportReconcilesLostCommandPerEpisode(t *testing.T) {
 	var mu sync.Mutex
 	imported := false
@@ -878,6 +971,61 @@ func TestArrWriteSanitizesWrappedContextErrors(t *testing.T) {
 				t.Fatalf("context error leaked private detail: %v", err)
 			}
 		})
+	}
+}
+
+type requestContextLabelKey struct{}
+
+func TestArrWriteContextErrorsAreRequestLocal(t *testing.T) {
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		switch request.Context().Value(requestContextLabelKey{}) {
+		case "cancel":
+			return nil, fmt.Errorf("private cancel transport detail: %w", context.Canceled)
+		case "deadline":
+			return nil, fmt.Errorf("private deadline transport detail: %w", context.DeadlineExceeded)
+		default:
+			return nil, errors.New("missing request context label")
+		}
+	})
+	client, err := newClient(Config{
+		ConnectionID: testConnection, Kind: domain.ConnectionRadarr,
+		Endpoint: "http://fixture.invalid", APIKey: "synthetic-key",
+		HTTPClient: &http.Client{Transport: transport},
+	}, blockedCapabilities())
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+
+	var group sync.WaitGroup
+	errorsByLabel := make(chan struct {
+		label string
+		err   error
+	}, 2)
+	for _, label := range []string{"cancel", "deadline"} {
+		label := label
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			ctx := context.WithValue(context.Background(), requestContextLabelKey{}, label)
+			_, callErr := client.listTitles(ctx)
+			errorsByLabel <- struct {
+				label string
+				err   error
+			}{label: label, err: callErr}
+		}()
+	}
+	group.Wait()
+	close(errorsByLabel)
+	for result := range errorsByLabel {
+		if result.err == nil || !errors.Is(result.err, map[string]error{
+			"cancel":   context.Canceled,
+			"deadline": context.DeadlineExceeded,
+		}[result.label]) {
+			t.Fatalf("%s error = %v, want request-local context identity", result.label, result.err)
+		}
+		if strings.Contains(result.err.Error(), "private") || strings.Contains(result.err.Error(), "fixture.invalid") || strings.Contains(result.err.Error(), "transport detail") {
+			t.Fatalf("%s context error leaked private detail: %v", result.label, result.err)
+		}
 	}
 }
 

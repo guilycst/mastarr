@@ -9,6 +9,7 @@ package write
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -24,69 +25,95 @@ import (
 // transport and body failures. Keep context identity available to the root
 // adapter as an out-of-band signal so errors.Is(Canceled/DeadlineExceeded)
 // remains true even when a custom RoundTripper reports a wrapped context error
-// without first marking the request context done.
-type nativeContextErrors struct {
-	base http.RoundTripper
+// without first marking the request context done. Attribution is carried by a
+// request-local bucket in the context. A shared FIFO would let concurrent
+// standalone reads consume one another's context errors.
+type nativeContextKey struct{}
+
+type nativeContextMarker struct {
+	bucket *nativeContextBucket
+}
+
+type nativeContextBucket struct {
 	mu   sync.Mutex
 	list []error
 }
 
-func (tracker *nativeContextErrors) RoundTrip(request *http.Request) (*http.Response, error) {
-	base := tracker.base
+func (bucket *nativeContextBucket) record(err error) {
+	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		return
+	}
+	bucket.mu.Lock()
+	bucket.list = append(bucket.list, err)
+	bucket.mu.Unlock()
+}
+
+func (bucket *nativeContextBucket) take() error {
+	bucket.mu.Lock()
+	defer bucket.mu.Unlock()
+	if len(bucket.list) == 0 {
+		return nil
+	}
+	err := bucket.list[0]
+	bucket.list = bucket.list[1:]
+	return err
+}
+
+type nativeContextTransport struct {
+	base http.RoundTripper
+}
+
+func (transport *nativeContextTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	base := transport.base
 	if base == nil {
 		base = http.DefaultTransport
 	}
+	var bucket *nativeContextBucket
+	if marker, ok := request.Context().Value(nativeContextKey{}).(*nativeContextMarker); ok && marker != nil {
+		bucket = marker.bucket
+	}
 	response, err := base.RoundTrip(request)
 	if err != nil {
-		tracker.record(err)
+		if bucket != nil {
+			bucket.record(err)
+		}
 		return nil, err
 	}
-	if response != nil && response.Body != nil {
-		response.Body = &nativeContextBody{ReadCloser: response.Body, tracker: tracker}
+	if response != nil && response.Body != nil && bucket != nil {
+		response.Body = &nativeContextBody{ReadCloser: response.Body, bucket: bucket}
 	}
 	return response, nil
 }
 
-func (tracker *nativeContextErrors) record(err error) {
-	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-		return
-	}
-	tracker.mu.Lock()
-	tracker.list = append(tracker.list, err)
-	tracker.mu.Unlock()
-}
-
-func (tracker *nativeContextErrors) take() error {
-	tracker.mu.Lock()
-	defer tracker.mu.Unlock()
-	if len(tracker.list) == 0 {
-		return nil
-	}
-	err := tracker.list[0]
-	tracker.list = tracker.list[1:]
-	return err
-}
-
 type nativeContextBody struct {
 	io.ReadCloser
-	tracker *nativeContextErrors
+	bucket *nativeContextBucket
 }
 
 func (body *nativeContextBody) Read(destination []byte) (int, error) {
 	count, err := body.ReadCloser.Read(destination)
-	if err != nil {
-		body.tracker.record(err)
+	if err != nil && body.bucket != nil {
+		body.bucket.record(err)
 	}
 	return count, err
 }
 
+func (client *Client) nativeContext(ctx context.Context) (context.Context, *nativeContextBucket) {
+	bucket := &nativeContextBucket{}
+	return context.WithValue(ctx, nativeContextKey{}, &nativeContextMarker{bucket: bucket}), bucket
+}
+
 func (client *Client) listTitlesNative(ctx context.Context) ([]nativeTitle, error) {
+	if ctx == nil {
+		return nil, invalidInput(operationRegistration, "context is nil")
+	}
+	nativeCtx, contextBucket := client.nativeContext(ctx)
 	var titles []nativeTitle
 	switch client.config.Kind {
 	case domain.ConnectionRadarr:
-		page, err := client.radarr.ListMovies(ctx)
+		page, err := client.radarr.ListMovies(nativeCtx)
 		if err != nil {
-			return nil, client.translateNativeWriteError(err, operationRegistration)
+			return nil, client.translateNativeWriteError(err, operationRegistration, contextBucket)
 		}
 		if page.Coverage.Completeness != radarrnative.CompletenessComplete || page.NextCursor != "" {
 			return nil, malformed(operationRegistration, "Radarr title catalog coverage is incomplete")
@@ -96,9 +123,9 @@ func (client *Client) listTitlesNative(ctx context.Context) ([]nativeTitle, erro
 			titles[index] = nativeTitleFromRadarrMovie(movie)
 		}
 	case domain.ConnectionSonarr:
-		page, err := client.sonarr.ListSeries(ctx)
+		page, err := client.sonarr.ListSeries(nativeCtx)
 		if err != nil {
-			return nil, client.translateNativeWriteError(err, operationRegistration)
+			return nil, client.translateNativeWriteError(err, operationRegistration, contextBucket)
 		}
 		if page.Coverage.Completeness != sonarrnative.CompletenessComplete || page.NextCursor != "" {
 			return nil, malformed(operationRegistration, "Sonarr title catalog coverage is incomplete")
@@ -117,20 +144,24 @@ func (client *Client) listTitlesNative(ctx context.Context) ([]nativeTitle, erro
 }
 
 func (client *Client) readTitleNative(ctx context.Context, id int64) (nativeTitle, error) {
+	if ctx == nil {
+		return nativeTitle{}, invalidInput(operationObserve, "context is nil")
+	}
+	nativeCtx, contextBucket := client.nativeContext(ctx)
 	switch client.config.Kind {
 	case domain.ConnectionRadarr:
-		movie, err := client.radarr.GetMovie(ctx, id)
+		movie, err := client.radarr.GetMovie(nativeCtx, id)
 		if err != nil {
-			return nativeTitle{}, client.translateNativeWriteError(err, operationObserve)
+			return nativeTitle{}, client.translateNativeWriteError(err, operationObserve, contextBucket)
 		}
 		if movie.ID != id {
 			return nativeTitle{}, malformed(operationObserve, "Radarr title identity does not match the requested id")
 		}
 		return nativeTitleFromRadarrMovie(movie), nil
 	case domain.ConnectionSonarr:
-		series, err := client.sonarr.GetSeries(ctx, id)
+		series, err := client.sonarr.GetSeries(nativeCtx, id)
 		if err != nil {
-			return nativeTitle{}, client.translateNativeWriteError(err, operationObserve)
+			return nativeTitle{}, client.translateNativeWriteError(err, operationObserve, contextBucket)
 		}
 		if series.ID != id {
 			return nativeTitle{}, malformed(operationObserve, "Sonarr title identity does not match the requested id")
@@ -170,6 +201,37 @@ type nativeRegistrationMetadata struct {
 	SeriesType     string         `json:"seriesType"`
 	SeasonFolder   *bool          `json:"seasonFolder"`
 	Seasons        []nativeSeason `json:"seasons"`
+
+	rootFolderPathPresent bool
+	qualityProfilePresent bool
+	monitoredPresent      bool
+	seriesTypePresent     bool
+	seasonFolderPresent   bool
+	seasonsPresent        bool
+}
+
+// UnmarshalJSON keeps field-presence information so an intentionally narrow
+// metadata projection cannot erase values already validated by the typed
+// standalone client merely because an optional member was omitted. Explicit
+// JSON null remains present and therefore clears the corresponding value.
+func (metadata *nativeRegistrationMetadata) UnmarshalJSON(data []byte) error {
+	type plain nativeRegistrationMetadata
+	var value plain
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*metadata = nativeRegistrationMetadata(value)
+	_, metadata.rootFolderPathPresent = fields["rootFolderPath"]
+	_, metadata.qualityProfilePresent = fields["qualityProfileId"]
+	_, metadata.monitoredPresent = fields["monitored"]
+	_, metadata.seriesTypePresent = fields["seriesType"]
+	_, metadata.seasonFolderPresent = fields["seasonFolder"]
+	_, metadata.seasonsPresent = fields["seasons"]
+	return nil
 }
 
 func (client *Client) mergeRegistrationMetadata(ctx context.Context, titles []nativeTitle) ([]nativeTitle, error) {
@@ -244,14 +306,24 @@ func mergeRegistrationMetadata(title *nativeTitle, metadata nativeRegistrationMe
 	if metadata.Monitored != nil && title.Monitored != nil && *metadata.Monitored != *title.Monitored {
 		return malformed(operationRegistration, "native title monitored identity is contradictory")
 	}
-	title.RootFolderPath = metadata.RootFolderPath
-	title.QualityProfile = cloneInt64Pointer(metadata.QualityProfile)
-	if metadata.Monitored != nil {
+	if metadata.rootFolderPathPresent || metadata.RootFolderPath != "" {
+		title.RootFolderPath = metadata.RootFolderPath
+	}
+	if metadata.qualityProfilePresent || metadata.QualityProfile != nil {
+		title.QualityProfile = cloneInt64Pointer(metadata.QualityProfile)
+	}
+	if metadata.monitoredPresent || metadata.Monitored != nil {
 		title.Monitored = cloneBoolPointer(metadata.Monitored)
 	}
-	title.SeriesType = metadata.SeriesType
-	title.SeasonFolder = cloneBoolPointer(metadata.SeasonFolder)
-	title.Seasons = cloneNativeSeasons(metadata.Seasons)
+	if metadata.seriesTypePresent || metadata.SeriesType != "" {
+		title.SeriesType = metadata.SeriesType
+	}
+	if metadata.seasonFolderPresent || metadata.SeasonFolder != nil {
+		title.SeasonFolder = cloneBoolPointer(metadata.SeasonFolder)
+	}
+	if metadata.seasonsPresent || len(metadata.Seasons) > 0 {
+		title.Seasons = cloneNativeSeasons(metadata.Seasons)
+	}
 	return nil
 }
 
@@ -267,9 +339,13 @@ func cloneNativeSeasons(values []nativeSeason) []nativeSeason {
 }
 
 func (client *Client) observeSonarrEpisodes(ctx context.Context, id int64) ([]nativeEpisode, error) {
-	page, err := client.sonarr.ListEpisodesWithFiles(ctx, id)
+	if ctx == nil {
+		return nil, invalidInput(operationObserve, "context is nil")
+	}
+	nativeCtx, contextBucket := client.nativeContext(ctx)
+	page, err := client.sonarr.ListEpisodesWithFiles(nativeCtx, id)
 	if err != nil {
-		return nil, client.translateNativeWriteError(err, operationObserve)
+		return nil, client.translateNativeWriteError(err, operationObserve, contextBucket)
 	}
 	if page.Coverage.Completeness != sonarrnative.CompletenessComplete || page.NextCursor != "" {
 		return nil, malformed(operationObserve, "Sonarr episode coverage is incomplete")
@@ -361,15 +437,15 @@ func cloneProviderIDs(values map[string]string) map[string]string {
 	return result
 }
 
-func (client *Client) translateNativeWriteError(err error, operation string) error {
+func (client *Client) translateNativeWriteError(err error, operation string, contextBucket *nativeContextBucket) error {
 	if err == nil {
 		return nil
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
-	if client != nil && client.contextErrors != nil {
-		if contextErr := client.contextErrors.take(); contextErr != nil {
+	if contextBucket != nil {
+		if contextErr := contextBucket.take(); contextErr != nil {
 			return sanitizeContextError(contextErr)
 		}
 	}

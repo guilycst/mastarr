@@ -90,19 +90,19 @@ type PreviewResolver func(context.Context, domain.ConfigID, ports.ImportRequest)
 // Client implements the explicit Arr write port. It performs a read-before-
 // write and a bounded read-back after any synthetic native dispatch.
 type Client struct {
-	config        Config
-	endpoint      *url.URL
-	http          *http.Client
-	capabilities  capabilities
-	rootPaths     map[domain.ConfigID]string
-	mappings      []pathMapping
-	maxRecords    int
-	maxFiles      int
-	maxResponse   int64
-	reconcile     time.Duration
-	sonarr        *sonarrnative.Client
-	radarr        *radarrnative.Client
-	contextErrors *nativeContextErrors
+	config           Config
+	endpoint         *url.URL
+	http             *http.Client
+	capabilities     capabilities
+	rootPaths        map[domain.ConfigID]string
+	mappings         []pathMapping
+	maxRecords       int
+	maxFiles         int
+	maxResponse      int64
+	reconcile        time.Duration
+	sonarr           *sonarrnative.Client
+	radarr           *radarrnative.Client
+	contextTransport *nativeContextTransport
 }
 
 var _ ports.MediaManagerWritePort = (*Client)(nil)
@@ -165,8 +165,8 @@ func newClient(config Config, caps capabilities) (*Client, error) {
 	copyClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
-	contextErrors := &nativeContextErrors{base: copyClient.Transport}
-	copyClient.Transport = contextErrors
+	contextTransport := &nativeContextTransport{base: copyClient.Transport}
+	copyClient.Transport = contextTransport
 	var sonarrClient *sonarrnative.Client
 	var radarrClient *radarrnative.Client
 	// The standalone modules own authentication, strict generated decoding,
@@ -207,7 +207,7 @@ func newClient(config Config, caps capabilities) (*Client, error) {
 		rootPaths: paths, mappings: mappings, maxRecords: config.MaxRecords,
 		maxFiles: config.MaxFiles, maxResponse: config.MaxResponseSize,
 		reconcile: config.ReconcileTimeout, sonarr: sonarrClient, radarr: radarrClient,
-		contextErrors: contextErrors,
+		contextTransport: contextTransport,
 	}, nil
 }
 
@@ -1340,26 +1340,73 @@ func nativeHasProviderID(title nativeTitle, wanted string, kind domain.Connectio
 	if wanted == "" {
 		return false
 	}
-	if kind == domain.ConnectionRadarr {
-		if title.TMDBID != nil && strconv.FormatInt(*title.TMDBID, 10) == wanted {
-			return true
+	if decimalProviderID(wanted) {
+		providerNamespace := "tvdbid"
+		var primary *int64
+		if kind == domain.ConnectionRadarr {
+			providerNamespace = "tmdbid"
+			primary = title.TMDBID
+		} else {
+			primary = title.TVDBID
 		}
-	} else {
-		if title.TVDBID != nil && strconv.FormatInt(*title.TVDBID, 10) == wanted {
-			return true
+		value, present, consistent := nativeNumericProviderValue(primary, title.ProviderIDs, providerNamespace)
+		return consistent && present && value == wanted
+	}
+	value, present, consistent := nativeTextProviderValue(title.IMDBID, title.ProviderIDs, "imdbid")
+	return consistent && present && strings.EqualFold(value, wanted)
+}
+
+func decimalProviderID(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			return false
 		}
 	}
-	if strings.TrimSpace(title.IMDBID) == wanted {
-		return true
+	return true
+}
+
+func nativeNumericProviderValue(primary *int64, aliases map[string]string, namespace string) (string, bool, bool) {
+	var value string
+	present := false
+	if primary != nil {
+		value = strconv.FormatInt(*primary, 10)
+		present = true
 	}
-	for key, value := range title.ProviderIDs {
-		if strings.EqualFold(key, "tmdbId") || strings.EqualFold(key, "tvdbId") || strings.EqualFold(key, "imdbId") || strings.EqualFold(key, "tvmazeId") {
-			if strings.TrimSpace(value) == wanted {
-				return true
-			}
+	for key, alias := range aliases {
+		if strings.ToLower(strings.TrimSpace(key)) != namespace {
+			continue
+		}
+		if !present {
+			value, present = strings.TrimSpace(alias), true
+			continue
+		}
+		if value != strings.TrimSpace(alias) {
+			return "", false, false
 		}
 	}
-	return false
+	return value, present, true
+}
+
+func nativeTextProviderValue(primary string, aliases map[string]string, namespace string) (string, bool, bool) {
+	value := strings.TrimSpace(primary)
+	present := value != ""
+	for key, alias := range aliases {
+		if strings.ToLower(strings.TrimSpace(key)) != namespace {
+			continue
+		}
+		alias = strings.TrimSpace(alias)
+		if !present {
+			value, present = alias, true
+			continue
+		}
+		if !strings.EqualFold(value, alias) {
+			return "", false, false
+		}
+	}
+	return value, present, true
 }
 
 func parsePositiveID(value string) (int64, error) {
