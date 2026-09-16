@@ -3209,7 +3209,9 @@
         "4871bc4999f18f2d6aa119e366ca949b6886ac45 W-03 correction round two adds a real SQLite execution.Executor integration regression for durable partial filesystem effects; focused/race/vet/module/full offline guardrails/generation/Vacuum/lint/architecture/cross-build checks passed.",
         "344b9be5010d9bec7666602dc5d67049ba727850 records the W-03 correction round two handoff and exact checks.",
         "5c3068edccd8e6b22f6fd5a107f939468c9f2375 W-03 correction round two review closed manifest mapping, duplicate/foreign fail-closed behavior, and W-02 durable partial-effect integration, but found P2 mixed delete state loss: mapFilesystemAffected overwrites read-proven EffectAlreadySatisfied with aggregate OutcomeApplied. Direct and real SQLite executor probes failed 10/10 under race; full offline guardrails/cross-builds passed.",
-        "db3317674c592bc49761b0d653153d8bb5bc72e6 state checkpoint dispatched W-03 correction round three to /root/x05_implementer from 4871bc4999f18f2d6aa119e366ca949b6886ac45; owned paths remain internal/actions/ and docs/execution/handoffs/W-03-correction-round3.md, shared main, with GOWORK=off focused/race/vet/offline guardrail/module/cross-build checks."
+        "db3317674c592bc49761b0d653153d8bb5bc72e6 state checkpoint dispatched W-03 correction round three to /root/x05_implementer from 4871bc4999f18f2d6aa119e366ca949b6886ac45; owned paths remain internal/actions/ and docs/execution/handoffs/W-03-correction-round3.md, shared main, with GOWORK=off focused/race/vet/offline guardrail/module/cross-build checks.",
+        "a4ad5a0fcfee724491513224f6b082a25be82e0a W-03 correction round three preserves read-proven EffectAlreadySatisfied entries in mixed filesystem manifests while terminalizing only pending matched effects; direct handler and real SQLite executor regressions passed, including race repetitions.",
+        "d1fb6c37f8254455e6dc773a57ec707639004dcd records the correction handoff and exact checks; independent round-four review is now pending."
       ],
       "review": {
         "status": "changes_requested",
@@ -3257,7 +3259,7 @@
         "reviewPath": "docs/execution/handoffs/W-03-review-round1.md",
         "handoffPath": "docs/execution/handoffs/W-03.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "implementation",
+        "status": "review_pending",
         "dependencyCommits": {
           "W-01": "6af605497e62ac182d0d4d4e222cac81aa4232e1",
           "W-02": "ff23e1b939f04c1136cba8134d3c9ae505094dba",
@@ -3277,7 +3279,7 @@
         "implementationCommit": "fc2bab90bd3db21c6801842babee6b473e2742da",
         "handoffCommit": "19b13f86411c74ae2bec249e0481de8ebcf16187",
         "reviewSourceCommit": "fc2bab90bd3db21c6801842babee6b473e2742da",
-        "correctionStatus": "implementation",
+        "correctionStatus": "review_pending",
         "reviewCommit": null,
         "reviewIntegrationCommit": null,
         "correctionRound": 3,
@@ -3288,10 +3290,12 @@
         "correctionReviewer": "/root/x05_reviewer",
         "priorReviewCommit": "577a15a61947ac44ec7621d381b63a4a6cb87a1a",
         "priorReviewIntegrationCommit": "3336ff668d1e47daee8407d3c8067fe125b06964",
-        "correctionImplementationCommit": null,
-        "correctionHandoffCommit": null,
-        "correctionProductCommits": [],
-        "correctionReviewSourceCommit": null,
+        "correctionImplementationCommit": "a4ad5a0fcfee724491513224f6b082a25be82e0a",
+        "correctionHandoffCommit": "d1fb6c37f8254455e6dc773a57ec707639004dcd",
+        "correctionProductCommits": [
+          "a4ad5a0fcfee724491513224f6b082a25be82e0a"
+        ],
+        "correctionReviewSourceCommit": "a4ad5a0fcfee724491513224f6b082a25be82e0a",
         "waitingOn": null,
         "waitingReason": null,
         "priorCorrectionRound": 2,
@@ -3323,19 +3327,19 @@
         {
           "round": 3,
           "reviewer": "/root/x05_reviewer",
-          "commit": null,
-          "status": "review_pending",
-          "sourceCommit": "4871bc4999f18f2d6aa119e366ca949b6886ac45",
-          "receipt": "docs/execution/handoffs/W-03-review-round3.md"
-        },
-        {
-          "round": 3,
-          "reviewer": "/root/x05_reviewer",
           "commit": "5c3068edccd8e6b22f6fd5a107f939468c9f2375",
           "status": "changes_requested",
           "sourceCommit": "4871bc4999f18f2d6aa119e366ca949b6886ac45",
           "receipt": "docs/execution/handoffs/W-03-review-round3.md",
           "integratedCommit": "3e2ea41ef8fd40be19bedf24b652718c22cc7beb"
+        },
+        {
+          "round": 4,
+          "reviewer": "/root/x05_reviewer",
+          "commit": null,
+          "status": "review_pending",
+          "sourceCommit": "a4ad5a0fcfee724491513224f6b082a25be82e0a",
+          "receipt": "docs/execution/handoffs/W-03-review-round4.md"
         }
       ]
     },
@@ -5290,7 +5294,7 @@
       ]
     }
   },
-  "nextAction": "W-03 correction round three is being dispatched from 4871bc4999f18f2d6aa119e366ca949b6886ac45, preserving read-proven already-satisfied effects in mixed manifests; F-05 remains capability-blocked and G-01 keeps Arr writes blocked.",
+  "nextAction": "W-03 correction round three is ready for independent review from a4ad5a0fcfee724491513224f6b082a25be82e0a; review only internal/actions and the correction handoff, then either integrate the receipt and close W-03 or dispatch the next bounded correction. Keep F-05 capability-blocked and G-01 Arr native writes blocked.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
