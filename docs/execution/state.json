@@ -15,7 +15,9 @@
   "resumeDocument": "docs/execution/RESUME.md",
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
-  "activeImplementationTasks": [],
+  "activeImplementationTasks": [
+    "W-03"
+  ],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
   "guardrailBaseline": {
@@ -3096,12 +3098,65 @@
       "reviewIntegrationCommit": "02c0b2113d4327119eb55fe419915ea1c99e6093"
     },
     "W-03": {
-      "status": "planned",
-      "owner": null,
-      "baseSha": null,
+      "status": "in_progress",
+      "owner": "/root/x05_implementer",
+      "baseSha": "a040db83627735e62fb90d8db8b2c06198eedef4",
       "integratedSha": null,
-      "evidence": [],
-      "review": null
+      "evidence": [
+        "dispatched from a040db83627735e62fb90d8db8b2c06198eedef4 after W-01 (6af605497e62ac182d0d4d4e222cac81aa4232e1) and W-02 (ff23e1b939f04c1136cba8134d3c9ae505094dba) approvals plus F-04, X-06, X-07, X-08 and X-09 approvals.",
+        "F-05 is approved for safe fail-closed behavior but remains capability-blocked for Linux move, rename, permanent-delete and cross-device source removal. Action handlers must propagate that explicit capability result and must not enable mutation by assumption.",
+        "Own only internal/actions/ and docs/execution/handoffs/W-03.md. Implement independent registration, import, placement, organize, client, descriptor and refresh handlers on the durable execution ports. Enforce linked-client prerequisites and preserve observe-before-write, idempotency, cancellation and uncertainty semantics. Keep G-01 Arr native writes and Seerr writes blocked."
+      ],
+      "review": null,
+      "dispatch": {
+        "assignedAt": "2026-09-16",
+        "model": "gpt-5.6-luna",
+        "reasoning": "max",
+        "role": "implementer",
+        "baseSha": "a040db83627735e62fb90d8db8b2c06198eedef4",
+        "ownedPaths": [
+          "internal/actions/"
+        ],
+        "checkout": "shared main",
+        "expectedChecks": [
+          "A-13",
+          "A-14",
+          "A-17",
+          "A-18",
+          "A-20",
+          "A-24",
+          "A-33",
+          "A-60",
+          "standalone registration/import/placement/organize/client/descriptor/refresh handlers",
+          "linked-client prerequisites enforced for direct handler calls",
+          "idempotent desired-state checks, cancellation and uncertain-write reconciliation",
+          "F-05 Linux organize capability remains explicit fail-closed",
+          "Arr native writes remain blocked by G-01 and Seerr remains read-only",
+          "synthetic fixtures only",
+          "GOWORK=off focused/root tests and race",
+          "vet, module verification, generation/API/Vacuum/lint/architecture/planning/full guardrails",
+          "Linux amd64/arm64 CGO-free builds"
+        ],
+        "reviewPath": "docs/execution/handoffs/W-03-review-round1.md",
+        "handoffPath": "docs/execution/handoffs/W-03.md",
+        "nextReviewer": "/root/x05_reviewer",
+        "status": "implementation",
+        "dependencyCommits": {
+          "W-01": "6af605497e62ac182d0d4d4e222cac81aa4232e1",
+          "W-02": "ff23e1b939f04c1136cba8134d3c9ae505094dba",
+          "F-04": "2621343dcd3b80c259f5cec808dadb7bfbb0434d",
+          "F-05-product": "3be99364621311c4edc31a2571c095acfb5c1ed4",
+          "F-05-review": "668a1a1eb61e0c35bf58141a1e717487dd920d40",
+          "X-06": "0bbf8405859ac604d9d05237badef45dd0ee7fbc",
+          "X-07": "7b74043b3d4a8e76993dd6ff511e3982cfa5d369",
+          "X-08": "8c770f779204a00c2d8cc6312a2c0fc04262ea35",
+          "X-09": "ff3d7d55490435c9b99d38ad97edd3b2f27f9df5"
+        },
+        "dependencyCapabilityGates": {
+          "F-05": "Linux has no reviewed inode-bound quarantine removal primitive in the current implementation. Pending move, rename, permanent-delete, and cross-device source-removal operations fail closed before mutation; reopen after a reviewed inode-bound removal implementation exists.",
+          "G-01": "Arr native registration/import writes remain blocked pending X-05 evidence."
+        }
+      }
     },
     "W-04": {
       "status": "planned",
@@ -5054,7 +5109,7 @@
       ]
     }
   },
-  "nextAction": "X-21 Jellyfin adapter migration is approved and complete at d54f9b5937f5dc42829b3f56ee1e392a61bccf8a; X-22 Seerr adapter migration is next eligible. F-05 remains capability-blocked, X-20 remains blocked by G-01, and W-03 waits on F-05.",
+  "nextAction": "W-03 action handlers are in implementation from a040db83627735e62fb90d8db8b2c06198eedef4; F-05 Linux organize mutations remain capability-blocked and must fail closed, G-01 keeps Arr writes blocked, and W-04 follows W-03.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
