@@ -4267,7 +4267,8 @@
         "dispatched after X-06, X-15 and X-16 approvals; owns only the root Arr write-adapter migration and synthetic fixtures.",
         "Keep registration/manual-import validation, exact preview binding, strict read-back and G-01 fail-closed behavior unchanged while translating through standalone Sonarr and Radarr clients.",
         "No local replace or go.work dependency is allowed. If the public nested module versions cannot bootstrap root integration, preserve the current adapter and document the release/bootstrap blocker.",
-        "Dependency commits: X-06 0bbf8405859ac604d9d05237badef45dd0ee7fbc, X-15 828e0084f2d88f86050db5912412352c1a363bc1, X-16 1ef0c07af604e7e63d88bc68955c8097479f7e82."
+        "Dependency commits: X-06 0bbf8405859ac604d9d05237badef45dd0ee7fbc, X-15 828e0084f2d88f86050db5912412352c1a363bc1, X-16 1ef0c07af604e7e63d88bc68955c8097479f7e82.",
+        "c20315353bab7e0545204d21a5fd9e1362964b49 product and c111c546429f83d4322e08e7edd495f8de1b29c4 handoff migrate typed catalog/title/episode reads through standalone Sonarr/Radarr clients, preserve bounded private metadata/history bridges, and pass root/nested guardrails without local replace or go.work."
       ],
       "review": null,
       "dispatch": {
@@ -4296,7 +4297,10 @@
         "reviewPath": "docs/execution/handoffs/X-20-review-round1.md",
         "handoffPath": "docs/execution/handoffs/X-20.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "in_progress",
+        "status": "review_pending",
+        "implementationCommit": "c20315353bab7e0545204d21a5fd9e1362964b49",
+        "handoffCommit": "c111c546429f83d4322e08e7edd495f8de1b29c4",
+        "reviewSourceCommit": "c20315353bab7e0545204d21a5fd9e1362964b49",
         "dependencyCommits": {
           "X-06": "0bbf8405859ac604d9d05237badef45dd0ee7fbc",
           "X-15": "828e0084f2d88f86050db5912412352c1a363bc1",
@@ -4552,7 +4556,7 @@
       ]
     }
   },
-  "nextAction": "X-20 is dispatched from 52d22eead7e6c934352fa70483e433697197eb1e to migrate the Arr write adapter through standalone Sonarr and Radarr clients; keep G-01 blocked.",
+  "nextAction": "X-20 product c20315353bab7e0545204d21a5fd9e1362964b49 and handoff c111c546429f83d4322e08e7edd495f8de1b29c4 are ready for independent review; keep G-01 blocked.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
