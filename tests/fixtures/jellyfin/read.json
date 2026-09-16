@@ -1,0 +1,123 @@
+{
+  "system": {
+    "ProductName": "Jellyfin",
+    "ServerName": "fixture-jellyfin",
+    "Version": "10.10.7"
+  },
+  "libraries": {
+    "Items": [
+      {"Id": "library-movies", "Name": "Movies", "CollectionType": "movies", "Type": "CollectionFolder"},
+      {"Id": "library-series", "Name": "Series", "CollectionType": "tvshows", "Type": "CollectionFolder"}
+    ]
+  },
+  "duplicateLibraries": {
+    "Items": [
+      {"Id": "library-duplicate", "Name": "Duplicate", "CollectionType": "movies", "Type": "CollectionFolder"},
+      {"Id": "library-duplicate", "Name": "Duplicate", "CollectionType": "movies", "Type": "CollectionFolder"}
+    ]
+  },
+  "emptyItems": {"Items": [], "TotalRecordCount": 0, "StartIndex": 0},
+  "sourceVariants": {
+    "jf-source-remote": {
+      "Items": [{"Id": "jf-source-remote", "Name": "Fixture Remote Source", "Type": "Movie", "MediaType": "Video", "LocationType": "FileSystem", "MediaSources": [{"Id": "source-remote", "Path": "/fixture/media/Variants/remote.mkv", "Protocol": "File", "LocationType": "Remote", "MediaType": "Video"}]}]
+    },
+    "jf-source-virtual": {
+      "Items": [{"Id": "jf-source-virtual", "Name": "Fixture Virtual Source", "Type": "Movie", "MediaType": "Video", "LocationType": "FileSystem", "MediaSources": [{"Id": "source-virtual", "Path": "/fixture/media/Variants/virtual.mkv", "Protocol": "File", "LocationType": "Virtual", "MediaType": "Video"}]}]
+    },
+    "jf-source-offline": {
+      "Items": [{"Id": "jf-source-offline", "Name": "Fixture Offline Source", "Type": "Movie", "MediaType": "Video", "LocationType": "FileSystem", "MediaSources": [{"Id": "source-offline", "Path": "/fixture/media/Variants/offline.mkv", "Protocol": "File", "LocationType": "Offline", "MediaType": "Video"}]}]
+    },
+    "jf-item-remote": {
+      "Items": [{"Id": "jf-item-remote", "Name": "Fixture Remote Item", "Type": "Movie", "MediaType": "Video", "LocationType": "Remote", "MediaSources": [{"Id": "source-item-remote", "Path": "/fixture/media/Variants/item-remote.mkv", "Protocol": "File", "LocationType": "FileSystem", "MediaType": "Video"}]}]
+    },
+    "jf-item-virtual": {
+      "Items": [{"Id": "jf-item-virtual", "Name": "Fixture Virtual Item", "Type": "Movie", "MediaType": "Video", "LocationType": "Virtual", "MediaSources": [{"Id": "source-item-virtual", "Path": "/fixture/media/Variants/item-virtual.mkv", "Protocol": "File", "LocationType": "FileSystem", "MediaType": "Video"}]}]
+    },
+    "jf-item-offline": {
+      "Items": [{"Id": "jf-item-offline", "Name": "Fixture Offline Item", "Type": "Movie", "MediaType": "Video", "LocationType": "Offline", "MediaSources": [{"Id": "source-item-offline", "Path": "/fixture/media/Variants/item-offline.mkv", "Protocol": "File", "LocationType": "FileSystem", "MediaType": "Video"}]}]
+    },
+    "jf-source-http": {
+      "Items": [{"Id": "jf-source-http", "Name": "Fixture HTTP Source", "Type": "Movie", "MediaType": "Video", "LocationType": "FileSystem", "MediaSources": [{"Id": "source-http", "Path": "/fixture/media/Variants/http.mkv", "Protocol": "Http", "LocationType": "FileSystem", "MediaType": "Video"}]}]
+    },
+    "jf-source-missing-protocol": {
+      "Items": [{"Id": "jf-source-missing-protocol", "Name": "Fixture Missing Protocol", "Type": "Movie", "MediaType": "Video", "LocationType": "FileSystem", "MediaSources": [{"Id": "source-missing-protocol", "Path": "/fixture/media/Variants/missing-protocol.mkv", "LocationType": "FileSystem", "MediaType": "Video"}]}]
+    },
+    "jf-source-missing-location": {
+      "Items": [{"Id": "jf-source-missing-location", "Name": "Fixture Missing Location", "Type": "Movie", "MediaType": "Video", "LocationType": "FileSystem", "MediaSources": [{"Id": "source-missing-location", "Path": "/fixture/media/Variants/missing-location.mkv", "Protocol": "File", "MediaType": "Video"}]}]
+    },
+    "jf-source-missing-media-type": {
+      "Items": [{"Id": "jf-source-missing-media-type", "Name": "Fixture Missing Media Type", "Type": "Movie", "MediaType": "Video", "LocationType": "FileSystem", "MediaSources": [{"Id": "source-missing-media-type", "Path": "/fixture/media/Variants/missing-media-type.mkv", "Protocol": "File", "LocationType": "FileSystem"}]}]
+    },
+    "jf-source-missing-path": {
+      "Items": [{"Id": "jf-source-missing-path", "Name": "Fixture Missing Path", "Type": "Movie", "MediaType": "Video", "LocationType": "FileSystem", "MediaSources": [{"Id": "source-missing-path", "Protocol": "File", "LocationType": "FileSystem", "MediaType": "Video"}]}]
+    },
+    "jf-source-invalid-path": {
+      "Items": [{"Id": "jf-source-invalid-path", "Name": "Fixture Invalid Path", "Type": "Movie", "MediaType": "Video", "LocationType": "FileSystem", "MediaSources": [{"Id": "source-invalid-path", "Path": "/fixture/media/../secret/movie.mkv", "Protocol": "File", "LocationType": "FileSystem", "MediaType": "Video"}]}]
+    },
+    "jf-source-missing-id": {
+      "Items": [{"Id": "jf-source-missing-id", "Name": "Fixture Missing Source ID", "Type": "Movie", "MediaType": "Video", "LocationType": "FileSystem", "MediaSources": [{"Path": "/fixture/media/Variants/missing-id.mkv", "Protocol": "File", "LocationType": "FileSystem", "MediaType": "Video"}]}]
+    },
+    "jf-source-mismatch": {
+      "Items": [{"Id": "jf-source-mismatch", "Name": "Fixture Media Type Mismatch", "Type": "Movie", "MediaType": "Video", "LocationType": "FileSystem", "MediaSources": [{"Id": "source-mismatch", "Path": "/fixture/media/Variants/mismatch.mkv", "Protocol": "File", "LocationType": "FileSystem", "MediaType": "Audio"}]}]
+    },
+    "jf-item-missing-media-type": {
+      "Items": [{"Id": "jf-item-missing-media-type", "Name": "Fixture Item Missing Media Type", "Type": "Movie", "LocationType": "FileSystem", "MediaSources": [{"Id": "source-item-missing-media-type", "Path": "/fixture/media/Variants/item-missing-media-type.mkv", "Protocol": "File", "LocationType": "FileSystem", "MediaType": "Video"}]}]
+    }
+  },
+  "movieItems": {
+    "Items": [
+      {
+        "Id": "jf-film-101",
+        "Name": "Fixture Film",
+        "Type": "Movie",
+        "MediaType": "Video",
+        "LocationType": "FileSystem",
+        "ProviderIds": {"Tmdb": "550", "Imdb": "tt0137523"},
+        "MediaSources": [{"Id": "source-film-101", "Path": "/fixture/media/Movies/Fixture Film (1999)/Fixture Film.mkv", "Protocol": "File", "LocationType": "FileSystem", "MediaType": "Video"}]
+      }
+    ],
+    "TotalRecordCount": 1,
+    "StartIndex": 0
+  },
+  "seriesItems": {
+    "Items": [
+      {
+        "Id": "jf-series-102",
+        "Name": "Fixture Series",
+        "Type": "Series",
+        "MediaType": "Video",
+        "LocationType": "FileSystem",
+        "ProviderIds": {"Tmdb": "1002", "Tvdb": "2002"},
+        "MediaSources": [{"Id": "source-series-102", "Path": "/fixture/media/Series/Fixture Series/Season 01/episode.mkv", "Protocol": "File", "LocationType": "FileSystem", "MediaType": "Video"}]
+      }
+    ],
+    "TotalRecordCount": 1,
+    "StartIndex": 0
+  },
+  "singleItem": {
+    "Items": [
+      {
+        "Id": "jf-film-101",
+        "Name": "Fixture Film",
+        "Type": "Movie",
+        "MediaType": "Video",
+        "LocationType": "FileSystem",
+        "ProviderIds": {"Tmdb": "550", "Imdb": "tt0137523"},
+        "MediaSources": [{"Id": "source-film-101", "Path": "/fixture/media/Movies/Fixture Film (1999)/Fixture Film.mkv", "Protocol": "File", "LocationType": "FileSystem", "MediaType": "Video"}]
+      }
+    ]
+  },
+  "pathOnlyItem": {
+    "Items": [
+      {
+        "Id": "jf-path-only",
+        "Name": "Fixture Path Only",
+        "Type": "Movie",
+        "MediaType": "Video",
+        "LocationType": "FileSystem",
+        "Path": "/fixture/media/Movies/Fixture Path Only/movie.mkv",
+        "ProviderIds": {"Tmdb": "551"}
+      }
+    ]
+  }
+}

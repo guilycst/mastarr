@@ -6,7 +6,6 @@
 package read
 
 import (
-	"bytes"
 	"context"
 	"crypto/hmac"
 	cryptorand "crypto/rand"
@@ -17,42 +16,32 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
-	"net"
 	"net/http"
-	"net/url"
 	"path"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	upstream "github.com/guilycst/mastarr/clients/jellyfin"
 	"github.com/guilycst/mastarr/internal/domain"
 	"github.com/guilycst/mastarr/internal/ports"
 )
 
 const (
-	defaultPageSize      = 100
-	defaultMaxPages      = 100
-	defaultMaxItems      = 10_000
-	defaultMaxResponse   = 16 << 20
-	maxCursorBytes       = 64 << 10
-	maxReasonCodes       = 256
-	maxProviderIDs       = 32
-	maxMediaSources      = 128
-	maxSourcePathLength  = 4096
-	maxVersionLength     = 128
-	maxLibraryIDLength   = 256
-	maxItemIDLength      = 256
-	maxTitleLength       = 4096
-	maxSnapshotPartBytes = 8192
-)
-
-const (
-	apiMediaFolders = "/Library/MediaFolders"
-	apiViews        = "/Users/Me/Views"
-	apiItems        = "/Items"
-	apiSystemPublic = "/System/Info/Public"
+	defaultPageSize     = 100
+	defaultMaxPages     = 100
+	defaultMaxItems     = 10_000
+	defaultMaxResponse  = 16 << 20
+	maxCursorBytes      = 64 << 10
+	maxReasonCodes      = 256
+	maxProviderIDs      = 32
+	maxMediaSources     = 128
+	maxSourcePathLength = 4096
+	maxVersionLength    = 128
+	maxLibraryIDLength  = 256
+	maxItemIDLength     = 256
+	maxTitleLength      = 4096
 )
 
 // Config contains one Jellyfin instance's endpoint, token and observation
@@ -140,8 +129,7 @@ type DetailedPage struct {
 // Client is an authenticated, read-only Jellyfin HTTP client.
 type Client struct {
 	config    Config
-	endpoint  *url.URL
-	http      *http.Client
+	upstream  *upstream.Client
 	cursorKey []byte
 }
 
@@ -153,10 +141,6 @@ var _ ports.CapabilityPort = (*Client)(nil)
 func New(config Config) (*Client, error) {
 	if !config.ConnectionID.Valid() {
 		return nil, errors.New("Jellyfin connection id is invalid")
-	}
-	endpoint, err := parseEndpoint(config.Endpoint)
-	if err != nil {
-		return nil, err
 	}
 	if config.MaxPageSize <= 0 {
 		config.MaxPageSize = defaultPageSize
@@ -173,9 +157,6 @@ func New(config Config) (*Client, error) {
 	if config.MaxResponseSize <= 0 {
 		config.MaxResponseSize = defaultMaxResponse
 	}
-	if config.MaxResponseSize > math.MaxInt64-1 {
-		return nil, errors.New("Jellyfin response bound is invalid")
-	}
 	if err := validateUserID(config.UserID); err != nil {
 		return nil, err
 	}
@@ -184,25 +165,30 @@ func New(config Config) (*Client, error) {
 	}
 	config.Mappings = append([]domain.PathMapping(nil), config.Mappings...)
 
-	baseClient := http.DefaultClient
-	if config.HTTPClient != nil {
-		baseClient = config.HTTPClient
-	}
-	copyClient := *baseClient
-	if copyClient.Timeout == 0 {
-		copyClient.Timeout = 30 * time.Second
-	}
-	// A refresh is deliberately not sent by this package. Refusing redirects
-	// also prevents a read request carrying a token from escaping the endpoint
-	// authority or being replayed against an unexpected route.
-	copyClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
-		return http.ErrUseLastResponse
+	// The standalone module owns endpoint validation, authentication,
+	// deadlines, bounded decoding and upstream error normalization. The root
+	// adapter keeps only Mastarr configuration and translates its normalized
+	// observations into root ports below.
+	client, err := upstream.New(upstream.Config{
+		Endpoint:         config.Endpoint,
+		Token:            authToken(config),
+		UserID:           config.UserID,
+		HTTPClient:       config.HTTPClient,
+		RequestTimeout:   30 * time.Second,
+		MaxResponseBytes: config.MaxResponseSize,
+		MaxPageSize:      config.MaxPageSize,
+		MaxPages:         config.MaxPages,
+		MaxItems:         config.MaxItems,
+		UserAgent:        "mastarr-jellyfin-read/0.0.1",
+	})
+	if err != nil {
+		return nil, err
 	}
 	cursorKey := make([]byte, 32)
 	if _, err := cryptorand.Read(cursorKey); err != nil {
 		return nil, errors.New("Jellyfin cursor key setup failed")
 	}
-	return &Client{config: config, endpoint: endpoint, http: &copyClient, cursorKey: cursorKey}, nil
+	return &Client{config: config, upstream: client, cursorKey: cursorKey}, nil
 }
 
 // NewClient is an explicit constructor alias.
@@ -226,19 +212,18 @@ func (client *Client) Version(ctx context.Context, connectionID domain.ConfigID)
 	if err := validateConnectionScope(client.config.ConnectionID, connectionID); err != nil {
 		return result, err
 	}
-	body, err := client.get(ctx, "jellyfin.version", apiSystemPublic, nil)
+	info, err := client.upstream.GetSystemInfo(ctx)
 	if err != nil {
-		return result, err
-	}
-	var info systemInfoDTO
-	if err := decodeJSON(body, &info); err != nil {
-		return result, malformed("jellyfin.version")
+		return result, mapUpstreamError("jellyfin.version", err)
 	}
 	result.ProductName = boundedText(info.ProductName, maxVersionLength)
 	result.ServerName = boundedText(info.ServerName, maxVersionLength)
 	result.Version = boundedText(info.Version, maxVersionLength)
 	if result.Version == "" {
 		return result, malformed("jellyfin.version")
+	}
+	if !info.ObservedAt.IsZero() {
+		result.ObservedAt = info.ObservedAt.UTC()
 	}
 	return result, nil
 }
@@ -250,32 +235,24 @@ func (client *Client) Libraries(ctx context.Context, connectionID domain.ConfigI
 	if err := validateConnectionScope(client.config.ConnectionID, connectionID); err != nil {
 		return nil, err
 	}
-	body, err := client.get(ctx, "jellyfin.libraries", apiMediaFolders, nil)
+	page, err := client.upstream.ListLibraries(ctx)
 	if err != nil {
-		if code, ok := upstreamCode(err); ok && code == domain.OutcomeUnsupported {
-			// Some Jellyfin-compatible deployments expose user views instead of
-			// MediaFolders. The fallback is still read-only and remains scoped.
-			body, err = client.get(ctx, "jellyfin.views", client.viewsEndpoint(), nil)
-		}
-		if err != nil {
-			return nil, err
-		}
+		return nil, mapUpstreamError("jellyfin.libraries", err)
 	}
-	items, err := decodeLibraryCollection(body)
-	if err != nil {
-		return nil, malformed("jellyfin.libraries")
+	now := page.Coverage.ObservedAt
+	if now.IsZero() {
+		now = time.Now().UTC()
 	}
-	now := time.Now().UTC()
-	libraries := make([]LibraryObservation, 0, len(items))
-	for index, item := range items {
+	libraries := make([]LibraryObservation, 0, len(page.Items))
+	for index, item := range page.Items {
 		id := boundedText(item.ID, maxLibraryIDLength)
-		name := boundedText(firstNonEmpty(item.Name, item.Title), maxTitleLength)
+		name := boundedText(item.Name, maxTitleLength)
 		if id == "" || name == "" {
 			return nil, malformed(fmt.Sprintf("jellyfin.libraries.%d", index))
 		}
 		libraries = append(libraries, LibraryObservation{
 			ExternalID: id, Name: name, CollectionType: boundedText(item.CollectionType, maxVersionLength),
-			Type: boundedText(item.Type, maxVersionLength), ObservedAt: now,
+			Type: boundedText(item.Type, maxVersionLength), ObservedAt: now.UTC(),
 		})
 	}
 	return libraries, nil
@@ -437,28 +414,11 @@ func (client *Client) ObserveItem(ctx context.Context, connectionID domain.Confi
 	if id == "" || strings.TrimSpace(id) != id || len(id) > maxItemIDLength || strings.ContainsAny(id, "\r\n") {
 		return result, invalidInput("jellyfin.item.id")
 	}
-	query := url.Values{
-		"Ids":    []string{id},
-		"Fields": []string{"ProviderIds,MediaSources,Path,LocationType,MediaType"},
-	}
-	if client.config.UserID != "" {
-		query.Set("UserId", client.config.UserID)
-	}
-	body, err := client.get(ctx, "jellyfin.item", apiItems, query)
+	item, err := client.upstream.ObserveItem(ctx, id)
 	if err != nil {
-		return result, err
+		return result, mapUpstreamError("jellyfin.item", err)
 	}
-	items, err := decodeItemCollection(body)
-	if err != nil {
-		return result, malformed("jellyfin.item")
-	}
-	for _, dto := range items {
-		if strings.TrimSpace(dto.ID) != id {
-			continue
-		}
-		return client.observeItem(dto, "", "")
-	}
-	return result, domain.UpstreamError{Code: domain.OutcomeUnavailable, Status: http.StatusNotFound, Operation: "jellyfin.item", Detail: "item was not observed"}
+	return client.observeItem(item, "", "")
 }
 
 // Item is a naming alias for ObserveItem.
@@ -644,42 +604,32 @@ func (client *Client) collectLibraryItems(ctx context.Context, library LibraryOb
 	var reasons []string
 	offset := 0
 	pages := 0
+	collapseBoxSetItems := false
 	for len(result) < remaining && pages < pagesRemaining {
 		if err := ctx.Err(); err != nil {
 			return result, reasons, pages, err
 		}
 		pageLimit := minInt(client.config.MaxPageSize, remaining-len(result))
-		query := url.Values{
-			"SortBy":              []string{"SortName"},
-			"SortOrder":           []string{"Ascending"},
-			"IncludeItemTypes":    []string{"Series,Movie,Episode"},
-			"Recursive":           []string{"true"},
-			"StartIndex":          []string{strconv.Itoa(offset)},
-			"Limit":               []string{strconv.Itoa(pageLimit)},
-			"ParentId":            []string{library.ExternalID},
-			"Fields":              []string{"ProviderIds,MediaSources,Path,LocationType,MediaType,Type"},
-			"collapseBoxSetItems": []string{"false"},
-		}
-		if client.config.UserID != "" {
-			query.Set("UserId", client.config.UserID)
-		}
-		body, err := client.get(ctx, "jellyfin.library.items", apiItems, query)
+		nativePage, err := client.upstream.ListItems(ctx, upstream.ItemQuery{
+			ParentID:            library.ExternalID,
+			IncludeItemTypes:    []string{"Series", "Movie", "Episode"},
+			Recursive:           true,
+			StartIndex:          offset,
+			Limit:               pageLimit,
+			UserID:              client.config.UserID,
+			Fields:              []string{"ProviderIds", "MediaSources", "Path", "LocationType", "MediaType", "Type"},
+			CollapseBoxSetItems: &collapseBoxSetItems,
+		})
 		if err != nil {
-			return result, reasons, pages, err
-		}
-		items, total, fullArray, err := decodeItemsPage(body)
-		if err != nil {
-			return result, reasons, pages, malformed("jellyfin.library.items")
+			return result, reasons, pages, mapUpstreamError("jellyfin.library.items", err)
 		}
 		pages++
-		responseBoundHit := false
-		if len(items) > pageLimit {
-			items = items[:pageLimit]
-			responseBoundHit = true
-			addReason(&reasons, "pagination_response_exceeded_limit")
+		for _, reason := range nativePage.Coverage.ReasonCodes {
+			addReason(&reasons, reason)
 		}
+		items := nativePage.Items
 		if len(items) == 0 {
-			if total > int64(offset) {
+			if nativePage.Coverage.Completeness == upstream.CompletenessPartial {
 				addReason(&reasons, "pagination_empty_before_total")
 			}
 			break
@@ -695,26 +645,19 @@ func (client *Client) collectLibraryItems(ctx context.Context, library LibraryOb
 			}
 			result = append(result, observation)
 			if len(result) >= remaining {
-				if !fullArray && (total < 0 || total > int64(offset+len(items))) {
+				if nativePage.Coverage.Completeness != upstream.CompletenessComplete {
 					addReason(&reasons, "items_limit")
 				}
 				break
 			}
 		}
-		if responseBoundHit {
+		if nativePage.Coverage.Completeness == upstream.CompletenessComplete {
 			break
 		}
-		if !fullArray && total < 0 {
-			if len(items) == pageLimit {
-				addReason(&reasons, "pagination_total_missing")
-			}
-			break
-		}
-		if !fullArray && total >= 0 && total < int64(offset+len(items)) {
-			addReason(&reasons, "pagination_total_inconsistent")
-			break
-		}
-		if fullArray || total <= int64(offset+len(items)) || len(items) < pageLimit {
+		if nativePage.Coverage.Completeness != upstream.CompletenessPartial {
+			// Unknown coverage is deliberately terminal. The standalone client
+			// has already retained missing or contradictory native pagination
+			// metadata in ReasonCodes; do not manufacture a continuation here.
 			break
 		}
 		nextOffset := offset + len(items)
@@ -736,11 +679,39 @@ func (client *Client) collectLibraryItems(ctx context.Context, library LibraryOb
 	return result, reasons, pages, nil
 }
 
-func (client *Client) observeItem(item itemDTO, libraryID, libraryName string) (ItemObservation, error) {
+func (client *Client) observeItem(item upstream.Item, libraryID, libraryName string) (ItemObservation, error) {
 	now := time.Now().UTC()
 	id := boundedText(item.ID, maxItemIDLength)
 	title := boundedText(firstNonEmpty(item.Name, item.Title), maxTitleLength)
 	providers, relationships, providerReasons := providerValues(item.ProviderIDs)
+	if len(item.ProviderRelations) > 0 {
+		relationships = make([]ProviderRelationship, 0, minInt(len(item.ProviderRelations), maxProviderIDs))
+		seenRelationships := make(map[string]struct{}, len(item.ProviderRelations))
+		for _, relationship := range item.ProviderRelations {
+			if len(relationships) >= maxProviderIDs {
+				providerReasons = appendReason(providerReasons, "provider_ids_limit")
+				break
+			}
+			provider := boundedText(relationship.Provider, maxItemIDLength)
+			value := boundedText(relationship.ID, maxItemIDLength)
+			if provider == "" || value == "" {
+				providerReasons = appendReason(providerReasons, "provider_id_malformed")
+				continue
+			}
+			key := provider + "\x00" + value
+			if _, exists := seenRelationships[key]; exists {
+				continue
+			}
+			seenRelationships[key] = struct{}{}
+			relationships = append(relationships, ProviderRelationship{Provider: provider, ID: value})
+		}
+		sort.SliceStable(relationships, func(left, right int) bool {
+			if relationships[left].Provider == relationships[right].Provider {
+				return relationships[left].ID < relationships[right].ID
+			}
+			return relationships[left].Provider < relationships[right].Provider
+		})
+	}
 	itemValue := ports.MediaServerItem{
 		ExternalID: id,
 		ProviderID: firstProviderID(providers),
@@ -772,7 +743,7 @@ func (client *Client) observeItem(item itemDTO, libraryID, libraryName string) (
 			// Jellyfin can omit MediaSources for a normal item read while still
 			// returning its exact Path. Keep that evidence bounded and typed,
 			// without treating a title-only item as playable.
-			sources = []mediaSourceDTO{{ID: id + ":path", Path: item.Path, Protocol: "File", LocationType: item.LocationType, MediaType: item.MediaType}}
+			sources = []upstream.MediaSource{{ID: id + ":path", Path: item.Path, Protocol: "File", LocationType: item.LocationType, MediaType: item.MediaType}}
 			pathOnly = true
 			result.Evidence = appendReason(result.Evidence, "media_source_from_item_path")
 		}
@@ -809,7 +780,7 @@ func (client *Client) observeItem(item itemDTO, libraryID, libraryName string) (
 	return result, nil
 }
 
-func (client *Client) observeMediaSource(source mediaSourceDTO) (MediaSourceObservation, bool) {
+func (client *Client) observeMediaSource(source upstream.MediaSource) (MediaSourceObservation, bool) {
 	result := MediaSourceObservation{
 		ID:       boundedText(source.ID, maxItemIDLength),
 		Protocol: boundedText(source.Protocol, maxVersionLength), LocationType: boundedText(source.LocationType, maxVersionLength),
@@ -854,7 +825,7 @@ func (client *Client) observeMediaSource(source mediaSourceDTO) (MediaSourceObse
 // local video source. A path by itself, or a source with metadata omitted or
 // outside the tested File/FileSystem/Video shape, is observation evidence but
 // cannot establish playability.
-func nativeMediaSourceReason(source mediaSourceDTO) string {
+func nativeMediaSourceReason(source upstream.MediaSource) string {
 	if strings.TrimSpace(source.ID) == "" {
 		return "media_source_id_missing"
 	}
@@ -882,7 +853,7 @@ func nativeMediaSourceReason(source mediaSourceDTO) string {
 	return ""
 }
 
-func nativeItemMediaTypeReason(item itemDTO, source mediaSourceDTO) string {
+func nativeItemMediaTypeReason(item upstream.Item, source upstream.MediaSource) string {
 	itemMediaType := strings.TrimSpace(item.MediaType)
 	sourceMediaType := strings.TrimSpace(source.MediaType)
 	if itemMediaType == "" {
@@ -981,13 +952,6 @@ func validateUserID(value string) error {
 	return nil
 }
 
-func (client *Client) viewsEndpoint() string {
-	if client.config.UserID == "" {
-		return apiViews
-	}
-	return "/Users/" + client.config.UserID + "/Views"
-}
-
 type cursorState struct {
 	SourceID         domain.RuntimeID `json:"sourceId"`
 	Collection       string           `json:"collection"`
@@ -1043,119 +1007,6 @@ func (client *Client) decodeCursor(value string) (cursorState, error) {
 		return cursorState{}, invalidInput("jellyfin.inventory.cursor")
 	}
 	return state, nil
-}
-
-type systemInfoDTO struct {
-	ProductName string `json:"ProductName"`
-	ServerName  string `json:"ServerName"`
-	Version     string `json:"Version"`
-}
-
-type libraryDTO struct {
-	ID             string `json:"Id"`
-	Name           string `json:"Name"`
-	Title          string `json:"title"`
-	Type           string `json:"Type"`
-	CollectionType string `json:"CollectionType"`
-}
-
-type libraryEnvelope struct {
-	Items json.RawMessage `json:"Items"`
-}
-
-type itemDTO struct {
-	ID           string            `json:"Id"`
-	Name         string            `json:"Name"`
-	Title        string            `json:"title"`
-	Type         string            `json:"Type"`
-	LocationType string            `json:"LocationType"`
-	MediaType    string            `json:"MediaType"`
-	Path         string            `json:"Path"`
-	ProviderIDs  map[string]string `json:"ProviderIds"`
-	MediaSources []mediaSourceDTO  `json:"MediaSources"`
-}
-
-type itemEnvelope struct {
-	Items            json.RawMessage `json:"Items"`
-	TotalRecordCount json.RawMessage `json:"TotalRecordCount"`
-	StartIndex       int             `json:"StartIndex"`
-}
-
-type mediaSourceDTO struct {
-	ID           string `json:"Id"`
-	Path         string `json:"Path"`
-	Protocol     string `json:"Protocol"`
-	LocationType string `json:"LocationType"`
-	MediaType    string `json:"MediaType"`
-}
-
-func decodeLibraryCollection(body []byte) ([]libraryDTO, error) {
-	trimmed := strings.TrimSpace(string(body))
-	if trimmed == "" || trimmed == "null" {
-		return nil, errors.New("empty library response")
-	}
-	if strings.HasPrefix(trimmed, "[") {
-		var items []libraryDTO
-		if err := decodeJSON(body, &items); err != nil {
-			return nil, err
-		}
-		return items, nil
-	}
-	var envelope libraryEnvelope
-	if err := decodeJSON(body, &envelope); err != nil {
-		return nil, err
-	}
-	if len(bytes.TrimSpace(envelope.Items)) == 0 || bytes.Equal(bytes.TrimSpace(envelope.Items), []byte("null")) {
-		return nil, errors.New("library items are missing")
-	}
-	var items []libraryDTO
-	if err := decodeJSON(envelope.Items, &items); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-func decodeItemCollection(body []byte) ([]itemDTO, error) {
-	items, _, _, err := decodeItemsPage(body)
-	return items, err
-}
-
-func decodeItemsPage(body []byte) ([]itemDTO, int64, bool, error) {
-	trimmed := strings.TrimSpace(string(body))
-	if trimmed == "" || trimmed == "null" {
-		return nil, 0, false, errors.New("empty item response")
-	}
-	if strings.HasPrefix(trimmed, "[") {
-		var items []itemDTO
-		if err := decodeJSON(body, &items); err != nil {
-			return nil, 0, true, err
-		}
-		return items, int64(len(items)), true, nil
-	}
-	var envelope itemEnvelope
-	if err := decodeJSON(body, &envelope); err != nil {
-		return nil, 0, false, err
-	}
-	if len(bytes.TrimSpace(envelope.Items)) == 0 || bytes.Equal(bytes.TrimSpace(envelope.Items), []byte("null")) {
-		return nil, 0, false, errors.New("item items are missing")
-	}
-	var items []itemDTO
-	if err := decodeJSON(envelope.Items, &items); err != nil {
-		return nil, 0, false, err
-	}
-	trimmedTotal := strings.TrimSpace(string(envelope.TotalRecordCount))
-	if trimmedTotal == "" || trimmedTotal == "null" {
-		return items, -1, false, nil
-	}
-	var total json.Number
-	if err := decodeJSON(envelope.TotalRecordCount, &total); err != nil {
-		return nil, 0, false, errors.New("item total is invalid")
-	}
-	parsedTotal, err := strconv.ParseInt(total.String(), 10, 64)
-	if err != nil || parsedTotal < 0 {
-		return nil, 0, false, errors.New("negative item total")
-	}
-	return items, parsedTotal, false, nil
 }
 
 func providerValues(values map[string]string) (map[string]string, []ProviderRelationship, []string) {
@@ -1235,92 +1086,11 @@ func (client *Client) pageLimit(requested int) (int, error) {
 	return requested, nil
 }
 
-func (client *Client) get(ctx context.Context, operation, endpoint string, query url.Values) ([]byte, error) {
-	body, status, err := client.request(ctx, operation, endpoint, http.MethodGet, query)
-	if err != nil {
-		return nil, err
-	}
-	if status < http.StatusOK || status >= http.StatusMultipleChoices {
-		return nil, normalizeStatus(operation, status)
-	}
-	return body, nil
-}
-
-func (client *Client) request(ctx context.Context, operation, endpoint, method string, query url.Values) ([]byte, int, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, 0, err
-	}
-	requestURL := *client.endpoint
-	requestURL.Path = strings.TrimRight(client.endpoint.Path, "/") + endpoint
-	requestURL.RawPath = ""
-	requestURL.RawQuery = query.Encode()
-	request, err := http.NewRequestWithContext(ctx, method, requestURL.String(), nil)
-	if err != nil {
-		return nil, 0, errors.New("Jellyfin request could not be created")
-	}
-	request.Header.Set("Accept", "application/json")
-	request.Header.Set("User-Agent", "mastarr-jellyfin-read/0.0.1")
-	if token := client.authToken(); token != "" {
-		request.Header.Set("X-Emby-Token", token)
-	}
-	response, err := client.http.Do(request)
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, 0, ctxErr
-		}
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			return nil, 0, domain.UpstreamError{Code: domain.OutcomeUnavailable, Retryable: true, Operation: operation, Detail: "upstream request timed out"}
-		}
-		return nil, 0, domain.UpstreamError{Code: domain.OutcomeUnavailable, Retryable: true, Operation: operation, Detail: "upstream is unavailable"}
-	}
-	defer response.Body.Close()
-	body, readErr := readBounded(response.Body, client.config.MaxResponseSize)
-	if readErr != nil {
-		return nil, response.StatusCode, domain.UpstreamError{Code: domain.OutcomeUnknown, Status: response.StatusCode, Operation: operation, Detail: "upstream response exceeded the configured bound"}
-	}
-	return body, response.StatusCode, nil
-}
-
-func (client *Client) authToken() string {
-	if strings.TrimSpace(client.config.APIKey) != "" {
-		return strings.TrimSpace(client.config.APIKey)
-	}
-	if strings.TrimSpace(client.config.Token) != "" {
-		return strings.TrimSpace(client.config.Token)
-	}
-	return strings.TrimSpace(client.config.AuthToken)
-}
-
-func parseEndpoint(value string) (*url.URL, error) {
-	if strings.TrimSpace(value) != value || value == "" {
-		return nil, errors.New("Jellyfin endpoint is invalid")
-	}
-	parsed, err := url.Parse(value)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return nil, errors.New("Jellyfin endpoint must be an absolute URL without credentials or query")
-	}
-	return parsed, nil
-}
-
 func validateConnectionScope(expected, requested domain.ConfigID) error {
 	if !requested.Valid() || requested != expected {
 		return invalidInput("jellyfin.connection")
 	}
 	return nil
-}
-
-func readBounded(reader io.Reader, maxBytes int64) ([]byte, error) {
-	if maxBytes <= 0 || maxBytes >= math.MaxInt64 {
-		return nil, errors.New("response bound is invalid")
-	}
-	data, err := io.ReadAll(io.LimitReader(reader, maxBytes+1))
-	if err != nil {
-		return nil, errors.New("response could not be read")
-	}
-	if int64(len(data)) > maxBytes {
-		return nil, errors.New("response exceeds configured bound")
-	}
-	return data, nil
 }
 
 func decodeJSON(data []byte, target any) error {
@@ -1336,32 +1106,71 @@ func decodeJSON(data []byte, target any) error {
 	return nil
 }
 
-func normalizeStatus(operation string, status int) error {
-	code := domain.OutcomeUnknown
-	retryable := false
-	switch {
-	case status == http.StatusUnauthorized || status == http.StatusForbidden:
-		code = domain.OutcomeUnauthorized
-	case status == http.StatusTooManyRequests:
-		code, retryable = domain.OutcomeRateLimited, true
-	case status == http.StatusBadRequest:
-		code = domain.OutcomeInvalidInput
-	case status == http.StatusConflict:
-		code = domain.OutcomeConflict
-	case status == http.StatusNotFound || status == http.StatusMethodNotAllowed || status == http.StatusNotImplemented:
-		code = domain.OutcomeUnsupported
-	case status == http.StatusRequestTimeout || status >= http.StatusInternalServerError:
-		code, retryable = domain.OutcomeUnavailable, true
-	}
-	return domain.UpstreamError{Code: code, Status: status, Retryable: retryable, Operation: operation, Detail: "upstream request failed"}
-}
-
 func malformed(operation string) error {
 	return domain.UpstreamError{Code: domain.OutcomeUnknown, Operation: operation, Detail: "upstream response is malformed"}
 }
 
 func invalidInput(operation string) error {
 	return domain.UpstreamError{Code: domain.OutcomeInvalidInput, Operation: operation, Detail: "request is invalid"}
+}
+
+// mapUpstreamError is the only error translation point between the standalone
+// Jellyfin module and Mastarr. It deliberately keeps the operation name owned
+// by this adapter and exposes only the normalized domain error vocabulary.
+func mapUpstreamError(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	var native upstream.UpstreamError
+	if !errors.As(err, &native) {
+		return domain.UpstreamError{Code: domain.OutcomeUnknown, Operation: operation, Detail: "upstream request failed"}
+	}
+	code := domain.OutcomeUnknown
+	switch native.Code {
+	case upstream.ErrorUnavailable:
+		code = domain.OutcomeUnavailable
+	case upstream.ErrorRateLimited:
+		code = domain.OutcomeRateLimited
+	case upstream.ErrorUnauthorized, upstream.ErrorForbidden:
+		code = domain.OutcomeUnauthorized
+	case upstream.ErrorInvalidInput:
+		code = domain.OutcomeInvalidInput
+	case upstream.ErrorConflict:
+		code = domain.OutcomeConflict
+	case upstream.ErrorUnsupported:
+		code = domain.OutcomeUnsupported
+	case upstream.ErrorNotFound:
+		// The old adapter used an unavailable result for an exact item lookup,
+		// while collection route absence is an unsupported capability. Keep
+		// that distinction at the translation boundary.
+		if operation == "jellyfin.item" {
+			code = domain.OutcomeUnavailable
+		} else {
+			code = domain.OutcomeUnsupported
+		}
+	case upstream.ErrorMalformed, upstream.ErrorResponseTooLarge, upstream.ErrorUnknown:
+		code = domain.OutcomeUnknown
+	}
+	return domain.UpstreamError{
+		Code: code, Status: native.Status, Retryable: native.Retryable,
+		Operation: operation, Detail: "upstream request failed",
+	}
+}
+
+// authToken preserves the root adapter's documented APIKey-first aliases
+// while giving the standalone client one canonical token field.
+func authToken(config Config) string {
+	switch {
+	case strings.TrimSpace(config.APIKey) != "":
+		return strings.TrimSpace(config.APIKey)
+	case strings.TrimSpace(config.Token) != "":
+		return strings.TrimSpace(config.Token)
+	default:
+		return strings.TrimSpace(config.AuthToken)
+	}
 }
 
 func upstreamCode(err error) (domain.UpstreamErrorCode, bool) {
@@ -1371,8 +1180,6 @@ func upstreamCode(err error) (domain.UpstreamErrorCode, bool) {
 	}
 	return upstream.Code, true
 }
-
-func parseProviderID(value string) string { return boundedText(value, maxItemIDLength) }
 
 func normalizeRemotePath(value string) string {
 	if value == "" || len(value) > maxSourcePathLength || strings.TrimSpace(value) != value || strings.ContainsRune(value, 0) || strings.ContainsRune(value, '\\') || !absoluteRemotePath(value) {

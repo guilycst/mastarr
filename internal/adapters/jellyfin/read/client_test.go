@@ -17,6 +17,13 @@ import (
 	"github.com/guilycst/mastarr/internal/ports"
 )
 
+const (
+	apiSystemPublic = "/System/Info/Public"
+	apiMediaFolders = "/Library/MediaFolders"
+	apiViews        = "/UserViews"
+	apiItems        = "/Items"
+)
+
 type jellyfinFixture struct {
 	System             json.RawMessage            `json:"system"`
 	Libraries          json.RawMessage            `json:"libraries"`
@@ -118,7 +125,7 @@ func loadJellyfinFixture(t *testing.T) jellyfinFixture {
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	data, err := os.ReadFile(filepath.Join(filepath.Dir(source), "../../../../tests/fixtures/catalogs/jellyfin-items.json"))
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(source), "../../../../tests/fixtures/jellyfin/read.json"))
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
 	}
@@ -306,13 +313,11 @@ func TestJellyfinDuplicateLibraryIdentityIsPartial(t *testing.T) {
 	fixture := loadJellyfinFixture(t)
 	client, server := newJellyfinFixtureClient(t, &jellyfinFixtureHandler{fixture: fixture, duplicateLibraries: true}, "jellyfin-main", nil)
 	defer server.Close()
-	page, err := client.ListDetailed(context.Background(), "jellyfin-main", "", 1)
-	if err != nil {
-		t.Fatalf("ListDetailed: %v", err)
-	}
-	if len(page.Items) != 0 || page.Coverage.Completeness != domain.CompletenessPartial || !hasJellyfinReason(page.Coverage.ReasonCodes, "library_identity_duplicate") {
-		t.Fatalf("duplicate library coverage = %+v", page.Coverage)
-	}
+	_, err := client.ListDetailed(context.Background(), "jellyfin-main", "", 1)
+	// The standalone client rejects duplicate native library IDs before the
+	// adapter can aggregate them. A malformed identity is therefore an
+	// explicit unknown result, rather than a partial absence claim.
+	assertJellyfinCode(t, err, domain.OutcomeUnknown)
 }
 
 func TestJellyfinUnsupportedNativeSourceShapesRemainUnavailable(t *testing.T) {
@@ -339,7 +344,6 @@ func TestJellyfinUnsupportedNativeSourceShapesRemainUnavailable(t *testing.T) {
 		{id: "jf-item-missing-media-type", reason: "item_media_type_missing", unavailableReason: "playable_media_unverified"},
 		{id: "jf-source-missing-path", reason: "media_source_path_missing", unavailableReason: "playable_media_unverified"},
 		{id: "jf-source-invalid-path", reason: "media_source_path_invalid", unavailableReason: "playable_media_unverified"},
-		{id: "jf-source-missing-id", reason: "media_source_id_missing", unavailableReason: "playable_media_unverified"},
 		{id: "jf-source-mismatch", reason: "media_source_media_type_mismatch", unavailableReason: "playable_media_unverified"},
 	}
 	for _, testCase := range cases {
@@ -353,6 +357,14 @@ func TestJellyfinUnsupportedNativeSourceShapesRemainUnavailable(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestJellyfinMissingSourceIdentityIsMalformed(t *testing.T) {
+	fixture := loadJellyfinFixture(t)
+	client, server := newJellyfinFixtureClient(t, &jellyfinFixtureHandler{fixture: fixture}, "jellyfin-main", nil)
+	defer server.Close()
+	_, err := client.ObserveItem(context.Background(), "jellyfin-main", "jf-source-missing-id")
+	assertJellyfinCode(t, err, domain.OutcomeUnknown)
 }
 
 func TestJellyfinAmbiguousMappingRemainsUnavailable(t *testing.T) {
@@ -390,7 +402,7 @@ func TestJellyfinUserScopeIsSentToReadRoutes(t *testing.T) {
 	defer handler.mu.Unlock()
 	var sawViews, sawItem bool
 	for _, request := range handler.requestLog {
-		sawViews = sawViews || strings.Contains(request, "GET /Users/fixture-user/Views")
+		sawViews = sawViews || strings.Contains(request, "GET /UserViews?userId=fixture-user")
 		sawItem = sawItem || strings.Contains(request, "UserId=fixture-user")
 	}
 	if !sawViews || !sawItem {
