@@ -266,7 +266,11 @@ func (client *Client) Register(ctx context.Context, connectionID domain.ConfigID
 	provider := strings.TrimSpace(request.ProviderID)
 	var matched *nativeTitle
 	for index := range titles {
-		if !nativeHasProviderID(titles[index], provider, client.config.Kind) {
+		providerMatch := nativeProviderMatch(titles[index], provider, client.config.Kind)
+		if providerMatch == providerMatchContradiction {
+			return result, upstreamFailure(domain.OutcomeConflict, operationRegistration, "title provider identity evidence is contradictory")
+		}
+		if providerMatch != providerMatchFound {
 			continue
 		}
 		if matched != nil {
@@ -319,7 +323,11 @@ func (client *Client) Register(ctx context.Context, connectionID domain.ConfigID
 		monitored := false
 		readbackFields.Monitored = &monitored
 	}
-	if !registrationFieldsMatch(readback, readbackFields, client.config.Kind) || !nativeHasProviderID(readback, provider, client.config.Kind) {
+	providerMatch := nativeProviderMatch(readback, provider, client.config.Kind)
+	if providerMatch == providerMatchContradiction {
+		return result, upstreamFailure(domain.OutcomeConflict, operationRegistration, "registration provider identity evidence is contradictory")
+	}
+	if !registrationFieldsMatch(readback, readbackFields, client.config.Kind) || providerMatch != providerMatchFound {
 		return result, upstreamFailure(domain.OutcomeUnknown, operationRegistration, "registration read-back did not match requested fields")
 	}
 	result.ExternalID = strconv.FormatInt(readback.ID, 10)
@@ -1335,25 +1343,47 @@ func catalogPath(kind domain.ConnectionKind) string {
 	return "/api/v3/series"
 }
 
-func nativeHasProviderID(title nativeTitle, wanted string, kind domain.ConnectionKind) bool {
+type providerMatchResult uint8
+
+const (
+	providerNoMatch providerMatchResult = iota
+	providerMatchFound
+	providerMatchContradiction
+)
+
+func nativeProviderMatch(title nativeTitle, wanted string, kind domain.ConnectionKind) providerMatchResult {
 	wanted = strings.TrimSpace(wanted)
 	if wanted == "" {
-		return false
+		return providerNoMatch
+	}
+	providerNamespace := "tvdbid"
+	var primary *int64
+	if kind == domain.ConnectionRadarr {
+		providerNamespace = "tmdbid"
+		primary = title.TMDBID
+	} else {
+		primary = title.TVDBID
+	}
+	canonicalValue, canonicalPresent, canonicalConsistent := nativeNumericProviderValue(primary, title.ProviderIDs, providerNamespace)
+	_, _, imdbConsistent := nativeTextProviderValue(title.IMDBID, title.ProviderIDs, "imdbid")
+	if !canonicalConsistent || !imdbConsistent {
+		return providerMatchContradiction
 	}
 	if decimalProviderID(wanted) {
-		providerNamespace := "tvdbid"
-		var primary *int64
-		if kind == domain.ConnectionRadarr {
-			providerNamespace = "tmdbid"
-			primary = title.TMDBID
-		} else {
-			primary = title.TVDBID
+		if canonicalPresent && canonicalValue == wanted {
+			return providerMatchFound
 		}
-		value, present, consistent := nativeNumericProviderValue(primary, title.ProviderIDs, providerNamespace)
-		return consistent && present && value == wanted
+		return providerNoMatch
 	}
-	value, present, consistent := nativeTextProviderValue(title.IMDBID, title.ProviderIDs, "imdbid")
-	return consistent && present && strings.EqualFold(value, wanted)
+	imdbValue, imdbPresent, _ := nativeTextProviderValue(title.IMDBID, title.ProviderIDs, "imdbid")
+	if imdbPresent && strings.EqualFold(imdbValue, wanted) {
+		return providerMatchFound
+	}
+	return providerNoMatch
+}
+
+func nativeHasProviderID(title nativeTitle, wanted string, kind domain.ConnectionKind) bool {
+	return nativeProviderMatch(title, wanted, kind) == providerMatchFound
 }
 
 func decimalProviderID(value string) bool {

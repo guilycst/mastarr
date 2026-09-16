@@ -377,6 +377,98 @@ func TestNativeProviderIdentityRejectsContradictorySameNamespaceEvidence(t *test
 	}
 }
 
+func TestCommandCapableRegistrationRejectsProviderContradictionsBeforePost(t *testing.T) {
+	cases := []struct {
+		name      string
+		kind      domain.ConnectionKind
+		mediaKind domain.MediaKind
+		path      string
+		title     nativeTitle
+		provider  string
+	}{
+		{
+			name: "radarr tmdb primary and alias",
+			kind: domain.ConnectionRadarr, mediaKind: domain.MediaMovie, path: "/api/v3/movie",
+			title: nativeTitle{
+				ID: 101, Title: "Synthetic Film", Path: "/synthetic/library/Synthetic Film",
+				TMDBID: int64Ptr(9999), ProviderIDs: map[string]string{"tmdbId": "4242"},
+				Monitored: boolPtr(false), RootFolderPath: "/synthetic/old", QualityProfile: int64Ptr(3),
+			},
+			provider: "4242",
+		},
+		{
+			name: "sonarr tvdb primary and alias",
+			kind: domain.ConnectionSonarr, mediaKind: domain.MediaEpisode, path: "/api/v3/series",
+			title: nativeTitle{
+				ID: 201, Title: "Synthetic Show", Path: "/synthetic/library/Synthetic Show",
+				TVDBID: int64Ptr(9999), ProviderIDs: map[string]string{"tvdbId": "4242"},
+				Monitored: boolPtr(false), RootFolderPath: "/synthetic/old", QualityProfile: int64Ptr(3),
+			},
+			provider: "4242",
+		},
+		{
+			name: "radarr imdb primary and alias",
+			kind: domain.ConnectionRadarr, mediaKind: domain.MediaMovie, path: "/api/v3/movie",
+			title: nativeTitle{
+				ID: 102, Title: "Synthetic Film", Path: "/synthetic/library/Synthetic Film",
+				IMDBID: "tt9999", ProviderIDs: map[string]string{"imdbId": "tt4242"},
+				Monitored: boolPtr(false), RootFolderPath: "/synthetic/old", QualityProfile: int64Ptr(3),
+			},
+			provider: "tt4242",
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			var posts atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if request.Method == http.MethodGet && request.URL.Path == testCase.path {
+					writeFixtureJSON(t, writer, []nativeTitle{testCase.title})
+					return
+				}
+				if request.Method == http.MethodPost {
+					posts.Add(1)
+					writeFixtureJSON(t, writer, testCase.title)
+					return
+				}
+				http.Error(writer, "contradictory provider evidence must stop before any write", http.StatusNotFound)
+			}))
+			t.Cleanup(server.Close)
+
+			client := syntheticClient(t, server, testCase.kind, syntheticCapabilities())
+			result, err := client.Register(context.Background(), testConnection, ports.RegistrationRequest{
+				ProviderID: testCase.provider, Kind: testCase.mediaKind,
+				Fields: ports.RegistrationFields{RootFolder: "/synthetic/new", QualityProfileID: "7"},
+			})
+			if err == nil || !hasCode(err, domain.OutcomeConflict) {
+				t.Fatalf("Register error = %v result=%#v, want contradiction before capability/write", err, result)
+			}
+			if result.Effect.Outcome != "" || posts.Load() != 0 {
+				t.Fatalf("result=%#v POSTs=%d, want zero effect and zero native writes", result, posts.Load())
+			}
+		})
+	}
+}
+
+func TestNativeProviderIdentityAcceptsValidAliases(t *testing.T) {
+	cases := []struct {
+		name   string
+		title  nativeTitle
+		wanted string
+		kind   domain.ConnectionKind
+	}{
+		{name: "radarr tmdb alias", title: nativeTitle{ProviderIDs: map[string]string{"tmdbId": "4242"}}, wanted: "4242", kind: domain.ConnectionRadarr},
+		{name: "sonarr tvdb alias", title: nativeTitle{ProviderIDs: map[string]string{"tvdbId": "4242"}}, wanted: "4242", kind: domain.ConnectionSonarr},
+		{name: "imdb alias", title: nativeTitle{ProviderIDs: map[string]string{"imdbId": "tt4242"}}, wanted: "tt4242", kind: domain.ConnectionRadarr},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if !nativeHasProviderID(testCase.title, testCase.wanted, testCase.kind) {
+				t.Fatalf("nativeHasProviderID(%#v, %q, %s) = false, want valid alias match", testCase.title, testCase.wanted, testCase.kind)
+			}
+		})
+	}
+}
+
 func TestSonarrMetadataProjectionPreservesTypedFieldsWhenOmitted(t *testing.T) {
 	var catalogCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
