@@ -15,7 +15,9 @@
   "resumeDocument": "docs/execution/RESUME.md",
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
-  "activeImplementationTasks": [],
+  "activeImplementationTasks": [
+    "W-04"
+  ],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
   "guardrailBaseline": {
@@ -3344,12 +3346,62 @@
       "implementationCommit": "a4ad5a0fcfee724491513224f6b082a25be82e0a"
     },
     "W-04": {
-      "status": "planned",
-      "owner": null,
-      "baseSha": null,
+      "status": "in_progress",
+      "owner": "/root/x05_implementer",
+      "baseSha": "4e5c46d503949a493067ae57d3395545a36021f8",
       "integratedSha": null,
-      "evidence": [],
-      "review": null
+      "evidence": [
+        "dispatched from 4e5c46d503949a493067ae57d3395545a36021f8 after W-03 approval product a4ad5a0fcfee724491513224f6b082a25be82e0a and state closure 4e5c46d503949a493067ae57d3395545a36021f8.",
+        "Own only internal/workflows/, internal/reviews/ and docs/execution/handoffs/W-04.md. Implement ordered workflows and review decisions on existing planning, execution and storage ports; do not edit state.json, API/UI contracts, adapters, clients, storage schemas or workers.",
+        "Keep W-03 gates intact: F-05 filesystem organize operations remain explicit fail-closed where unsupported; G-01 Arr native registration/import writes remain blocked; Seerr remains read-only."
+      ],
+      "review": null,
+      "dispatch": {
+        "assignedAt": "2026-09-16",
+        "model": "gpt-5.6-luna",
+        "reasoning": "max",
+        "role": "implementer",
+        "baseSha": "4e5c46d503949a493067ae57d3395545a36021f8",
+        "ownedPaths": [
+          "internal/workflows/",
+          "internal/reviews/"
+        ],
+        "checkout": "shared main",
+        "expectedChecks": [
+          "A-12 distinct registration and later exact import approvals",
+          "A-15 immutable plan/revision/digest/source/config/mapping/manifest binding and expiry rejection",
+          "A-32 approval decision and queued run commit atomically with idempotent dedupe",
+          "A-35 cancellation/deadline before and during ordered workflow with no later dispatch",
+          "A-37 workflow survives browser/BFF closure and preserves completed effects with failed/blocked distinction",
+          "A-56 stable validation/problem behavior for malformed or oversized review/queue requests",
+          "atomic immutable review decision and enqueue using existing durable transaction/executor ports",
+          "explicit registration/import/placement recipes and later import review generation",
+          "reject blanket approval, changed intent, missing prerequisites, and steps added after cancellation",
+          "preserve per-step failures/effects, uncertain reconciliation and idempotency keys",
+          "synthetic fixtures only; no native upstream writes or Seerr writes",
+          "GOWORK=off focused tests and race tests for internal/workflows and internal/reviews",
+          "GOWORK=off go vet, go mod verify, generation/API/Vacuum, architecture/lint/planning/full guardrails",
+          "Linux amd64/arm64 CGO-free builds"
+        ],
+        "reviewPath": "docs/execution/handoffs/W-04-review-round1.md",
+        "handoffPath": "docs/execution/handoffs/W-04.md",
+        "nextReviewer": "/root/x05_reviewer",
+        "status": "implementation",
+        "dependencyCommits": {
+          "W-03-approved": "a4ad5a0fcfee724491513224f6b082a25be82e0a",
+          "W-03-state-closure": "4e5c46d503949a493067ae57d3395545a36021f8"
+        },
+        "dependencyCapabilityGates": {
+          "F-05": "Linux has no reviewed inode-bound quarantine removal primitive in the current implementation. Unsupported move, rename, permanent-delete and cross-device source-removal paths must fail closed before mutation.",
+          "G-01": "Arr native registration/import writes remain blocked pending X-05 evidence; workflows must compose review/queue intent without dispatching disabled native writes."
+        },
+        "implementationCommit": null,
+        "handoffCommit": null,
+        "reviewSourceCommit": null,
+        "reviewCommit": null,
+        "reviewIntegrationCommit": null
+      },
+      "reviewHistory": []
     },
     "W-05": {
       "status": "planned",
@@ -5294,7 +5346,7 @@
       ]
     }
   },
-  "nextAction": "W-03 is approved and closed. Before dispatching W-04, record a fresh base checkpoint and assign the ordered workflow/review decision lane to non-overlapping internal/workflows/ and internal/reviews/ paths; keep F-05 capability-blocked and G-01 Arr native writes blocked.",
+  "nextAction": "W-04 implementation is dispatched from 4e5c46d503949a493067ae57d3395545a36021f8. The implementer owns only internal/workflows/ and internal/reviews/; await its product and handoff, then send the independent review. Keep F-05 capability-blocked and G-01 Arr native writes blocked.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
