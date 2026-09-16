@@ -4162,10 +4162,13 @@
       "review": null
     },
     "X-22": {
-      "status": "in_progress",
+      "status": "review_pending",
       "owner": "/root/x05_implementer",
       "baseSha": "40441e8910e69f77904983db4c4014f6c73864df",
       "integratedSha": null,
+      "implementationCommit": "f998ae5d68fbcc8853c8b5180835a9008c60a68b",
+      "handoffCommit": "4fd1f38c76c00abf59e89edd79a5d2d9a7cb2da6",
+      "reviewSourceCommit": "f998ae5d68fbcc8853c8b5180835a9008c60a68b",
       "evidence": [
         "dispatched after X-04 and X-18 approvals; owns the Seerr root adapter, synthetic fixtures, root module dependency metadata if required, and its handoff.",
         "The standalone Seerr module is public and read-only. Preserve the root adapter port boundary, pagination coverage and unknown availability semantics; do not add Seerr writes or generated DTO leakage.",
@@ -4198,6 +4201,10 @@
         "reviewPath": "docs/execution/handoffs/X-22-review-round1.md",
         "handoffPath": "docs/execution/handoffs/X-22.md",
         "nextReviewer": "/root/x05_reviewer",
+        "implementationCommit": "f998ae5d68fbcc8853c8b5180835a9008c60a68b",
+        "handoffCommit": "4fd1f38c76c00abf59e89edd79a5d2d9a7cb2da6",
+        "reviewSourceCommit": "f998ae5d68fbcc8853c8b5180835a9008c60a68b",
+        "status": "review_pending",
         "dependencyCommits": {
           "X-04": "b5594b668185245304f70a0f46c1f77ae7b76d7b",
           "X-18": "a0670e0a60b7b4920ff8a672bfa311d9b93a0ce1",
@@ -4348,7 +4355,7 @@
       ]
     }
   },
-  "nextAction": "X-22 is dispatched to migrate the Seerr read adapter. Preserve read-only behavior and wait for the product handoff before independent review.",
+  "nextAction": "X-22 product f998ae5d68fbcc8853c8b5180835a9008c60a68b and handoff 4fd1f38c76c00abf59e89edd79a5d2d9a7cb2da6 are ready. Queue independent review against the exact product tree.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
