@@ -959,22 +959,20 @@
         "Use synthetic temporary instances and fixture bytes only. Preserve encrypted-key requirements, descriptor/trash retention, startup validation and uncertainty/idempotency evidence; no credentials, private coordinates or live media.",
         "9b682b56306d450d582e4ec23f6f8e5e1df37243 D-04 product adds versioned SQLite/key/descriptor/trash backup, strict manifest verification and isolated restore checks; 0d8bccedf51cc25490167cb5692374807f2fc90c records the handoff.",
         "ca64d535cb891889553e62ae516a917ef72fc962 independent review requests six release-blocking findings; bfc411a663a430a009d8d7b97864fb502179b9f0 integrates the receipt. P1s cover pre-publication verification, future schema, archive overlap, atomic no-replace publication, symlink ancestors and post-publication uncertainty; P2 covers cancellation and aggregate bounds.",
-        "8c4b223c1e211571c9c2db127f81b1ef6a1919d6 correction product addresses all six independent-review findings; d8299c9fc8e9dd7b1d4e5dd3f7fe0257468b323e records the correction handoff."
+        "8c4b223c1e211571c9c2db127f81b1ef6a1919d6 correction product addresses all six independent-review findings; d8299c9fc8e9dd7b1d4e5dd3f7fe0257468b323e records the correction handoff.",
+        "ec768b048cb46121c8bd09ea87d79dc79de2308e independent correction review round two requests two P1 fixes; 04eac468167386f4810bb327941785a7c90ea4d5 integrates the receipt. Publication identity/cleanup binding and immutable restore manifest binding remain blockers; all prior findings and guardrails pass."
       ],
       "review": {
         "status": "changes_requested",
         "decision": "changes_requested",
         "reviewer": "/root/x05_reviewer",
-        "commit": "ca64d535cb891889553e62ae516a917ef72fc962",
+        "commit": "ec768b048cb46121c8bd09ea87d79dc79de2308e",
+        "integratedCommit": "04eac468167386f4810bb327941785a7c90ea4d5",
         "findings": [
-          "P1: Create publishes before coupled Verify, so wrong-key or missing-reference backups can be published.",
-          "P1: equal future database/manifest schema versions are accepted without a supported migration ceiling.",
-          "P1: Restore permits destination overlap inside or over the source archive and can invalidate it.",
-          "P1: publication is check-then-rename with overwrite and post-rename fsync certainty gaps.",
-          "P1: final-component validation and lexical overlap checks accept symlink ancestors and aliases.",
-          "P2: filesystem copy/hash/walk/sync ignore cancellation and have no aggregate entry/byte bounds."
+          "P1: verified staging identity is not bound through native publication or deferred cleanup; pathname substitution can publish unverified bytes and uncertain cleanup can delete a foreign replacement.",
+          "P1: Restore can preflight one mutable manifest, copy a changed manifest, verify it and return a report for the earlier manifest; bind immutable manifest bytes/digest through copy, verification and report."
         ],
-        "round": 1
+        "round": 2
       },
       "dispatch": {
         "assignedAt": "2026-09-16",
@@ -1002,27 +1000,46 @@
         "reviewPath": "docs/execution/handoffs/D-04-review-round1.md",
         "handoffPath": "docs/execution/handoffs/D-04.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "review_pending",
+        "status": "implementation",
         "implementationCommit": "9b682b56306d450d582e4ec23f6f8e5e1df37243",
         "handoffCommit": "0d8bccedf51cc25490167cb5692374807f2fc90c",
         "reviewSourceCommit": "9b682b56306d450d582e4ec23f6f8e5e1df37243",
         "reviewCommit": "ca64d535cb891889553e62ae516a917ef72fc962",
         "reviewIntegrationCommit": "bfc411a663a430a009d8d7b97864fb502179b9f0",
         "reviewRound": 1,
-        "correctionRound": 1,
+        "correctionRound": 2,
         "correctionOwner": "/root/x05_implementer",
-        "correctionBaseSha": "9b682b56306d450d582e4ec23f6f8e5e1df37243",
-        "correctionReviewPath": "docs/execution/handoffs/D-04-review-round2.md",
-        "correctionHandoffPath": "docs/execution/handoffs/D-04-correction-round1.md",
+        "correctionBaseSha": "8c4b223c1e211571c9c2db127f81b1ef6a1919d6",
+        "correctionReviewPath": "docs/execution/handoffs/D-04-review-round3.md",
+        "correctionHandoffPath": "docs/execution/handoffs/D-04-correction-round2.md",
         "correctionReviewer": "/root/x05_reviewer",
-        "correctionStatus": "review_pending",
-        "correctionImplementationCommit": "8c4b223c1e211571c9c2db127f81b1ef6a1919d6",
-        "correctionHandoffCommit": "d8299c9fc8e9dd7b1d4e5dd3f7fe0257468b323e",
-        "correctionProductCommits": [
-          "8c4b223c1e211571c9c2db127f81b1ef6a1919d6"
-        ],
-        "correctionReviewSourceCommit": "8c4b223c1e211571c9c2db127f81b1ef6a1919d6"
-      }
+        "correctionStatus": "implementation",
+        "priorCorrectionRound": 1,
+        "priorCorrectionImplementationCommit": "8c4b223c1e211571c9c2db127f81b1ef6a1919d6",
+        "priorCorrectionHandoffCommit": "d8299c9fc8e9dd7b1d4e5dd3f7fe0257468b323e",
+        "priorCorrectionReviewCommit": "ec768b048cb46121c8bd09ea87d79dc79de2308e",
+        "priorCorrectionReviewIntegrationCommit": "04eac468167386f4810bb327941785a7c90ea4d5"
+      },
+      "reviewHistory": [
+        {
+          "round": 1,
+          "reviewer": "/root/x05_reviewer",
+          "commit": "ca64d535cb891889553e62ae516a917ef72fc962",
+          "status": "changes_requested",
+          "sourceCommit": "9b682b56306d450d582e4ec23f6f8e5e1df37243",
+          "receipt": "docs/execution/handoffs/D-04-review-round1.md",
+          "integratedCommit": "bfc411a663a430a009d8d7b97864fb502179b9f0"
+        },
+        {
+          "round": 2,
+          "reviewer": "/root/x05_reviewer",
+          "commit": "ec768b048cb46121c8bd09ea87d79dc79de2308e",
+          "status": "changes_requested",
+          "sourceCommit": "8c4b223c1e211571c9c2db127f81b1ef6a1919d6",
+          "receipt": "docs/execution/handoffs/D-04-review-round2.md",
+          "integratedCommit": "04eac468167386f4810bb327941785a7c90ea4d5"
+        }
+      ]
     },
     "F-01": {
       "status": "done",
@@ -4784,7 +4801,7 @@
       ]
     }
   },
-  "nextAction": "D-04 correction round one is ready for independent review at 8c4b223c1e211571c9c2db127f81b1ef6a1919d6; review handoff d8299c9fc8e9dd7b1d4e5dd3f7fe0257468b323e. X-08 remains queued. X-20 transport and G-01 remain open.",
+  "nextAction": "D-04 correction round two is dispatched for publication object identity/cleanup binding and immutable restore manifest binding after review receipt ec768b048cb46121c8bd09ea87d79dc79de2308e. X-08 remains queued; X-20 transport and G-01 remain open.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
