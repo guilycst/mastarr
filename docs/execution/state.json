@@ -2527,9 +2527,21 @@
         "dispatched after D-03, X-01 and X-02 approvals; owns only internal/descriptors/ and its handoff.",
         "Capture exact original descriptor bytes only from a verified upstream export or configured mounted descriptor directory. Keep storage restricted and root-confined, persist digest/provenance/availability metadata, and keep raw bytes out of ordinary responses and logs.",
         "Prove unavailable and malformed sources explicitly, make reviewed deletion separate and idempotent, and use synthetic fixtures only. No live descriptor, credential, tracker URL, private coordinate or runtime mount.",
-        "2e1169c3cf1a2763227ac28ac8e7d96a82fe047b product plus d07779afd4a9b052b8f91159debb0c7af6df3632 hardening implement verified bounded descriptor capture, root confinement, metadata/content separation, unavailable states and exact acknowledged deletion; caabffc946cedec237e89f688abfe7ab2d2c58da records the completed handoff and full guardrail checks."
+        "2e1169c3cf1a2763227ac28ac8e7d96a82fe047b product plus d07779afd4a9b052b8f91159debb0c7af6df3632 hardening implement verified bounded descriptor capture, root confinement, metadata/content separation, unavailable states and exact acknowledged deletion; caabffc946cedec237e89f688abfe7ab2d2c58da records the completed handoff and full guardrail checks.",
+        "cedb49af4ee4dfb99bba0d4abacfff46aca1f0a3 independent review round one requests two P1 fixes; 9cb06d0f071a525e53ada11a4fe3f1d3612b33e4 integrates the receipt. Mounted path replacement and post-unlink journal failure/restart reconciliation remain blockers; other capture, confinement, metadata, idempotency and guardrails pass."
       ],
-      "review": null,
+      "review": {
+        "status": "changes_requested",
+        "decision": "changes_requested",
+        "reviewer": "/root/x05_reviewer",
+        "commit": "cedb49af4ee4dfb99bba0d4abacfff46aca1f0a3",
+        "integratedCommit": "9cb06d0f071a525e53ada11a4fe3f1d3612b33e4",
+        "findings": [
+          "P1: CaptureMounted validates only its original file descriptor; replacement of the configured path after the first read is accepted as a successful stale capture.",
+          "P1: Delete unlinks and syncs before the metadata/audit transaction; a database failure leaves the row retained and a fresh service cannot reconcile the absent object or record audit state."
+        ],
+        "round": 1
+      },
       "dispatch": {
         "assignedAt": "2026-09-16",
         "model": "gpt-5.6-luna",
@@ -2556,7 +2568,7 @@
         "reviewPath": "docs/execution/handoffs/X-08-review-round1.md",
         "handoffPath": "docs/execution/handoffs/X-08.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "review_pending",
+        "status": "implementation",
         "implementationCommit": "2e1169c3cf1a2763227ac28ac8e7d96a82fe047b",
         "productCommits": [
           "2e1169c3cf1a2763227ac28ac8e7d96a82fe047b",
@@ -2564,11 +2576,30 @@
         ],
         "handoffCommit": "caabffc946cedec237e89f688abfe7ab2d2c58da",
         "reviewSourceCommit": "d07779afd4a9b052b8f91159debb0c7af6df3632",
-        "correctionStatus": null
+        "correctionStatus": "implementation",
+        "correctionRound": 1,
+        "correctionOwner": "/root/x05_implementer",
+        "correctionBaseSha": "d07779afd4a9b052b8f91159debb0c7af6df3632",
+        "correctionReviewPath": "docs/execution/handoffs/X-08-review-round2.md",
+        "correctionHandoffPath": "docs/execution/handoffs/X-08-correction-round1.md",
+        "correctionReviewer": "/root/x05_reviewer",
+        "priorReviewCommit": "cedb49af4ee4dfb99bba0d4abacfff46aca1f0a3",
+        "priorReviewIntegrationCommit": "9cb06d0f071a525e53ada11a4fe3f1d3612b33e4"
       },
       "implementationCommit": "d07779afd4a9b052b8f91159debb0c7af6df3632",
       "handoffCommit": "caabffc946cedec237e89f688abfe7ab2d2c58da",
-      "reviewSourceCommit": "d07779afd4a9b052b8f91159debb0c7af6df3632"
+      "reviewSourceCommit": "d07779afd4a9b052b8f91159debb0c7af6df3632",
+      "reviewHistory": [
+        {
+          "round": 1,
+          "reviewer": "/root/x05_reviewer",
+          "commit": "cedb49af4ee4dfb99bba0d4abacfff46aca1f0a3",
+          "status": "changes_requested",
+          "sourceCommit": "d07779afd4a9b052b8f91159debb0c7af6df3632",
+          "receipt": "docs/execution/handoffs/X-08-review-round1.md",
+          "integratedCommit": "9cb06d0f071a525e53ada11a4fe3f1d3612b33e4"
+        }
+      ]
     },
     "X-09": {
       "status": "done",
@@ -4877,7 +4908,7 @@
       ]
     }
   },
-  "nextAction": "X-08 retained descriptor service is ready for independent review at d07779afd4a9b052b8f91159debb0c7af6df3632; handoff caabffc946cedec237e89f688abfe7ab2d2c58da. X-20 remains capability-blocked and G-01 remains open.",
+  "nextAction": "X-08 correction round one is dispatched for mounted source path identity and restart-safe deletion journal reconciliation after review receipt cedb49af4ee4dfb99bba0d4abacfff46aca1f0a3. X-20 remains capability-blocked and G-01 remains open.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
