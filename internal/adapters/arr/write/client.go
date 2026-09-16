@@ -476,6 +476,11 @@ func (client *Client) observeImport(ctx context.Context, externalID string) (por
 		}
 		byFile := make(map[int64]int)
 		byPath := make(map[domain.FileTarget]int64)
+		type episodeAssociation struct {
+			fileID int64
+			path   domain.FileTarget
+		}
+		byEpisode := make(map[int64]episodeAssociation)
 		for _, episode := range episodes {
 			if episode.ID <= 0 || episode.SeriesID != id {
 				return result, importHistory{}, malformed(operationObserve, "episode identity does not match requested series")
@@ -489,12 +494,17 @@ func (client *Client) observeImport(ctx context.Context, externalID string) (por
 			if episode.EpisodeFile.ID <= 0 || episode.EpisodeFile.ID != episode.EpisodeFileID || strings.TrimSpace(episode.EpisodeFile.Path) == "" {
 				return result, importHistory{}, malformed(operationObserve, "episode file identity is incomplete")
 			}
-			if episode.EpisodeFile.SeriesID != 0 && episode.EpisodeFile.SeriesID != id {
-				return result, importHistory{}, malformed(operationObserve, "episode file identity does not match requested series")
+			if episode.EpisodeFile.SeriesID <= 0 || episode.EpisodeFile.SeriesID != id {
+				return result, importHistory{}, malformed(operationObserve, "episode file identity is missing or foreign")
 			}
 			mapped, mapErr := client.mapNativeFile(*episode.EpisodeFile, strconv.FormatInt(id, 10), nil)
 			if mapErr != nil {
 				return result, importHistory{}, mapErr
+			}
+			if previous, episodeExists := byEpisode[episode.ID]; episodeExists {
+				if previous.fileID != episode.EpisodeFile.ID || previous.path != mapped.Path {
+					return result, importHistory{}, malformed(operationObserve, "episode identity claims multiple files")
+				}
 			}
 			position, exists := byFile[episode.EpisodeFile.ID]
 			if !exists {
@@ -505,6 +515,7 @@ func (client *Client) observeImport(ctx context.Context, externalID string) (por
 				files = append(files, mapped)
 				byFile[episode.EpisodeFile.ID] = len(files) - 1
 				byPath[mapped.Path] = episode.EpisodeFile.ID
+				byEpisode[episode.ID] = episodeAssociation{fileID: episode.EpisodeFile.ID, path: mapped.Path}
 				continue
 			}
 			if files[position].Path != mapped.Path || files[position].Size != mapped.Size {
@@ -515,6 +526,7 @@ func (client *Client) observeImport(ctx context.Context, externalID string) (por
 				return result, importHistory{}, malformed(operationObserve, "episode file association is duplicated")
 			}
 			files[position].EpisodeIDs = append(files[position].EpisodeIDs, episodeID)
+			byEpisode[episode.ID] = episodeAssociation{fileID: episode.EpisodeFile.ID, path: mapped.Path}
 		}
 	}
 	history, historyErr := client.readHistory(ctx, id)
@@ -935,17 +947,20 @@ func (client *Client) mapNativeFile(file nativeFile, movieID string, episodeIDs 
 			return ports.MediaFile{}, malformed(operationObserve, "native movie file identity is missing or foreign")
 		}
 	}
-	if client.config.Kind == domain.ConnectionSonarr && file.SeriesID != 0 {
+	if client.config.Kind == domain.ConnectionSonarr {
 		id, err := parsePositiveID(movieID)
-		if err != nil || file.SeriesID != id {
-			return ports.MediaFile{}, malformed(operationObserve, "native episode file identity is foreign")
+		if err != nil || file.SeriesID <= 0 || file.SeriesID != id {
+			return ports.MediaFile{}, malformed(operationObserve, "native episode file identity is missing or foreign")
 		}
 	}
 	target, ok := client.remoteToTarget(file.Path)
 	if !ok {
 		return ports.MediaFile{}, upstreamFailure(domain.OutcomeUnknown, operationObserve, "native file path is not mapped")
 	}
-	result := ports.MediaFile{ExternalID: strconv.FormatInt(file.ID, 10), Path: target, Size: file.Size, MovieID: movieID, EpisodeIDs: append([]string(nil), episodeIDs...)}
+	result := ports.MediaFile{ExternalID: strconv.FormatInt(file.ID, 10), Path: target, Size: file.Size, EpisodeIDs: append([]string(nil), episodeIDs...)}
+	if client.config.Kind == domain.ConnectionRadarr {
+		result.MovieID = movieID
+	}
 	return result, nil
 }
 

@@ -283,8 +283,8 @@ func TestSonarrImportReconcilesLostCommandPerEpisode(t *testing.T) {
 				return
 			}
 			writeFixtureJSON(t, writer, []nativeEpisode{
-				{ID: 301, SeriesID: 201, EpisodeFileID: 801, EpisodeFile: &nativeFile{ID: 801, Path: "/synthetic/downloads/Synthetic Show/S01E01.mkv", Size: 10}},
-				{ID: 302, SeriesID: 201, EpisodeFileID: 802, EpisodeFile: &nativeFile{ID: 802, Path: "/synthetic/downloads/Synthetic Show/S01E02.mkv", Size: 11}},
+				{ID: 301, SeriesID: 201, EpisodeFileID: 801, EpisodeFile: &nativeFile{ID: 801, SeriesID: 201, Path: "/synthetic/downloads/Synthetic Show/S01E01.mkv", Size: 10}},
+				{ID: 302, SeriesID: 201, EpisodeFileID: 802, EpisodeFile: &nativeFile{ID: 802, SeriesID: 201, Path: "/synthetic/downloads/Synthetic Show/S01E02.mkv", Size: 11}},
 			})
 		case request.Method == http.MethodGet && request.URL.Path == "/api/v3/history":
 			mu.Lock()
@@ -349,7 +349,7 @@ func TestSonarrImportPartialReadbackRemainsUnknownPerFile(t *testing.T) {
 		switch {
 		case request.Method == http.MethodGet && request.URL.Path == "/api/v3/episode":
 			if imported.Load() {
-				writeFixtureJSON(t, writer, []nativeEpisode{{ID: 301, SeriesID: 201, EpisodeFileID: 801, EpisodeFile: &nativeFile{ID: 801, Path: "/synthetic/downloads/Synthetic Show/S01E01.mkv", Size: 10}}, {ID: 302, SeriesID: 201}})
+				writeFixtureJSON(t, writer, []nativeEpisode{{ID: 301, SeriesID: 201, EpisodeFileID: 801, EpisodeFile: &nativeFile{ID: 801, SeriesID: 201, Path: "/synthetic/downloads/Synthetic Show/S01E01.mkv", Size: 10}}, {ID: 302, SeriesID: 201}})
 			} else {
 				writeFixtureJSON(t, writer, []nativeEpisode{{ID: 301, SeriesID: 201}, {ID: 302, SeriesID: 201}})
 			}
@@ -389,7 +389,7 @@ func TestImportAlreadySatisfiedSkipsCommand(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch {
 		case request.Method == http.MethodGet && request.URL.Path == "/api/v3/episode":
-			writeFixtureJSON(t, writer, []nativeEpisode{{ID: 301, SeriesID: 201, EpisodeFileID: 801, EpisodeFile: &nativeFile{ID: 801, Path: "/synthetic/downloads/Synthetic Show/S01E01.mkv", Size: 10}}})
+			writeFixtureJSON(t, writer, []nativeEpisode{{ID: 301, SeriesID: 201, EpisodeFileID: 801, EpisodeFile: &nativeFile{ID: 801, SeriesID: 201, Path: "/synthetic/downloads/Synthetic Show/S01E01.mkv", Size: 10}}})
 		case request.Method == http.MethodGet && request.URL.Path == "/api/v3/history":
 			writeFixtureJSON(t, writer, []nativeHistory{{ID: 9001, EventType: "downloadFolderImported", SeriesID: 201, EpisodeID: 301}})
 		case request.Method == http.MethodPost:
@@ -508,8 +508,8 @@ func TestArrWriteRejectsContradictoryReadbackIdentity(t *testing.T) {
 			handler: func(t testing.TB, writer http.ResponseWriter, request *http.Request) {
 				if request.URL.Path == "/api/v3/episode" {
 					writeFixtureJSON(t, writer, []nativeEpisode{
-						{ID: 301, SeriesID: 201, EpisodeFileID: 801, EpisodeFile: &nativeFile{ID: 801, Path: "/synthetic/downloads/one.mkv", Size: 10}},
-						{ID: 302, SeriesID: 201, EpisodeFileID: 801, EpisodeFile: &nativeFile{ID: 801, Path: "/synthetic/downloads/two.mkv", Size: 20}},
+						{ID: 301, SeriesID: 201, EpisodeFileID: 801, EpisodeFile: &nativeFile{ID: 801, SeriesID: 201, Path: "/synthetic/downloads/one.mkv", Size: 10}},
+						{ID: 302, SeriesID: 201, EpisodeFileID: 801, EpisodeFile: &nativeFile{ID: 801, SeriesID: 201, Path: "/synthetic/downloads/two.mkv", Size: 20}},
 					})
 					return
 				}
@@ -523,8 +523,8 @@ func TestArrWriteRejectsContradictoryReadbackIdentity(t *testing.T) {
 			handler: func(t testing.TB, writer http.ResponseWriter, request *http.Request) {
 				if request.URL.Path == "/api/v3/episode" {
 					writeFixtureJSON(t, writer, []nativeEpisode{
-						{ID: 301, SeriesID: 201, EpisodeFileID: 801, EpisodeFile: &nativeFile{ID: 801, Path: "/synthetic/downloads/one.mkv", Size: 10}},
-						{ID: 302, SeriesID: 201, EpisodeFileID: 802, EpisodeFile: &nativeFile{ID: 802, Path: "/synthetic/downloads/one.mkv", Size: 10}},
+						{ID: 301, SeriesID: 201, EpisodeFileID: 801, EpisodeFile: &nativeFile{ID: 801, SeriesID: 201, Path: "/synthetic/downloads/one.mkv", Size: 10}},
+						{ID: 302, SeriesID: 201, EpisodeFileID: 802, EpisodeFile: &nativeFile{ID: 802, SeriesID: 201, Path: "/synthetic/downloads/one.mkv", Size: 10}},
 					})
 					return
 				}
@@ -583,6 +583,106 @@ func TestArrWriteRejectsContradictoryReadbackIdentity(t *testing.T) {
 	}
 }
 
+func TestSonarrReadbackRequiresNestedSeriesIdentity(t *testing.T) {
+	cases := []struct {
+		name      string
+		seriesID  string
+		includeID bool
+	}{
+		{name: "missing", includeID: false},
+		{name: "null", seriesID: "null", includeID: true},
+		{name: "zero", seriesID: "0", includeID: true},
+		{name: "foreign", seriesID: "999", includeID: true},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			var writes atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if request.Method != http.MethodGet {
+					writes.Add(1)
+					http.Error(writer, "incomplete episode evidence must prevent mutation", http.StatusTeapot)
+					return
+				}
+				switch request.URL.Path {
+				case "/api/v3/episode":
+					file := `{"id":801,"path":"/synthetic/downloads/one.mkv","size":10}`
+					if testCase.includeID {
+						file = fmt.Sprintf(`{"id":801,"seriesId":%s,"path":"/synthetic/downloads/one.mkv","size":10}`, testCase.seriesID)
+					}
+					writer.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(writer, fmt.Sprintf(`[{"id":301,"seriesId":201,"episodeFileId":801,"episodeFile":%s}]`, file))
+				case "/api/v3/history":
+					writeFixtureJSON(t, writer, []nativeHistory{})
+				default:
+					http.Error(writer, "unexpected synthetic read", http.StatusNotFound)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			client, err := New(Config{
+				ConnectionID: testConnection, Kind: domain.ConnectionSonarr, Endpoint: server.URL,
+				APIKey: "synthetic-key", HTTPClient: server.Client(),
+				RootPaths: map[domain.ConfigID]string{"downloads": "/synthetic/downloads"},
+			})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			result, err := client.Import(context.Background(), testConnection, ports.ImportRequest{
+				RegisteredExternalID: "201", PreviewRevision: testPreview, Transfer: "copy",
+				Files: []ports.ImportFile{{Source: domain.FileTarget{RootID: "downloads", RelativePath: "one.mkv"}, MovieOrEpisodeID: "301"}},
+			})
+			if err == nil || !hasCode(err, domain.OutcomeUnknown) {
+				t.Fatalf("Import error = %v result=%#v, want unknown incomplete observation", err, result)
+			}
+			if result.Effect != nil || writes.Load() != 0 {
+				t.Fatalf("result=%#v writes=%d, want no effect and no writes", result, writes.Load())
+			}
+		})
+	}
+}
+
+func TestSonarrReadbackRejectsEpisodeClaimingMultipleFiles(t *testing.T) {
+	var writes atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet {
+			writes.Add(1)
+			http.Error(writer, "ambiguous episode evidence must prevent mutation", http.StatusTeapot)
+			return
+		}
+		switch request.URL.Path {
+		case "/api/v3/episode":
+			writeFixtureJSON(t, writer, []nativeEpisode{
+				{ID: 301, SeriesID: 201, EpisodeFileID: 801, EpisodeFile: &nativeFile{ID: 801, SeriesID: 201, Path: "/synthetic/downloads/one.mkv", Size: 10}},
+				{ID: 301, SeriesID: 201, EpisodeFileID: 802, EpisodeFile: &nativeFile{ID: 802, SeriesID: 201, Path: "/synthetic/downloads/two.mkv", Size: 10}},
+			})
+		case "/api/v3/history":
+			writeFixtureJSON(t, writer, []nativeHistory{})
+		default:
+			http.Error(writer, "unexpected synthetic read", http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := New(Config{
+		ConnectionID: testConnection, Kind: domain.ConnectionSonarr, Endpoint: server.URL,
+		APIKey: "synthetic-key", HTTPClient: server.Client(),
+		RootPaths: map[domain.ConfigID]string{"downloads": "/synthetic/downloads"},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	result, err := client.Import(context.Background(), testConnection, ports.ImportRequest{
+		RegisteredExternalID: "201", PreviewRevision: testPreview, Transfer: "copy",
+		Files: []ports.ImportFile{{Source: domain.FileTarget{RootID: "downloads", RelativePath: "one.mkv"}, MovieOrEpisodeID: "301"}},
+	})
+	if err == nil || !hasCode(err, domain.OutcomeUnknown) {
+		t.Fatalf("Import error = %v result=%#v, want unknown ambiguous observation", err, result)
+	}
+	if result.Effect != nil || writes.Load() != 0 {
+		t.Fatalf("result=%#v writes=%d, want no effect and no writes", result, writes.Load())
+	}
+}
+
 func TestSonarrMultiEpisodeFileReadbackRemainsOneAssociation(t *testing.T) {
 	var imported atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -590,8 +690,8 @@ func TestSonarrMultiEpisodeFileReadbackRemainsOneAssociation(t *testing.T) {
 		case request.Method == http.MethodGet && request.URL.Path == "/api/v3/episode":
 			if imported.Load() {
 				writeFixtureJSON(t, writer, []nativeEpisode{
-					{ID: 301, SeriesID: 201, EpisodeFileID: 801, EpisodeFile: &nativeFile{ID: 801, Path: "/synthetic/downloads/pack.mkv", Size: 20}},
-					{ID: 302, SeriesID: 201, EpisodeFileID: 801, EpisodeFile: &nativeFile{ID: 801, Path: "/synthetic/downloads/pack.mkv", Size: 20}},
+					{ID: 301, SeriesID: 201, EpisodeFileID: 801, EpisodeFile: &nativeFile{ID: 801, SeriesID: 201, Path: "/synthetic/downloads/pack.mkv", Size: 20}},
+					{ID: 302, SeriesID: 201, EpisodeFileID: 801, EpisodeFile: &nativeFile{ID: 801, SeriesID: 201, Path: "/synthetic/downloads/pack.mkv", Size: 20}},
 				})
 				return
 			}
@@ -617,7 +717,7 @@ func TestSonarrMultiEpisodeFileReadbackRemainsOneAssociation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
-	if len(result.Files) != 1 || len(result.Files[0].EpisodeIDs) != 2 || !containsString(result.Files[0].EpisodeIDs, "301") || !containsString(result.Files[0].EpisodeIDs, "302") {
+	if len(result.Files) != 1 || result.Files[0].MovieID != "" || len(result.Files[0].EpisodeIDs) != 2 || !containsString(result.Files[0].EpisodeIDs, "301") || !containsString(result.Files[0].EpisodeIDs, "302") {
 		t.Fatalf("result files = %#v, want one file with two episode associations", result.Files)
 	}
 }
