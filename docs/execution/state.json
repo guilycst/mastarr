@@ -3203,7 +3203,8 @@
         "735e87f1de11e592cd8b3bea485e2f92d5b3ac86 records the correction handoff, exact checks and remaining F-05/G-01 capability gates.",
         "W-03 round-two R2b is an executor-owned cross-lane blocker: W-02 discards DispatchResult whenever a handler returns an error, so corrected partial effect evidence cannot become durable. W-02 correction round eight is dispatched first; W-03 R2a remains to be rechecked afterward.",
         "d11938398a0a7b2dbd4cc530212e35c751a73fb8 W-03 independent review round two closed R1/R3/R4 but found P1 R2a: trash/delete manifest actions pass intent.Manifest while filesystemDispatchResult maps only intent.Files and discards affected entries/evidence. R2b was the cross-lane W-02 executor finding, now closed by approved W-02 product f7ca4cd9e79d753b881d46075025c18f3ad3889e.",
-        "d386489beb52cbb247d6326f34d201e2c596cd43 integrates the W-03 round-two review receipt."
+        "d386489beb52cbb247d6326f34d201e2c596cd43 integrates the W-03 round-two review receipt.",
+        "aa29e186692c122dba8a6414296cfe5ffa7b2cfb state checkpoint dispatched W-03 correction round two to /root/x05_implementer from 0c120a1bf5e377510b332ebdadac61e40f77e652 after W-02 final approval; owned paths remain internal/actions/ and docs/execution/handoffs/W-03-correction-round2.md, shared main, with GOWORK=off focused/race/vet/offline guardrail/module/cross-build checks."
       ],
       "review": {
         "status": "changes_requested",
@@ -3293,7 +3294,7 @@
         "priorCorrectionHandoffCommit": "735e87f1de11e592cd8b3bea485e2f92d5b3ac86",
         "priorCorrectionReviewCommit": "d11938398a0a7b2dbd4cc530212e35c751a73fb8",
         "priorCorrectionReviewIntegrationCommit": "d386489beb52cbb247d6326f34d201e2c596cd43",
-        "correctionDispatchCheckpoint": "516f50ddc4e55cbf83731d3e5e676ecce3b3664c"
+        "correctionDispatchCheckpoint": "aa29e186692c122dba8a6414296cfe5ffa7b2cfb"
       },
       "reviewHistory": [
         {
