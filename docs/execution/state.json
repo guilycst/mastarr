@@ -958,7 +958,8 @@
         "Create consistent SQLite, encryption-key, retained-descriptor and trash backup/restore instructions plus an isolated restore check. Do not perform live migration or downgrade, and fail closed on incomplete backups.",
         "Use synthetic temporary instances and fixture bytes only. Preserve encrypted-key requirements, descriptor/trash retention, startup validation and uncertainty/idempotency evidence; no credentials, private coordinates or live media.",
         "9b682b56306d450d582e4ec23f6f8e5e1df37243 D-04 product adds versioned SQLite/key/descriptor/trash backup, strict manifest verification and isolated restore checks; 0d8bccedf51cc25490167cb5692374807f2fc90c records the handoff.",
-        "ca64d535cb891889553e62ae516a917ef72fc962 independent review requests six release-blocking findings; bfc411a663a430a009d8d7b97864fb502179b9f0 integrates the receipt. P1s cover pre-publication verification, future schema, archive overlap, atomic no-replace publication, symlink ancestors and post-publication uncertainty; P2 covers cancellation and aggregate bounds."
+        "ca64d535cb891889553e62ae516a917ef72fc962 independent review requests six release-blocking findings; bfc411a663a430a009d8d7b97864fb502179b9f0 integrates the receipt. P1s cover pre-publication verification, future schema, archive overlap, atomic no-replace publication, symlink ancestors and post-publication uncertainty; P2 covers cancellation and aggregate bounds.",
+        "8c4b223c1e211571c9c2db127f81b1ef6a1919d6 correction product addresses all six independent-review findings; d8299c9fc8e9dd7b1d4e5dd3f7fe0257468b323e records the correction handoff."
       ],
       "review": {
         "status": "changes_requested",
@@ -1001,7 +1002,7 @@
         "reviewPath": "docs/execution/handoffs/D-04-review-round1.md",
         "handoffPath": "docs/execution/handoffs/D-04.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "correction_pending",
+        "status": "review_pending",
         "implementationCommit": "9b682b56306d450d582e4ec23f6f8e5e1df37243",
         "handoffCommit": "0d8bccedf51cc25490167cb5692374807f2fc90c",
         "reviewSourceCommit": "9b682b56306d450d582e4ec23f6f8e5e1df37243",
@@ -1014,7 +1015,13 @@
         "correctionReviewPath": "docs/execution/handoffs/D-04-review-round2.md",
         "correctionHandoffPath": "docs/execution/handoffs/D-04-correction-round1.md",
         "correctionReviewer": "/root/x05_reviewer",
-        "correctionStatus": "implementation"
+        "correctionStatus": "review_pending",
+        "correctionImplementationCommit": "8c4b223c1e211571c9c2db127f81b1ef6a1919d6",
+        "correctionHandoffCommit": "d8299c9fc8e9dd7b1d4e5dd3f7fe0257468b323e",
+        "correctionProductCommits": [
+          "8c4b223c1e211571c9c2db127f81b1ef6a1919d6"
+        ],
+        "correctionReviewSourceCommit": "8c4b223c1e211571c9c2db127f81b1ef6a1919d6"
       }
     },
     "F-01": {
@@ -2526,7 +2533,7 @@
         "handoffCommit": "4ca6fbed07cc1766cc620f180e9a58ad80927de5",
         "reviewSourceCommit": "38f4999910b01097b55ee1f09dd463bc9add981b",
         "manifestIntegrationCommit": "f2bf30f97068f98606251b668528afd18e479e3f",
-        "reviewRound": 1,
+        "reviewRound": 2,
         "correctionRound": 1,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "38f4999910b01097b55ee1f09dd463bc9add981b",
@@ -2543,8 +2550,7 @@
         "correctionReviewCommit": "d460363223110e088391929809f4a847e60d754d",
         "correctionReviewIntegrationCommit": "c8cd64f95729577b883df5f219f2b9f1e6780101",
         "reviewCommit": "d460363223110e088391929809f4a847e60d754d",
-        "reviewIntegrationCommit": "c8cd64f95729577b883df5f219f2b9f1e6780101",
-        "reviewRound": 2
+        "reviewIntegrationCommit": "c8cd64f95729577b883df5f219f2b9f1e6780101"
       },
       "reviewHistory": [
         {
@@ -4321,7 +4327,7 @@
         "26b0a4748b94817575e2a98b6aa472915cd1bdde independent review round three approves X-19: mixed-row preview regression and missing/null nested identity controls pass three race runs; original collision/read-back and duplicate-key probes remain green; valid legacy/native controls pass; no generated DTO leakage or module bootstrap blocker."
       ],
       "review": {
-      "status": "approved",
+        "status": "approved",
         "decision": "approved",
         "reviewer": "/root/x05_reviewer",
         "commit": "26b0a4748b94817575e2a98b6aa472915cd1bdde",
@@ -4510,24 +4516,24 @@
           "receipt": "docs/execution/handoffs/X-20-review-round1.md",
           "integratedCommit": "93f3535322c772e2fd349728f77f6ecd1d200f6c"
         },
-      {
-        "round": 2,
-        "reviewer": "/root/x05_reviewer",
-        "commit": "c55d73bacb004a4a8238342a019e4b42b01151b4",
-        "status": "changes_requested",
-        "sourceCommit": "ba56aaf0f7b2aafc15923c2c92765f89f42a0007",
-        "receipt": "docs/execution/handoffs/X-20-review-round2.md",
-        "integratedCommit": "843a0ba679df879283bf8d6e7e7258357736300c"
-      },
-      {
-        "round": 3,
-        "reviewer": "/root/x05_reviewer",
-        "commit": "fe6c1e62f053ace5b42109a8cabec763c79fac83",
-        "status": "approved",
-        "sourceCommit": "8e4c722eae49051eabc4572f8ba7fb1176445f0f",
-        "receipt": "docs/execution/handoffs/X-20-review-round3.md",
-        "integratedCommit": "3d64153b7b63295f6b372578e34f0b40d51103b7"
-      }
+        {
+          "round": 2,
+          "reviewer": "/root/x05_reviewer",
+          "commit": "c55d73bacb004a4a8238342a019e4b42b01151b4",
+          "status": "changes_requested",
+          "sourceCommit": "ba56aaf0f7b2aafc15923c2c92765f89f42a0007",
+          "receipt": "docs/execution/handoffs/X-20-review-round2.md",
+          "integratedCommit": "843a0ba679df879283bf8d6e7e7258357736300c"
+        },
+        {
+          "round": 3,
+          "reviewer": "/root/x05_reviewer",
+          "commit": "fe6c1e62f053ace5b42109a8cabec763c79fac83",
+          "status": "approved",
+          "sourceCommit": "8e4c722eae49051eabc4572f8ba7fb1176445f0f",
+          "receipt": "docs/execution/handoffs/X-20-review-round3.md",
+          "integratedCommit": "3d64153b7b63295f6b372578e34f0b40d51103b7"
+        }
       ]
     },
     "X-21": {
@@ -4774,11 +4780,11 @@
           "sourceCommit": "57b5221b242639ec39afc4ff1cff1dfb867a9056",
           "receipt": "docs/execution/handoffs/C-06-review-round5.md",
           "integratedCommit": "3da4ebecec41e8cd3684d68ebd7376f6b1425275"
-      }
+        }
       ]
     }
   },
-  "nextAction": "D-04 correction round one is dispatched after review receipt ca64d535cb891889553e62ae516a917ef72fc962: close pre-publication verification, schema ceiling, archive overlap, atomic publication, symlink ancestors, cancellation and aggregate bounds. X-08 is queued. X-20 transport and G-01 remain open.",
+  "nextAction": "D-04 correction round one is ready for independent review at 8c4b223c1e211571c9c2db127f81b1ef6a1919d6; review handoff d8299c9fc8e9dd7b1d4e5dd3f7fe0257468b323e. X-08 remains queued. X-20 transport and G-01 remain open.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
