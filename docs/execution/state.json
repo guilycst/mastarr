@@ -15,7 +15,9 @@
   "resumeDocument": "docs/execution/RESUME.md",
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
-  "activeImplementationTasks": [],
+  "activeImplementationTasks": [
+    "X-21"
+  ],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
   "guardrailBaseline": {
@@ -4736,12 +4738,52 @@
       ]
     },
     "X-21": {
-      "status": "planned",
-      "owner": null,
-      "baseSha": null,
+      "status": "in_progress",
+      "owner": "/root/x05_implementer",
+      "baseSha": "85913e078e4e69839efa750601b581333b4a998b",
       "integratedSha": null,
-      "evidence": [],
-      "review": null
+      "evidence": [
+        "dispatched from 85913e078e4e69839efa750601b581333b4a998b after X-09 (ff3d7d55490435c9b99d38ad97edd3b2f27f9df5), X-17 (4eee8e84eff5a81b24c128444fa6531fec83f5ec) and X-04 (b5594b668185245304f70a0f46c1f77ae7b76d7b) approvals.",
+        "Own only internal/adapters/jellyfin/read/, internal/adapters/jellyfin/write/ and tests/fixtures/jellyfin/. Translate standalone Jellyfin DTOs and typed errors into Mastarr ports without leaking generated types or making direct upstream calls outside the adapter boundary.",
+        "Preserve provider IDs, provider relationships, mapped playable-media evidence, accepted refresh responses, separate eventual availability, compatibility gates and read-only discovery. Synthetic fixtures only; no credentials, private coordinates or live media data."
+      ],
+      "review": null,
+      "dispatch": {
+        "assignedAt": "2026-09-16",
+        "model": "gpt-5.6-luna",
+        "reasoning": "max",
+        "role": "implementer",
+        "baseSha": "85913e078e4e69839efa750601b581333b4a998b",
+        "ownedPaths": [
+          "internal/adapters/jellyfin/read/",
+          "internal/adapters/jellyfin/write/",
+          "tests/fixtures/jellyfin/"
+        ],
+        "checkout": "shared main",
+        "expectedChecks": [
+          "A-08",
+          "A-09",
+          "A-33",
+          "A-55",
+          "GOWORK=off focused adapter/fixture tests and race",
+          "standalone client generated types do not leak into domain or public API",
+          "provider IDs and relationships preserved across instances",
+          "playable-media mapping remains explicit and unavailable/path-only states stay separate",
+          "refresh acceptance remains separate from later Jellyfin availability",
+          "synthetic httptest fixtures only",
+          "GOWORK=off root/module tests, vet, module verification and full guardrails",
+          "Linux amd64/arm64 CGO-free builds"
+        ],
+        "reviewPath": "docs/execution/handoffs/X-21-review-round1.md",
+        "handoffPath": "docs/execution/handoffs/X-21.md",
+        "nextReviewer": "/root/x05_reviewer",
+        "status": "implementation",
+        "dependencyCommits": {
+          "X-04": "b5594b668185245304f70a0f46c1f77ae7b76d7b",
+          "X-09": "ff3d7d55490435c9b99d38ad97edd3b2f27f9df5",
+          "X-17": "4eee8e84eff5a81b24c128444fa6531fec83f5ec"
+        }
+      }
     },
     "X-22": {
       "status": "done",
@@ -4983,7 +5025,7 @@
       ]
     }
   },
-  "nextAction": "X-08 is approved and complete at 8c770f779204a00c2d8cc6312a2c0fc04262ea35; qBittorrent/NZBGet client and adapter lanes are complete. Next eligible feature lane is W-03 after this clean-checkpoint state commit; X-20 remains capability-blocked and G-01 remains open.",
+  "nextAction": "X-21 Jellyfin adapter migration is in implementation from 85913e078e4e69839efa750601b581333b4a998b; W-03 remains gated by F-05's capability blocker, X-20 remains blocked by G-01, and X-22 is the next independent adapter lane.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
