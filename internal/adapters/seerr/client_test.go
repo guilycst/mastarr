@@ -129,7 +129,7 @@ func loadSeerrFixture(t *testing.T) seerrFixture {
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	data, err := os.ReadFile(filepath.Join(filepath.Dir(source), "../../../tests/fixtures/catalogs/seerr-media-pages.json"))
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(source), "../../../tests/fixtures/seerr/media-pages.json"))
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
 	}
@@ -137,7 +137,7 @@ func loadSeerrFixture(t *testing.T) seerrFixture {
 	if err := json.Unmarshal(data, &fixture); err != nil {
 		t.Fatalf("decode fixture: %v", err)
 	}
-	requestData, err := os.ReadFile(filepath.Join(filepath.Dir(source), "../../../tests/fixtures/catalogs/seerr-request-pages.json"))
+	requestData, err := os.ReadFile(filepath.Join(filepath.Dir(source), "../../../tests/fixtures/seerr/request-pages.json"))
 	if err != nil {
 		t.Fatalf("read request fixture: %v", err)
 	}

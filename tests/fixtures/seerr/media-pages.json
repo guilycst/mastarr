@@ -1,0 +1,122 @@
+{
+  "status": {
+    "version": "3.4.1",
+    "commitTag": "fixture",
+    "commit": "fixture-commit"
+  },
+  "mediaPages": [
+    {
+      "pageInfo": {"pages": 2, "pageSize": 2, "results": 4, "page": 1},
+      "results": [
+        {
+          "id": 101,
+          "mediaType": "movie",
+          "tmdbId": 550,
+          "tvdbId": null,
+          "imdbId": "tt0137523",
+          "status": 5,
+          "status4k": 4,
+          "serviceId": 7,
+          "externalServiceId": 7001,
+          "externalServiceSlug": "radarr-main",
+          "jellyfinMediaId": "jf-film-101",
+          "ratingKey": "fixture-film-101",
+          "mediaAddedAt": "2026-09-11T10:00:00Z",
+          "createdAt": "2026-09-10T10:00:00Z",
+          "updatedAt": "2026-09-11T10:00:00Z",
+          "requests": [{"id": 9001, "status": 5, "type": "movie", "is4k": false, "createdAt": "2026-09-10T09:00:00Z", "updatedAt": "2026-09-10T09:30:00Z"}],
+          "seasons": []
+        },
+        {
+          "id": 102,
+          "mediaType": "tv",
+          "tmdbId": 1002,
+          "tvdbId": 2002,
+          "imdbId": "tt1002002",
+          "status": 4,
+          "status4k": 3,
+          "serviceId": 8,
+          "externalServiceId": 8002,
+          "serviceId4k": 9,
+          "externalServiceId4k": 9002,
+          "externalServiceSlug": "sonarr-main",
+          "externalServiceSlug4k": "sonarr-4k",
+          "jellyfinMediaId": null,
+          "jellyfinMediaId4k": "jf-series-102-4k",
+          "ratingKey": "fixture-series-102",
+          "ratingKey4k": "fixture-series-102-4k",
+          "mediaAddedAt": null,
+          "createdAt": "2026-09-10T11:00:00Z",
+          "updatedAt": "2026-09-11T11:00:00Z",
+          "requests": [],
+          "seasons": [
+            {"id": 10201, "seasonNumber": 1, "status": 4, "status4k": 3}
+          ]
+        }
+      ]
+    },
+    {
+      "pageInfo": {"pages": 2, "pageSize": 2, "results": 4, "page": 2},
+      "results": [
+        {
+          "id": 103,
+          "mediaType": "movie",
+          "tmdbId": 1030,
+          "tvdbId": null,
+          "imdbId": null,
+          "status": 3,
+          "status4k": 2,
+          "serviceId": 7,
+          "externalServiceId": 7003,
+          "externalServiceSlug": "radarr-main",
+          "createdAt": "2026-09-10T12:00:00Z",
+          "updatedAt": "2026-09-11T12:00:00Z",
+          "requests": [],
+          "seasons": []
+        },
+        {
+          "id": 104,
+          "mediaType": "tv",
+          "tmdbId": 1040,
+          "tvdbId": 2040,
+          "imdbId": null,
+          "status": 2,
+          "status4k": 99,
+          "serviceId": 8,
+          "externalServiceId": 8004,
+          "externalServiceSlug": "sonarr-main",
+          "createdAt": "2026-09-10T13:00:00Z",
+          "updatedAt": "2026-09-11T13:00:00Z",
+          "requests": [],
+          "seasons": []
+        }
+      ]
+    }
+  ],
+  "overlapMediaPages": [
+    {
+      "pageInfo": {"pages": 2, "pageSize": 2, "results": 4, "page": 1},
+      "results": [{"id": 101, "mediaType": "movie", "tmdbId": 550, "status": 5}, {"id": 102, "mediaType": "tv", "tmdbId": 1002, "status": 4}]
+    },
+    {
+      "pageInfo": {"pages": 2, "pageSize": 2, "results": 4, "page": 2},
+      "results": [{"id": 102, "mediaType": "tv", "tmdbId": 1002, "status": 4}, {"id": 103, "mediaType": "movie", "tmdbId": 1030, "status": 3}]
+    }
+  ],
+  "driftMediaPages": [
+    {
+      "pageInfo": {"pages": 2, "pageSize": 2, "results": 4, "page": 1},
+      "results": [
+        {"id": 101, "mediaType": "movie", "tmdbId": 550, "status": 5},
+        {"id": 102, "mediaType": "tv", "tvdbId": 2002, "status": 4}
+      ]
+    },
+    {
+      "pageInfo": {"pages": 2, "pageSize": 2, "results": 4, "page": 2},
+      "results": [
+        {"id": 104, "mediaType": "tv", "tvdbId": 2040, "status": 2},
+        {"id": 105, "mediaType": "movie", "tmdbId": 1050, "status": 3}
+      ]
+    }
+  ]
+}

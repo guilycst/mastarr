@@ -32,6 +32,8 @@ github.com/guilycst/mastarr/clients/qbittorrent v0.0.0-20260912004727-a9c847ff56
 github.com/guilycst/mastarr/clients/qbittorrent v0.0.0-20260912004727-a9c847ff562f/go.mod h1:q/sIuwvNcrwB7CNLk4Mnji9U9jpdVSo5l0phiSUNJ0A=
 github.com/guilycst/mastarr/clients/radarr v0.0.0-20260915230044-873e53ef6729 h1:3zo14EcROvIxxs+E+vgB874NNXOnA+ofRNSfcto04tQ=
 github.com/guilycst/mastarr/clients/radarr v0.0.0-20260915230044-873e53ef6729/go.mod h1:tlpG6aOjatjjPOTFHMRzfA6ToLSUJ1ogzC1hU6lof2I=
+github.com/guilycst/mastarr/clients/seerr v0.0.0-20260915230044-873e53ef6729 h1:NhasfCbWK9+Omoy2+iKHuDkB625MRA0216saEYP2FUw=
+github.com/guilycst/mastarr/clients/seerr v0.0.0-20260915230044-873e53ef6729/go.mod h1:sR+1FJpZDb3HyEpMUo9UyIXXM60YEPDtFtR+grqG5K4=
 github.com/guilycst/mastarr/clients/sonarr v0.0.0-20260915230044-873e53ef6729 h1:7QCRliMf4hLaB/S0Io3rdS9aGWmI20HRxWJBHxaZYs8=
 github.com/guilycst/mastarr/clients/sonarr v0.0.0-20260915230044-873e53ef6729/go.mod h1:vKhED5FQiFjl9seaoiulOPSmy1e18hU6cLdl6AkcUXE=
 github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs4luLUK2k=

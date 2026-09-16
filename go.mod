@@ -11,6 +11,7 @@ require (
 	github.com/guilycst/mastarr/clients/nzbget v0.0.0-20260911223922-1b9b3f9c425e
 	github.com/guilycst/mastarr/clients/qbittorrent v0.0.0-20260912004727-a9c847ff562f
 	github.com/guilycst/mastarr/clients/radarr v0.0.0-20260915230044-873e53ef6729
+	github.com/guilycst/mastarr/clients/seerr v0.0.0-20260915230044-873e53ef6729
 	github.com/guilycst/mastarr/clients/sonarr v0.0.0-20260915230044-873e53ef6729
 	github.com/oapi-codegen/runtime v1.7.0
 	golang.org/x/sys v0.47.0

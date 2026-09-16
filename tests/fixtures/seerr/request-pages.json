@@ -1,0 +1,150 @@
+{
+  "requestPages": [
+    {
+      "pageInfo": {"pages": 2, "pageSize": 2, "results": 3, "page": 1},
+      "results": [
+        {
+          "id": 9001,
+          "status": 5,
+          "type": "movie",
+          "seasonCount": 0,
+          "is4k": false,
+          "serverId": 7,
+          "profileId": 3,
+          "rootFolder": "/fixture/movies",
+          "languageProfileId": 1,
+          "tags": [10, 20],
+          "isAutoRequest": false,
+          "ignoreQuota": false,
+          "createdAt": "2026-09-10T09:00:00Z",
+          "updatedAt": "2026-09-10T09:30:00Z",
+          "media": {
+            "id": 101,
+            "mediaType": "movie",
+            "tmdbId": 550,
+            "imdbId": "tt0137523",
+            "status": 5,
+            "status4k": 4,
+            "serviceId": 7,
+            "externalServiceId": 7001,
+            "externalServiceSlug": "radarr-main",
+            "jellyfinMediaId": "jf-film-101",
+            "mediaAddedAt": "2026-09-11T10:00:00Z",
+            "createdAt": "2026-09-10T10:00:00Z",
+            "updatedAt": "2026-09-11T10:00:00Z"
+          },
+          "seasons": []
+        },
+        {
+          "id": 9002,
+          "status": 2,
+          "type": "tv",
+          "seasonCount": 1,
+          "is4k": true,
+          "serverId": 8,
+          "profileId": 4,
+          "rootFolder": "/fixture/series",
+          "languageProfileId": 2,
+          "tags": [30],
+          "isAutoRequest": true,
+          "ignoreQuota": true,
+          "createdAt": "2026-09-10T11:00:00Z",
+          "updatedAt": "2026-09-11T11:30:00Z",
+          "media": {
+            "id": 102,
+            "mediaType": "tv",
+            "tmdbId": 1002,
+            "tvdbId": 2002,
+            "imdbId": "tt1002002",
+            "status": 4,
+            "status4k": 3,
+            "serviceId": 8,
+            "externalServiceId": 8002,
+            "externalServiceId4k": 9002,
+            "serviceId4k": 9,
+            "externalServiceSlug": "sonarr-main"
+          },
+          "seasons": [{"id": 10201, "seasonNumber": 1, "status": 4, "status4k": 3}]
+        }
+      ],
+      "serviceErrors": {"radarr": [{"id": 99, "name": "offline-radarr"}], "sonarr": []}
+    },
+    {
+      "pageInfo": {"pages": 2, "pageSize": 2, "results": 3, "page": 2},
+      "results": [
+        {
+          "id": 9003,
+          "status": 4,
+          "type": "movie",
+          "seasonCount": 0,
+          "is4k": false,
+          "serverId": 7,
+          "profileId": 3,
+          "rootFolder": "/fixture/movies",
+          "languageProfileId": 1,
+          "tags": [],
+          "createdAt": "2026-09-10T12:00:00Z",
+          "updatedAt": "2026-09-11T12:00:00Z",
+          "media": {
+            "id": 103,
+            "mediaType": "movie",
+            "tmdbId": 1030,
+            "status": 3,
+            "status4k": 2,
+            "serviceId": 7,
+            "externalServiceId": 7003,
+            "externalServiceSlug": "radarr-main"
+          },
+          "seasons": []
+        }
+      ],
+      "serviceErrors": {}
+    }
+  ],
+  "driftRequestPages": [
+    {
+      "pageInfo": {"pages": 2, "pageSize": 2, "results": 4, "page": 1},
+      "results": [
+        {
+          "id": 9001,
+          "status": 2,
+          "type": "movie",
+          "createdAt": "2026-09-11T14:00:00Z",
+          "updatedAt": "2026-09-11T14:01:00Z",
+          "media": {"id": 101, "mediaType": "movie", "tmdbId": 550, "status": 5}
+        },
+        {
+          "id": 9002,
+          "status": 1,
+          "type": "tv",
+          "createdAt": "2026-09-11T14:02:00Z",
+          "updatedAt": "2026-09-11T14:03:00Z",
+          "media": {"id": 102, "mediaType": "tv", "tvdbId": 2002, "status": 4}
+        }
+      ],
+      "serviceErrors": {}
+    },
+    {
+      "pageInfo": {"pages": 2, "pageSize": 2, "results": 4, "page": 2},
+      "results": [
+        {
+          "id": 9004,
+          "status": 2,
+          "type": "movie",
+          "createdAt": "2026-09-11T14:04:00Z",
+          "updatedAt": "2026-09-11T14:05:00Z",
+          "media": {"id": 104, "mediaType": "tv", "tvdbId": 2040, "status": 2}
+        },
+        {
+          "id": 9005,
+          "status": 1,
+          "type": "movie",
+          "createdAt": "2026-09-11T14:06:00Z",
+          "updatedAt": "2026-09-11T14:07:00Z",
+          "media": {"id": 105, "mediaType": "movie", "tmdbId": 1050, "status": 3}
+        }
+      ],
+      "serviceErrors": {}
+    }
+  ]
+}
