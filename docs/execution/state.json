@@ -15,7 +15,9 @@
   "resumeDocument": "docs/execution/RESUME.md",
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
-  "activeImplementationTasks": [],
+  "activeImplementationTasks": [
+    "W-05"
+  ],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
   "guardrailBaseline": {
@@ -3553,11 +3555,67 @@
     },
     "W-05": {
       "status": "planned",
-      "owner": null,
-      "baseSha": null,
+      "owner": "/root/x05_implementer",
+      "baseSha": "fa30ec27a2adb894cd49f7a523c84ef75e80c2e8",
       "integratedSha": null,
-      "evidence": [],
-      "review": null
+      "evidence": [
+        "Dispatched after W-04 approval product 780c00e92498660c08b6ac67259bbb4147c58531, receipt 2aef896fd5d3e10dcefc80f8f5a094852d73fd27, and state closure fa30ec27a2adb894cd49f7a523c84ef75e80c2e8.",
+        "Own only internal/trash/ and docs/execution/handoffs/W-05.md; use existing storage, ports, action handlers, and durable action_runs/janitor rows. Do not add an outbox, schema, API, adapter, client, or worker integration in this lane.",
+        "F-05 remains explicit fail-closed for unsupported filesystem trash/restore/delete primitives; G-01 keeps Arr native registration/import writes blocked; Seerr remains read-only.",
+        "Synthetic fixtures and temporary SQLite only; no credentials, private coordinates, live services, inventories, or media."
+      ],
+      "review": {
+        "status": "pending",
+        "decision": "pending",
+        "reviewer": "/root/x05_reviewer",
+        "commit": null,
+        "findings": [],
+        "round": 1,
+        "integratedCommit": null
+      },
+      "dispatch": {
+        "assignedAt": "2026-09-16",
+        "model": "gpt-5.6-luna",
+        "reasoning": "max",
+        "role": "implementer",
+        "baseSha": "fa30ec27a2adb894cd49f7a523c84ef75e80c2e8",
+        "ownedPaths": [
+          "internal/trash/",
+          "docs/execution/handoffs/W-05.md"
+        ],
+        "checkout": "shared main",
+        "expectedChecks": [
+          "A-25 default 30-day/custom retention, expiry authority, and no early purge",
+          "A-26 explicit exact hard-delete plan support with no UI/trash bypass",
+          "A-27 restore/purge single claim, collision/identity hold, and partial per-item recovery",
+          "A-29 whole-torrent stop prerequisite and metadata-only client removal with deleteFiles=false semantics",
+          "A-30 restore after removed torrent record without auto re-add or resume",
+          "A-57 unresolved client/payload effects and clock anomalies hold safely",
+          "durable trash entry/item and janitor state transitions using existing sqlc contracts",
+          "read-only observation before filesystem/client mutation and idempotent desired-state checks",
+          "startup/periodic janitor scan and bounded lease/recovery behavior",
+          "synthetic temporary SQLite and fake filesystem/download ports only",
+          "GOWORK=off focused tests/race/vet/module verification and full offline guardrails",
+          "generation/API/Vacuum/lint/architecture checks and Linux amd64/arm64 CGO-free builds"
+        ],
+        "reviewPath": "docs/execution/handoffs/W-05-review-round1.md",
+        "handoffPath": "docs/execution/handoffs/W-05.md",
+        "nextReviewer": "/root/x05_reviewer",
+        "status": "dispatched",
+        "dependencyCommits": {
+          "W-04-product": "780c00e92498660c08b6ac67259bbb4147c58531",
+          "W-04-review": "2aef896fd5d3e10dcefc80f8f5a094852d73fd27",
+          "W-04-state-closure": "fa30ec27a2adb894cd49f7a523c84ef75e80c2e8"
+        },
+        "dependencyCapabilityGates": {
+          "F-05": "Linux has no reviewed inode-bound quarantine removal primitive in current implementation. Unsupported trash/restore/delete source-removal operations must fail closed before mutation.",
+          "G-01": "Arr native registration/import writes remain blocked; this lane must not bypass that gate.",
+          "X-14": "qBittorrent removal remains metadata-only with deleteFiles=false; stop and read-back are required before payload mutation."
+        },
+        "waitingOn": "/root/x05_implementer",
+        "waitingReason": "bounded W-05 implementation and handoff"
+      },
+      "reviewHistory": []
     },
     "C-04": {
       "status": "planned",
@@ -5494,7 +5552,7 @@
       ]
     }
   },
-  "nextAction": "W-04 is done at product 780c00e92498660c08b6ac67259bbb4147c58531 with approval receipt 2aef896fd5d3e10dcefc80f8f5a094852d73fd27 integrated as a8752c3. W-05 trash/restore/janitor lane is now unblocked for dispatch; keep F-05 and G-01 gates explicit.",
+  "nextAction": "W-05 trash/restore/janitor lane dispatched from fa30ec27a2adb894cd49f7a523c84ef75e80c2e8 to /root/x05_implementer. Implement exact per-volume trash manifests, retention, stop/remove prerequisites, restore/purge claims, holds and janitor recovery in internal/trash/; then submit product and handoff SHAs for independent review. Keep F-05 and G-01 explicit.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
