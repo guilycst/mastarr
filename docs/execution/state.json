@@ -3098,16 +3098,27 @@
       "reviewIntegrationCommit": "02c0b2113d4327119eb55fe419915ea1c99e6093"
     },
     "W-03": {
-      "status": "in_progress",
+      "status": "in_review",
       "owner": "/root/x05_implementer",
       "baseSha": "a040db83627735e62fb90d8db8b2c06198eedef4",
       "integratedSha": null,
       "evidence": [
         "dispatched from a040db83627735e62fb90d8db8b2c06198eedef4 after W-01 (6af605497e62ac182d0d4d4e222cac81aa4232e1) and W-02 (ff23e1b939f04c1136cba8134d3c9ae505094dba) approvals plus F-04, X-06, X-07, X-08 and X-09 approvals.",
         "F-05 is approved for safe fail-closed behavior but remains capability-blocked for Linux move, rename, permanent-delete and cross-device source removal. Action handlers must propagate that explicit capability result and must not enable mutation by assumption.",
-        "Own only internal/actions/ and docs/execution/handoffs/W-03.md. Implement independent registration, import, placement, organize, client, descriptor and refresh handlers on the durable execution ports. Enforce linked-client prerequisites and preserve observe-before-write, idempotency, cancellation and uncertainty semantics. Keep G-01 Arr native writes and Seerr writes blocked."
+        "Own only internal/actions/ and docs/execution/handoffs/W-03.md. Implement independent registration, import, placement, organize, client, descriptor and refresh handlers on the durable execution ports. Enforce linked-client prerequisites and preserve observe-before-write, idempotency, cancellation and uncertainty semantics. Keep G-01 Arr native writes and Seerr writes blocked.",
+        "fc2bab90bd3db21c6801842babee6b473e2742da W-03 product implements typed Arr, filesystem, client, descriptor and Jellyfin refresh handlers; 19b13f86411c74ae2bec249e0481de8ebcf16187 records the handoff and full checks.",
+        "Handlers use bounded intents, observe-before-write, capability and linked-client gates, idempotency, cancellation/deadline handling, per-effect evidence and native-client routing. F-05 organize writes remain fail-closed, G-01 keeps Arr registration/import disabled, and planning imports require an explicit preview revision envelope.",
+        "Focused/race/vet, root internal tests, generation/Vacuum, architecture/lint/planning, full offline guardrails, all module verification and Linux amd64/arm64 CGO-free builds passed."
       ],
-      "review": null,
+      "review": {
+        "status": "pending",
+        "decision": "pending",
+        "reviewer": "/root/x05_reviewer",
+        "commit": null,
+        "integratedCommit": null,
+        "findings": [],
+        "round": 1
+      },
       "dispatch": {
         "assignedAt": "2026-09-16",
         "model": "gpt-5.6-luna",
@@ -3140,7 +3151,7 @@
         "reviewPath": "docs/execution/handoffs/W-03-review-round1.md",
         "handoffPath": "docs/execution/handoffs/W-03.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "implementation",
+        "status": "review_pending",
         "dependencyCommits": {
           "W-01": "6af605497e62ac182d0d4d4e222cac81aa4232e1",
           "W-02": "ff23e1b939f04c1136cba8134d3c9ae505094dba",
@@ -3155,7 +3166,13 @@
         "dependencyCapabilityGates": {
           "F-05": "Linux has no reviewed inode-bound quarantine removal primitive in the current implementation. Pending move, rename, permanent-delete, and cross-device source-removal operations fail closed before mutation; reopen after a reviewed inode-bound removal implementation exists.",
           "G-01": "Arr native registration/import writes remain blocked pending X-05 evidence."
-        }
+        },
+        "implementationCommit": "fc2bab90bd3db21c6801842babee6b473e2742da",
+        "handoffCommit": "19b13f86411c74ae2bec249e0481de8ebcf16187",
+        "reviewSourceCommit": "fc2bab90bd3db21c6801842babee6b473e2742da",
+        "correctionStatus": null,
+        "reviewCommit": null,
+        "reviewIntegrationCommit": null
       }
     },
     "W-04": {
@@ -5109,7 +5126,7 @@
       ]
     }
   },
-  "nextAction": "W-03 action handlers are in implementation from a040db83627735e62fb90d8db8b2c06198eedef4; F-05 Linux organize mutations remain capability-blocked and must fail closed, G-01 keeps Arr writes blocked, and W-04 follows W-03.",
+  "nextAction": "W-03 action handlers are ready for independent review at fc2bab90bd3db21c6801842babee6b473e2742da; handoff 19b13f86411c74ae2bec249e0481de8ebcf16187. F-05 Linux organize mutations remain capability-blocked, G-01 keeps Arr writes blocked, and W-04 follows after W-03 approval.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
