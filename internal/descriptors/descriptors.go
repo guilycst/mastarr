@@ -27,13 +27,15 @@ import (
 const (
 	// DefaultMaxBytes bounds one descriptor and protects both memory and disk
 	// use during capture and explicit content reads.
-	DefaultMaxBytes    int64 = 4 << 20
-	objectDirectory          = "objects"
-	objectSuffix             = ".descriptor"
-	privateStagePrefix       = ".stage-"
-	maxIdentifierBytes       = 256
-	maxReasonBytes           = 128
-	deleteIntentAction       = "descriptor.delete.intent"
+	DefaultMaxBytes       int64 = 4 << 20
+	objectDirectory             = "objects"
+	objectSuffix                = ".descriptor"
+	privateStagePrefix          = ".stage-"
+	maxIdentifierBytes          = 256
+	maxReasonBytes              = 128
+	deleteIntentAction          = "descriptor.delete.intent"
+	captureIntentAction         = "descriptor.capture.intent"
+	captureTerminalAction       = "descriptor.capture"
 )
 
 var (
@@ -53,6 +55,7 @@ var (
 	ErrDeleteAcknowledgement   = errors.New("descriptor deletion requires explicit acknowledgement")
 	ErrDeleteUncertain         = errors.New("descriptor deletion result is uncertain")
 	ErrDescriptorDeletePending = errors.New("descriptor deletion is pending")
+	ErrCaptureUncertain        = errors.New("descriptor capture result is uncertain")
 	ErrStorage                 = errors.New("descriptor metadata storage failed")
 )
 
@@ -285,6 +288,11 @@ func (service *Service) RecordUnavailable(ctx context.Context, request CaptureRe
 		return Record{}, err
 	}
 	if found {
+		if _, pending, err := service.pendingCaptureIntentForDescriptor(ctx, existing.ID); err != nil {
+			return Record{}, err
+		} else if pending {
+			return Record{}, ErrCaptureUncertain
+		}
 		record, err := service.recordForRow(ctx, existing)
 		if err != nil {
 			return Record{}, err
@@ -307,6 +315,11 @@ func (service *Service) RecordUnavailable(ctx context.Context, request CaptureRe
 			return Record{}, err
 		}
 		return service.get(ctx, existing.ID)
+	}
+	if _, pending, err := service.pendingCaptureIntentForRequest(ctx, request); err != nil {
+		return Record{}, err
+	} else if pending {
+		return Record{}, ErrCaptureUncertain
 	}
 	id, err := newID()
 	if err != nil {
@@ -417,6 +430,20 @@ func (service *Service) Delete(ctx context.Context, request DeleteRequest) (Reco
 	if row.DeletedAt.Valid {
 		return service.recordForRow(ctx, row)
 	}
+	if captureIntent, capturePending, err := service.pendingCaptureIntentForDescriptor(ctx, row.ID); err != nil {
+		return Record{}, err
+	} else if capturePending {
+		if err := service.reconcileCaptureBeforeDelete(ctx, row, captureIntent); err != nil {
+			return Record{}, err
+		}
+		row, err = service.getStored(ctx, row.ID)
+		if err != nil {
+			return Record{}, err
+		}
+		if row.DeletedAt.Valid {
+			return service.recordForRow(ctx, row)
+		}
+	}
 	pendingMetadata, pending, err := service.pendingDeleteIntent(ctx, row)
 	if err != nil {
 		return Record{}, err
@@ -524,6 +551,24 @@ func (service *Service) capture(ctx context.Context, request CaptureRequest, dat
 		return Record{}, err
 	}
 	if found {
+		if intent, pending, err := service.pendingCaptureIntentForDescriptor(ctx, existing.ID); err != nil {
+			return Record{}, err
+		} else if pending {
+			resolved, retry, err := service.resolvePendingCapture(ctx, request, data, source, &existing, intent)
+			if err != nil {
+				return Record{}, err
+			}
+			if !retry {
+				return resolved, nil
+			}
+			existing, found, err = service.findByKey(ctx, request)
+			if err != nil {
+				return Record{}, err
+			}
+			if !found {
+				return Record{}, fmt.Errorf("%w: capture row disappeared after intent recovery", ErrCaptureUncertain)
+			}
+		}
 		existingRecord, recordErr := service.recordForRow(ctx, existing)
 		if recordErr != nil {
 			return Record{}, recordErr
@@ -555,39 +600,84 @@ func (service *Service) capture(ctx context.Context, request CaptureRequest, dat
 		} else if pending {
 			return Record{}, ErrDescriptorDeletePending
 		}
-		object, err := service.writeObject(ctx, existing.ID, data)
+		var intent captureIntent
+		object, err := service.writeObjectWithIntent(ctx, existing.ID, data, func(stagePath string, stageInfo fs.FileInfo) error {
+			var intentErr error
+			intent, intentErr = service.ensureCaptureIntent(ctx, existing.ID, &existing, request, digest, int64(len(data)), source, stagePath, stageInfo)
+			return intentErr
+		})
+		if err != nil {
+			return Record{}, service.reconcileCaptureFailure(ctx, intent, err)
+		}
+		if metadataErr := beforeCaptureMetadata(existing.ID); metadataErr != nil {
+			cleanupErr := removeCapturedObject(service, object, existing.ID, intent.Metadata.ObjectIdentity)
+			if cleanupErr != nil {
+				return Record{}, service.reconcileCaptureFailure(ctx, intent, fmt.Errorf("%w: capture metadata update: %v; cleanup: %v", ErrCaptureUncertain, metadataErr, cleanupErr))
+			}
+			return Record{}, service.reconcileCaptureFailure(ctx, intent, metadataErr)
+		}
+		if metadataErr := service.updateCaptured(ctx, existing.ID, object, digest, source, service.now()); metadataErr != nil {
+			cleanupErr := removeCapturedObject(service, object, existing.ID, intent.Metadata.ObjectIdentity)
+			if cleanupErr != nil {
+				return Record{}, service.reconcileCaptureFailure(ctx, intent, fmt.Errorf("%w: capture metadata update: %v; cleanup: %v", ErrCaptureUncertain, metadataErr, cleanupErr))
+			}
+			return Record{}, service.reconcileCaptureFailure(ctx, intent, metadataErr)
+		}
+		if terminalErr := service.finishCaptureIntent(ctx, intent, "committed"); terminalErr != nil {
+			return Record{}, fmt.Errorf("%w: capture metadata committed but terminal journal is incomplete: %v", ErrCaptureUncertain, terminalErr)
+		}
+		return service.get(ctx, existing.ID)
+	}
+	if intent, pending, err := service.pendingCaptureIntentForRequest(ctx, request); err != nil {
+		return Record{}, err
+	} else if pending {
+		resolved, retry, err := service.resolvePendingCapture(ctx, request, data, source, nil, intent)
 		if err != nil {
 			return Record{}, err
 		}
-		if err := service.updateCaptured(ctx, existing.ID, object, digest, source, service.now()); err != nil {
-			// The object was absent before writeObject succeeded, so it is
-			// operation-owned. Remove it only after the same-file check; a
-			// concurrent replacement is preserved and reported on the next read.
-			_ = service.removeGeneratedObject(object, existing.ID)
-			return Record{}, err
+		if !retry {
+			return resolved, nil
 		}
-		return service.get(ctx, existing.ID)
 	}
 	id, err := newID()
 	if err != nil {
 		return Record{}, err
 	}
-	object, err := service.writeObject(ctx, id, data)
+	var intent captureIntent
+	object, err := service.writeObjectWithIntent(ctx, id, data, func(stagePath string, stageInfo fs.FileInfo) error {
+		var intentErr error
+		intent, intentErr = service.ensureCaptureIntent(ctx, id, nil, request, digest, int64(len(data)), source, stagePath, stageInfo)
+		return intentErr
+	})
 	if err != nil {
-		return Record{}, err
+		return Record{}, service.reconcileCaptureFailure(ctx, intent, err)
 	}
 	row := storedRecord{ID: id, DownloadID: sql.NullString{String: request.DownloadID, Valid: true}, DescriptorType: request.DescriptorType, StoragePath: object, OriginalDigest: sql.NullString{String: digest, Valid: true}, CaptureSource: source, CapturedAt: service.now().Format(time.RFC3339Nano), Retention: string(RetentionRetain)}
-	if err := service.insert(ctx, row); err != nil {
-		// The object name is operation-generated. Remove only after identity
-		// validation; a concurrent winner's object is never selected here.
-		_ = service.removeGeneratedObject(row.StoragePath, row.ID)
+	if metadataErr := beforeCaptureMetadata(row.ID); metadataErr != nil {
+		cleanupErr := removeCapturedObject(service, row.StoragePath, row.ID, intent.Metadata.ObjectIdentity)
+		if cleanupErr != nil {
+			return Record{}, service.reconcileCaptureFailure(ctx, intent, fmt.Errorf("%w: capture metadata insert: %v; cleanup: %v", ErrCaptureUncertain, metadataErr, cleanupErr))
+		}
+		return Record{}, service.reconcileCaptureFailure(ctx, intent, metadataErr)
+	}
+	if metadataErr := service.insert(ctx, row); metadataErr != nil {
+		cleanupErr := removeCapturedObject(service, row.StoragePath, row.ID, intent.Metadata.ObjectIdentity)
+		if cleanupErr != nil {
+			return Record{}, service.reconcileCaptureFailure(ctx, intent, fmt.Errorf("%w: capture metadata insert: %v; cleanup: %v", ErrCaptureUncertain, metadataErr, cleanupErr))
+		}
+		if reconcileErr := service.reconcileCaptureFailure(ctx, intent, metadataErr); reconcileErr != nil {
+			return Record{}, reconcileErr
+		}
 		if existing, found, lookupErr := service.findByKey(ctx, request); lookupErr == nil && found {
 			if existing.OriginalDigest.Valid && existing.OriginalDigest.String == digest {
 				return service.recordForRow(ctx, existing)
 			}
 			return Record{}, ErrDescriptorConflict
 		}
-		return Record{}, err
+		return Record{}, metadataErr
+	}
+	if terminalErr := service.finishCaptureIntent(ctx, intent, "committed"); terminalErr != nil {
+		return Record{}, fmt.Errorf("%w: capture metadata committed but terminal journal is incomplete: %v", ErrCaptureUncertain, terminalErr)
 	}
 	return service.recordForRow(ctx, row)
 }
@@ -617,9 +707,17 @@ func (service *Service) contentForRow(ctx context.Context, row storedRecord) ([]
 	return data, nil
 }
 
-func (service *Service) writeObject(ctx context.Context, id string, data []byte) (string, error) {
+// writeObjectWithIntent prepares and publishes one private object. When
+// beforePublish is supplied it is called after the complete staging file has
+// been synced and identity-checked, but before the no-replace final link. The
+// callback is the durable capture-intent boundary: a final object can only be
+// published after its operation-owned staging identity is journaled.
+func (service *Service) writeObjectWithIntent(ctx context.Context, id string, data []byte, beforePublish func(stagePath string, stageInfo fs.FileInfo) error) (string, error) {
 	if err := validateID(id); err != nil {
 		return "", err
+	}
+	if beforePublish == nil {
+		return "", fmt.Errorf("%w: capture intent is required before publication", ErrCaptureUncertain)
 	}
 	if len(data) == 0 || int64(len(data)) > service.maxBytes {
 		return "", ErrDescriptorTooLarge
@@ -689,6 +787,9 @@ func (service *Service) writeObject(ctx context.Context, id string, data []byte)
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("%w: inspect descriptor destination", ErrStorage)
 	}
+	if err := beforePublish(filepath.Base(temporaryName), temporaryInfo); err != nil {
+		return "", err
+	}
 	if err := os.Link(temporaryName, destination); err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			return "", ErrDescriptorConflict
@@ -724,15 +825,30 @@ func (service *Service) writeObject(ctx context.Context, id string, data []byte)
 	return object, nil
 }
 
-func (service *Service) removeGeneratedObject(storagePath, id string) error {
+func (service *Service) removeGeneratedObject(storagePath, id, expectedIdentity string) error {
 	if err := validateStoragePath(storagePath, id); err != nil {
 		return err
 	}
+	if expectedIdentity == "" {
+		return fmt.Errorf("%w: generated descriptor identity unavailable", ErrCaptureUncertain)
+	}
 	file, info, err := openConstrainedFile(service.storageRoot, storagePath)
 	if err != nil {
-		return nil
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
 	}
-	_ = file.Close()
+	if expectedIdentity != "" {
+		identity, ok := descriptorObjectIdentity(info)
+		if !ok || identity != expectedIdentity {
+			_ = file.Close()
+			return ErrDescriptorChanged
+		}
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("%w: close generated descriptor", ErrCaptureUncertain)
+	}
 	return removeConstrainedFile(service.storageRoot, storagePath, info)
 }
 
@@ -743,11 +859,784 @@ type deleteIntentMetadata struct {
 	FileIdentity   string `json:"file_identity,omitempty"`
 }
 
+// captureIntentMetadata binds a prepared private object to the descriptor
+// identity that will adopt it. The stage identity is captured before the
+// final hardlink is published, so a retry can distinguish the operation's
+// bytes from a same-content replacement at the deterministic object path.
+// All paths are private, root-relative names; no source pathname or bytes are
+// written to the audit journal.
+type captureIntentMetadata struct {
+	Scope          string `json:"scope"`
+	DownloadID     string `json:"download_id"`
+	DescriptorType string `json:"descriptor_type"`
+	Digest         string `json:"digest"`
+	Size           int64  `json:"size"`
+	CaptureSource  string `json:"capture_source"`
+	StoragePath    string `json:"storage_path"`
+	StagePath      string `json:"stage_path"`
+	ObjectIdentity string `json:"object_identity,omitempty"`
+}
+
+type captureIntent struct {
+	ResourceID string
+	EventID    string
+	Metadata   captureIntentMetadata
+}
+
 func nullableString(value sql.NullString) any {
 	if value.Valid {
 		return value.String
 	}
 	return nil
+}
+
+// pendingCaptureIntentForDescriptor returns the latest capture preparation
+// that has not been closed by a durable committed or aborted terminal event.
+// A pending intent is intentionally append-only: it is the recovery identity
+// for a final object whose metadata update may not have committed yet.
+func (service *Service) pendingCaptureIntentForDescriptor(ctx context.Context, resourceID string) (captureIntent, bool, error) {
+	if err := validateID(resourceID); err != nil {
+		return captureIntent{}, false, err
+	}
+	return service.queryPendingCaptureIntent(ctx, `
+		SELECT i.resource_id, i.event_id, i.metadata_json
+		FROM audit_events AS i
+		WHERE i.action = ?
+		  AND i.resource_kind = 'descriptor'
+		  AND i.resource_id = ?
+		  AND i.outcome = 'pending'
+		  AND NOT EXISTS (
+			  SELECT 1
+			  FROM audit_events AS terminal
+			  WHERE terminal.action = ?
+			    AND terminal.resource_kind = 'descriptor'
+			    AND terminal.resource_id = i.resource_id
+			    AND terminal.outcome IN ('committed', 'aborted')
+			    AND json_extract(terminal.metadata_json, '$.intent_event_id') = i.event_id
+		  )
+		ORDER BY i.id DESC
+		LIMIT 1`, captureIntentAction, resourceID, captureTerminalAction)
+}
+
+// pendingCaptureIntentForRequest is used when a metadata insert failed after
+// a new descriptor object was published. The request identity lives in the
+// redacted intent metadata because no descriptor row exists to query yet.
+func (service *Service) pendingCaptureIntentForRequest(ctx context.Context, request CaptureRequest) (captureIntent, bool, error) {
+	return service.queryPendingCaptureIntent(ctx, `
+		SELECT i.resource_id, i.event_id, i.metadata_json
+		FROM audit_events AS i
+		WHERE i.action = ?
+		  AND i.resource_kind = 'descriptor'
+		  AND i.outcome = 'pending'
+		  AND json_extract(i.metadata_json, '$.download_id') = ?
+		  AND json_extract(i.metadata_json, '$.descriptor_type') = ?
+		  AND NOT EXISTS (
+			  SELECT 1
+			  FROM audit_events AS terminal
+			  WHERE terminal.action = ?
+			    AND terminal.resource_kind = 'descriptor'
+			    AND terminal.resource_id = i.resource_id
+			    AND terminal.outcome IN ('committed', 'aborted')
+			    AND json_extract(terminal.metadata_json, '$.intent_event_id') = i.event_id
+		  )
+		ORDER BY i.id DESC
+		LIMIT 1`, captureIntentAction, request.DownloadID, request.DescriptorType, captureTerminalAction)
+}
+
+func (service *Service) queryPendingCaptureIntent(ctx context.Context, query string, args ...any) (captureIntent, bool, error) {
+	var intent captureIntent
+	var rawMetadata string
+	if err := service.db.QueryRowContext(ctx, query, args...).Scan(&intent.ResourceID, &intent.EventID, &rawMetadata); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return captureIntent{}, false, nil
+		}
+		if contextErr := contextCheckpoint(ctx); contextErr != nil {
+			return captureIntent{}, false, contextErr
+		}
+		return captureIntent{}, false, fmt.Errorf("%w: read capture intent", ErrStorage)
+	}
+	metadata, err := decodeCaptureIntentMetadata(rawMetadata)
+	if err != nil {
+		return captureIntent{}, false, err
+	}
+	intent.Metadata = metadata
+	if err := validateCaptureIntent(intent); err != nil {
+		return captureIntent{}, false, err
+	}
+	return intent, true, nil
+}
+
+func decodeCaptureIntentMetadata(raw string) (captureIntentMetadata, error) {
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var metadata captureIntentMetadata
+	if err := decoder.Decode(&metadata); err != nil {
+		return captureIntentMetadata{}, fmt.Errorf("%w: malformed capture intent", ErrStorage)
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		return captureIntentMetadata{}, fmt.Errorf("%w: malformed capture intent", ErrStorage)
+	}
+	return metadata, nil
+}
+
+func validateCaptureIntent(intent captureIntent) error {
+	if err := validateID(intent.ResourceID); err != nil {
+		return fmt.Errorf("%w: capture intent descriptor identity", ErrStorage)
+	}
+	if intent.EventID == "" {
+		return fmt.Errorf("%w: capture intent event identity", ErrStorage)
+	}
+	metadata := intent.Metadata
+	if metadata.Scope != "descriptor" || metadata.StoragePath != objectPath(intent.ResourceID) {
+		return fmt.Errorf("%w: capture intent scope", ErrStorage)
+	}
+	if err := validateIdentifier(metadata.DownloadID); err != nil {
+		return fmt.Errorf("%w: capture intent download identity", ErrStorage)
+	}
+	if err := validateToken(metadata.DescriptorType, maxIdentifierBytes); err != nil {
+		return fmt.Errorf("%w: capture intent descriptor type", ErrStorage)
+	}
+	if _, err := normalizeDigest(metadata.Digest); err != nil {
+		return fmt.Errorf("%w: capture intent digest", ErrStorage)
+	}
+	if metadata.Size <= 0 || metadata.Size > DefaultMaxBytes {
+		return fmt.Errorf("%w: capture intent size", ErrStorage)
+	}
+	if err := validateToken(metadata.CaptureSource, maxIdentifierBytes); err != nil {
+		return fmt.Errorf("%w: capture intent source", ErrStorage)
+	}
+	if err := validateToken(metadata.StagePath, maxIdentifierBytes); err != nil || !strings.HasPrefix(metadata.StagePath, privateStagePrefix) {
+		return fmt.Errorf("%w: capture intent stage", ErrStorage)
+	}
+	if metadata.ObjectIdentity != "" {
+		if err := validateToken(metadata.ObjectIdentity, maxIdentifierBytes); err != nil {
+			return fmt.Errorf("%w: capture intent object identity", ErrStorage)
+		}
+	}
+	return nil
+}
+
+func (intent captureIntent) matches(request CaptureRequest, digest, source string, size int64) error {
+	if intent.Metadata.DownloadID != request.DownloadID || intent.Metadata.DescriptorType != request.DescriptorType || intent.Metadata.Digest != digest || intent.Metadata.Size != size || intent.Metadata.CaptureSource != source {
+		return fmt.Errorf("%w: capture intent identity changed", ErrDescriptorConflict)
+	}
+	return nil
+}
+
+func (service *Service) ensureCaptureIntent(ctx context.Context, resourceID string, row *storedRecord, request CaptureRequest, digest string, size int64, source, stagePath string, stageInfo fs.FileInfo) (captureIntent, error) {
+	if err := validateID(resourceID); err != nil {
+		return captureIntent{}, err
+	}
+	if err := validateCaptureRequest(request); err != nil {
+		return captureIntent{}, err
+	}
+	if _, err := normalizeDigest(digest); err != nil {
+		return captureIntent{}, err
+	}
+	if size <= 0 || size > service.maxBytes {
+		return captureIntent{}, ErrDescriptorTooLarge
+	}
+	if err := validateToken(source, maxIdentifierBytes); err != nil {
+		return captureIntent{}, err
+	}
+	if err := validateToken(stagePath, maxIdentifierBytes); err != nil || !strings.HasPrefix(stagePath, privateStagePrefix) {
+		return captureIntent{}, fmt.Errorf("%w: capture stage identity", ErrInvalidRequest)
+	}
+	objectIdentity := ""
+	if identity, ok := descriptorObjectIdentity(stageInfo); ok {
+		objectIdentity = identity
+	} else {
+		return captureIntent{}, fmt.Errorf("%w: capture object identity unavailable", ErrCaptureUncertain)
+	}
+	intent := captureIntent{ResourceID: resourceID}
+	intent.Metadata = captureIntentMetadata{
+		Scope:          "descriptor",
+		DownloadID:     request.DownloadID,
+		DescriptorType: request.DescriptorType,
+		Digest:         digest,
+		Size:           size,
+		CaptureSource:  source,
+		StoragePath:    objectPath(resourceID),
+		StagePath:      stagePath,
+		ObjectIdentity: objectIdentity,
+	}
+	if err := validateCaptureIntentMetadataForRow(intent, row); err != nil {
+		return captureIntent{}, err
+	}
+
+	tx, err := service.db.BeginTx(ctx, nil)
+	if err != nil {
+		if contextErr := contextCheckpoint(ctx); contextErr != nil {
+			return captureIntent{}, contextErr
+		}
+		return captureIntent{}, fmt.Errorf("%w: begin capture intent", ErrStorage)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var existingEventID, existingRaw string
+	var queryErr error
+	if row != nil {
+		queryErr = tx.QueryRowContext(ctx, `
+			SELECT i.event_id, i.metadata_json
+			FROM audit_events AS i
+			WHERE i.action = ?
+			  AND i.resource_kind = 'descriptor'
+			  AND i.resource_id = ?
+			  AND i.outcome = 'pending'
+			  AND NOT EXISTS (
+				  SELECT 1
+				  FROM audit_events AS terminal
+				  WHERE terminal.action = ?
+				    AND terminal.resource_kind = 'descriptor'
+				    AND terminal.resource_id = i.resource_id
+				    AND terminal.outcome IN ('committed', 'aborted')
+				    AND json_extract(terminal.metadata_json, '$.intent_event_id') = i.event_id
+			  )
+			ORDER BY i.id DESC
+			LIMIT 1`, captureIntentAction, resourceID, captureTerminalAction).Scan(&existingEventID, &existingRaw)
+	} else {
+		queryErr = tx.QueryRowContext(ctx, `
+			SELECT i.event_id, i.metadata_json
+			FROM audit_events AS i
+			WHERE i.action = ?
+			  AND i.resource_kind = 'descriptor'
+			  AND i.outcome = 'pending'
+			  AND json_extract(i.metadata_json, '$.download_id') = ?
+			  AND json_extract(i.metadata_json, '$.descriptor_type') = ?
+			  AND NOT EXISTS (
+				  SELECT 1
+				  FROM audit_events AS terminal
+				  WHERE terminal.action = ?
+				    AND terminal.resource_kind = 'descriptor'
+				    AND terminal.resource_id = i.resource_id
+				    AND terminal.outcome IN ('committed', 'aborted')
+				    AND json_extract(terminal.metadata_json, '$.intent_event_id') = i.event_id
+			  )
+			ORDER BY i.id DESC
+			LIMIT 1`, captureIntentAction, request.DownloadID, request.DescriptorType, captureTerminalAction).Scan(&existingEventID, &existingRaw)
+	}
+	if queryErr == nil {
+		existing := captureIntent{ResourceID: resourceID, EventID: existingEventID}
+		if row == nil {
+			// The resource ID comes from the existing event when no descriptor
+			// row exists; resolve it from the event before validating.
+			if err := tx.QueryRowContext(ctx, `SELECT resource_id FROM audit_events WHERE action = ? AND event_id = ?`, captureIntentAction, existingEventID).Scan(&existing.ResourceID); err != nil {
+				return captureIntent{}, fmt.Errorf("%w: read capture intent identity", ErrStorage)
+			}
+		}
+		metadata, decodeErr := decodeCaptureIntentMetadata(existingRaw)
+		if decodeErr != nil {
+			return captureIntent{}, decodeErr
+		}
+		existing.Metadata = metadata
+		if err := validateCaptureIntent(existing); err != nil {
+			return captureIntent{}, err
+		}
+		if err := existing.matches(request, digest, source, size); err != nil {
+			return captureIntent{}, err
+		}
+		if existing.Metadata.ObjectIdentity != objectIdentity {
+			return captureIntent{}, fmt.Errorf("%w: capture stage identity changed", ErrDescriptorConflict)
+		}
+		if err := tx.Commit(); err != nil {
+			return captureIntent{}, fmt.Errorf("%w: commit capture intent read", ErrStorage)
+		}
+		return existing, nil
+	}
+	if !errors.Is(queryErr, sql.ErrNoRows) {
+		if contextErr := contextCheckpoint(ctx); contextErr != nil {
+			return captureIntent{}, contextErr
+		}
+		return captureIntent{}, fmt.Errorf("%w: read capture intent", ErrStorage)
+	}
+
+	eventID, err := newID()
+	if err != nil {
+		return captureIntent{}, err
+	}
+	intent.EventID = eventID
+	metadata, err := json.Marshal(intent.Metadata)
+	if err != nil {
+		return captureIntent{}, fmt.Errorf("%w: encode capture intent", ErrStorage)
+	}
+	var result sql.Result
+	if row != nil {
+		result, err = tx.ExecContext(ctx, `
+			INSERT INTO audit_events (event_id, occurred_at, actor, action, resource_kind, resource_id, outcome, metadata_json, redacted)
+			SELECT ?, ?, 'unauthenticated', ?, 'descriptor', ?, 'pending', ?, 1
+			FROM descriptors
+			WHERE id = ?
+			  AND download_id = ?
+			  AND descriptor_type = ?
+			  AND storage_path = ?
+			  AND original_digest IS ?
+			  AND capture_source = ?
+			  AND captured_at = ?
+			  AND retention = ?
+			  AND unavailable_reason IS ?
+			  AND deleted_at IS NULL
+			  AND NOT EXISTS (
+				  SELECT 1 FROM audit_events
+				  WHERE action = ? AND resource_kind = 'descriptor' AND resource_id = ? AND outcome = 'pending'
+			  )
+				AND NOT EXISTS (
+					SELECT 1
+					FROM audit_events AS active_capture
+					WHERE active_capture.action = ?
+					  AND active_capture.resource_kind = 'descriptor'
+					  AND active_capture.resource_id = ?
+					  AND active_capture.outcome = 'pending'
+					  AND NOT EXISTS (
+						  SELECT 1
+						  FROM audit_events AS capture_terminal
+						  WHERE capture_terminal.action = ?
+						    AND capture_terminal.resource_kind = 'descriptor'
+						    AND capture_terminal.resource_id = active_capture.resource_id
+						    AND capture_terminal.outcome IN ('committed', 'aborted')
+						    AND json_extract(capture_terminal.metadata_json, '$.intent_event_id') = active_capture.event_id
+					  )
+				  )`,
+			eventID,
+			service.now().Format(time.RFC3339Nano),
+			captureIntentAction,
+			resourceID,
+			string(metadata),
+			row.ID,
+			row.DownloadID.String,
+			row.DescriptorType,
+			row.StoragePath,
+			nullableString(row.OriginalDigest),
+			row.CaptureSource,
+			row.CapturedAt,
+			row.Retention,
+			nullableString(row.UnavailableReason),
+			deleteIntentAction,
+			row.ID,
+			captureIntentAction,
+			row.ID,
+			captureTerminalAction,
+		)
+	} else {
+		result, err = tx.ExecContext(ctx, `
+			INSERT INTO audit_events (event_id, occurred_at, actor, action, resource_kind, resource_id, outcome, metadata_json, redacted)
+			SELECT ?, ?, 'unauthenticated', ?, 'descriptor', ?, 'pending', ?, 1
+			WHERE NOT EXISTS (
+				  SELECT 1 FROM descriptors WHERE download_id = ? AND descriptor_type = ?
+			  )
+			  AND NOT EXISTS (
+				  SELECT 1 FROM audit_events
+				  WHERE action = ?
+				    AND resource_kind = 'descriptor'
+				    AND outcome = 'pending'
+				    AND json_extract(metadata_json, '$.download_id') = ?
+				    AND json_extract(metadata_json, '$.descriptor_type') = ?
+				    AND NOT EXISTS (
+					  SELECT 1
+					  FROM audit_events AS capture_terminal
+					  WHERE capture_terminal.action = ?
+					    AND capture_terminal.resource_kind = 'descriptor'
+					    AND capture_terminal.resource_id = audit_events.resource_id
+					    AND capture_terminal.outcome IN ('committed', 'aborted')
+					    AND json_extract(capture_terminal.metadata_json, '$.intent_event_id') = audit_events.event_id
+				    )
+				  )`,
+			eventID,
+			service.now().Format(time.RFC3339Nano),
+			captureIntentAction,
+			resourceID,
+			string(metadata),
+			request.DownloadID,
+			request.DescriptorType,
+			captureIntentAction,
+			request.DownloadID,
+			request.DescriptorType,
+			captureTerminalAction,
+		)
+	}
+	if err != nil {
+		if contextErr := contextCheckpoint(ctx); contextErr != nil {
+			return captureIntent{}, contextErr
+		}
+		return captureIntent{}, fmt.Errorf("%w: persist capture intent", ErrStorage)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return captureIntent{}, fmt.Errorf("%w: inspect capture intent transition", ErrStorage)
+	}
+	if count != 1 {
+		return captureIntent{}, fmt.Errorf("%w: capture identity changed before publication", ErrDescriptorConflict)
+	}
+	if err := tx.Commit(); err != nil {
+		if contextErr := contextCheckpoint(ctx); contextErr != nil {
+			return captureIntent{}, contextErr
+		}
+		return captureIntent{}, fmt.Errorf("%w: commit capture intent", ErrStorage)
+	}
+	return intent, nil
+}
+
+func validateCaptureIntentMetadataForRow(intent captureIntent, row *storedRecord) error {
+	if row == nil {
+		return nil
+	}
+	if row.ID != intent.ResourceID || row.DownloadID.String != intent.Metadata.DownloadID || row.DescriptorType != intent.Metadata.DescriptorType || row.StoragePath != intent.Metadata.StoragePath {
+		return fmt.Errorf("%w: capture row identity changed", ErrDescriptorConflict)
+	}
+	if row.OriginalDigest.Valid && row.OriginalDigest.String != intent.Metadata.Digest {
+		return fmt.Errorf("%w: capture digest changed", ErrDescriptorConflict)
+	}
+	return nil
+}
+
+func (service *Service) finishCaptureIntent(ctx context.Context, intent captureIntent, outcome string) error {
+	if outcome != "committed" && outcome != "aborted" {
+		return fmt.Errorf("%w: invalid capture terminal outcome", ErrInvalidRequest)
+	}
+	if err := validateCaptureIntent(intent); err != nil {
+		return err
+	}
+	metadata, err := json.Marshal(struct {
+		Scope         string `json:"scope"`
+		IntentEventID string `json:"intent_event_id"`
+		Digest        string `json:"digest"`
+	}{Scope: "descriptor", IntentEventID: intent.EventID, Digest: intent.Metadata.Digest})
+	if err != nil {
+		return fmt.Errorf("%w: encode capture terminal", ErrStorage)
+	}
+	tx, err := service.db.BeginTx(ctx, nil)
+	if err != nil {
+		if contextErr := contextCheckpoint(ctx); contextErr != nil {
+			return contextErr
+		}
+		return fmt.Errorf("%w: begin capture terminal", ErrStorage)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var present int
+	queryErr := tx.QueryRowContext(ctx, `
+		SELECT 1
+		FROM audit_events
+		WHERE action = ?
+		  AND resource_kind = 'descriptor'
+		  AND resource_id = ?
+		  AND outcome IN ('committed', 'aborted')
+		  AND json_extract(metadata_json, '$.intent_event_id') = ?
+		LIMIT 1`, captureTerminalAction, intent.ResourceID, intent.EventID).Scan(&present)
+	if queryErr != nil && !errors.Is(queryErr, sql.ErrNoRows) {
+		if contextErr := contextCheckpoint(ctx); contextErr != nil {
+			return contextErr
+		}
+		return fmt.Errorf("%w: read capture terminal", ErrStorage)
+	}
+	if queryErr == nil {
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("%w: commit capture terminal read", ErrStorage)
+		}
+		return nil
+	}
+	eventID, err := newID()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events (event_id, occurred_at, actor, action, resource_kind, resource_id, outcome, metadata_json, redacted) VALUES (?, ?, 'unauthenticated', ?, 'descriptor', ?, ?, ?, 1)`, eventID, service.now().Format(time.RFC3339Nano), captureTerminalAction, intent.ResourceID, outcome, string(metadata)); err != nil {
+		if contextErr := contextCheckpoint(ctx); contextErr != nil {
+			return contextErr
+		}
+		return fmt.Errorf("%w: persist capture terminal", ErrStorage)
+	}
+	if err := tx.Commit(); err != nil {
+		if contextErr := contextCheckpoint(ctx); contextErr != nil {
+			return contextErr
+		}
+		return fmt.Errorf("%w: commit capture terminal", ErrStorage)
+	}
+	return nil
+}
+
+// observeCapturePath checks one operation-bound object without following a
+// replacement. The final object is always the deterministic descriptor path;
+// the stage path is only an opaque basename below the private object root.
+func (service *Service) observeCapturePath(ctx context.Context, intent captureIntent, stage bool) (bool, error) {
+	root := service.storageRoot
+	relative := intent.Metadata.StoragePath
+	if stage {
+		root = service.objectsRoot
+		relative = intent.Metadata.StagePath
+	}
+	file, info, err := openConstrainedFile(root, relative)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return true, fmt.Errorf("%w: inspect capture object: %v", ErrCaptureUncertain, err)
+	}
+	defer file.Close()
+	if info.Size() != intent.Metadata.Size {
+		return true, ErrDescriptorChanged
+	}
+	if intent.Metadata.ObjectIdentity != "" {
+		identity, ok := descriptorObjectIdentity(info)
+		if !ok || identity != intent.Metadata.ObjectIdentity {
+			return true, ErrDescriptorChanged
+		}
+	}
+	digest, err := digestOpenedFile(ctx, file, info, service.maxBytes)
+	if err != nil {
+		return true, err
+	}
+	if digest != intent.Metadata.Digest {
+		return true, ErrDescriptorChanged
+	}
+	return true, nil
+}
+
+// captureObjectPresent reports whether either the final object or its
+// operation-owned stage still exists. Any identity, digest or path ambiguity
+// is retained as an uncertainty rather than being treated as absence.
+func (service *Service) captureObjectPresent(ctx context.Context, intent captureIntent) (bool, error) {
+	present, err := service.observeCapturePath(ctx, intent, false)
+	if err != nil || present {
+		return present, err
+	}
+	return service.observeCapturePath(ctx, intent, true)
+}
+
+// publishPendingCaptureStage completes the only recovery window in which a
+// process can stop after persisting the capture intent but before publishing
+// the final object. The stage identity is checked from an opened descriptor,
+// the final link is no-replace, and the final bytes are read back before the
+// stage is removed. Any failure leaves the intent and operation-owned bytes
+// available for another reconciliation attempt.
+func (service *Service) publishPendingCaptureStage(ctx context.Context, intent captureIntent) error {
+	stageFile, stageInfo, err := openConstrainedFile(service.objectsRoot, intent.Metadata.StagePath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return ErrDescriptorChanged
+		}
+		return fmt.Errorf("%w: open pending capture stage: %v", ErrCaptureUncertain, err)
+	}
+	identity, ok := descriptorObjectIdentity(stageInfo)
+	if !ok || identity != intent.Metadata.ObjectIdentity {
+		_ = stageFile.Close()
+		return ErrDescriptorChanged
+	}
+	digest, err := digestOpenedFile(ctx, stageFile, stageInfo, service.maxBytes)
+	if err != nil {
+		_ = stageFile.Close()
+		return err
+	}
+	if digest != intent.Metadata.Digest || stageInfo.Size() != intent.Metadata.Size {
+		_ = stageFile.Close()
+		return ErrDescriptorChanged
+	}
+	if err := stageFile.Close(); err != nil {
+		return fmt.Errorf("%w: close pending capture stage: %v", ErrCaptureUncertain, err)
+	}
+
+	destination := filepath.Join(service.storageRoot, intent.Metadata.StoragePath)
+	if _, err := os.Lstat(destination); err == nil {
+		return ErrDescriptorConflict
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("%w: inspect pending capture destination", ErrCaptureUncertain)
+	}
+	stagePath := filepath.Join(service.objectsRoot, intent.Metadata.StagePath)
+	if err := os.Link(stagePath, destination); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return ErrDescriptorConflict
+		}
+		return fmt.Errorf("%w: publish pending capture stage: %v", ErrCaptureUncertain, err)
+	}
+	publishedFile, publishedInfo, err := openConstrainedFile(service.storageRoot, intent.Metadata.StoragePath)
+	if err != nil {
+		return fmt.Errorf("%w: open recovered capture object: %v", ErrCaptureUncertain, err)
+	}
+	publishedDigest, digestErr := digestOpenedFile(ctx, publishedFile, publishedInfo, service.maxBytes)
+	closeErr := publishedFile.Close()
+	if digestErr != nil || closeErr != nil || !os.SameFile(stageInfo, publishedInfo) || publishedInfo.Size() != intent.Metadata.Size || publishedDigest != intent.Metadata.Digest {
+		return fmt.Errorf("%w: verify recovered capture object", ErrCaptureUncertain)
+	}
+	if err := removeFileIfSame(stagePath, stageInfo); err != nil {
+		return fmt.Errorf("%w: clean recovered capture stage: %v", ErrCaptureUncertain, err)
+	}
+	if err := syncDirectoryPath(service.objectsRoot); err != nil {
+		return fmt.Errorf("%w: sync recovered capture stage: %v", ErrCaptureUncertain, err)
+	}
+	return nil
+}
+
+func (service *Service) cleanupPendingCaptureStage(ctx context.Context, intent captureIntent) error {
+	stageFile, stageInfo, err := openConstrainedFile(service.objectsRoot, intent.Metadata.StagePath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("%w: inspect pending capture stage: %v", ErrCaptureUncertain, err)
+	}
+	identity, ok := descriptorObjectIdentity(stageInfo)
+	if !ok || identity != intent.Metadata.ObjectIdentity {
+		_ = stageFile.Close()
+		return ErrDescriptorChanged
+	}
+	digest, err := digestOpenedFile(ctx, stageFile, stageInfo, service.maxBytes)
+	if err != nil {
+		_ = stageFile.Close()
+		return err
+	}
+	closeErr := stageFile.Close()
+	if closeErr != nil || digest != intent.Metadata.Digest || stageInfo.Size() != intent.Metadata.Size {
+		return fmt.Errorf("%w: verify pending capture stage", ErrCaptureUncertain)
+	}
+	if err := removeFileIfSame(filepath.Join(service.objectsRoot, intent.Metadata.StagePath), stageInfo); err != nil {
+		return fmt.Errorf("%w: remove pending capture stage: %v", ErrCaptureUncertain, err)
+	}
+	return syncDirectoryPath(service.objectsRoot)
+}
+
+func (service *Service) reconcileCaptureFailure(ctx context.Context, intent captureIntent, operationErr error) error {
+	if intent.EventID == "" {
+		return operationErr
+	}
+	present, observeErr := service.captureObjectPresent(ctx, intent)
+	if present || observeErr != nil {
+		if observeErr != nil {
+			return fmt.Errorf("%w: %v; recovery: %v", ErrCaptureUncertain, operationErr, observeErr)
+		}
+		return fmt.Errorf("%w: %v; operation-bound object remains", ErrCaptureUncertain, operationErr)
+	}
+	if err := service.finishCaptureIntent(ctx, intent, "aborted"); err != nil {
+		return fmt.Errorf("%w: %v; close capture intent: %v", ErrCaptureUncertain, operationErr, err)
+	}
+	return operationErr
+}
+
+func (service *Service) resolvePendingCapture(ctx context.Context, request CaptureRequest, data []byte, source string, row *storedRecord, intent captureIntent) (Record, bool, error) {
+	digest := digestBytes(data)
+	if err := intent.matches(request, digest, source, int64(len(data))); err != nil {
+		return Record{}, false, err
+	}
+	if err := validateCaptureIntentMetadataForRow(intent, row); err != nil {
+		return Record{}, false, err
+	}
+	if row != nil && row.DeletedAt.Valid {
+		return Record{}, false, ErrDescriptorDeleted
+	}
+	present, err := service.observeCapturePath(ctx, intent, false)
+	if err != nil {
+		return Record{}, false, err
+	}
+	if !present {
+		stagePresent, stageErr := service.observeCapturePath(ctx, intent, true)
+		if stageErr != nil {
+			return Record{}, false, stageErr
+		}
+		if stagePresent {
+			if err := service.publishPendingCaptureStage(ctx, intent); err != nil {
+				return Record{}, false, err
+			}
+			present, err = service.observeCapturePath(ctx, intent, false)
+			if err != nil {
+				return Record{}, false, err
+			}
+			if !present {
+				return Record{}, false, fmt.Errorf("%w: recovered capture object is absent", ErrCaptureUncertain)
+			}
+		} else {
+			if err := service.finishCaptureIntent(ctx, intent, "aborted"); err != nil {
+				return Record{}, false, fmt.Errorf("%w: close missing capture intent: %v", ErrCaptureUncertain, err)
+			}
+			return Record{}, true, nil
+		}
+	}
+
+	if row != nil && row.OriginalDigest.Valid && row.OriginalDigest.String != digest {
+		return Record{}, false, ErrDescriptorConflict
+	}
+	if stagePresent, stageErr := service.observeCapturePath(ctx, intent, true); stageErr != nil {
+		return Record{}, false, stageErr
+	} else if stagePresent {
+		if stageErr := service.cleanupPendingCaptureStage(ctx, intent); stageErr != nil {
+			return Record{}, false, stageErr
+		}
+	}
+	if row == nil {
+		adopted := storedRecord{
+			ID:             intent.ResourceID,
+			DownloadID:     sql.NullString{String: intent.Metadata.DownloadID, Valid: true},
+			DescriptorType: intent.Metadata.DescriptorType,
+			StoragePath:    intent.Metadata.StoragePath,
+			OriginalDigest: sql.NullString{String: intent.Metadata.Digest, Valid: true},
+			CaptureSource:  intent.Metadata.CaptureSource,
+			CapturedAt:     service.now().Format(time.RFC3339Nano),
+			Retention:      string(RetentionRetain),
+		}
+		if err := service.insert(ctx, adopted); err != nil {
+			return Record{}, false, fmt.Errorf("%w: adopt captured descriptor: %v", ErrCaptureUncertain, err)
+		}
+		row = &adopted
+	} else if !row.OriginalDigest.Valid {
+		if err := service.updateCaptured(ctx, row.ID, intent.Metadata.StoragePath, digest, source, service.now()); err != nil {
+			return Record{}, false, fmt.Errorf("%w: adopt captured descriptor: %v", ErrCaptureUncertain, err)
+		}
+		updated, err := service.getStored(ctx, row.ID)
+		if err != nil {
+			return Record{}, false, err
+		}
+		row = &updated
+	}
+	if err := service.finishCaptureIntent(ctx, intent, "committed"); err != nil {
+		return Record{}, false, fmt.Errorf("%w: capture metadata committed but recovery journal is incomplete: %v", ErrCaptureUncertain, err)
+	}
+	record, err := service.recordForRow(ctx, *row)
+	return record, false, err
+}
+
+func (service *Service) reconcileCaptureBeforeDelete(ctx context.Context, row storedRecord, intent captureIntent) error {
+	if err := validateCaptureIntentMetadataForRow(intent, &row); err != nil {
+		return err
+	}
+	present, err := service.observeCapturePath(ctx, intent, false)
+	if err != nil {
+		return err
+	}
+	if row.OriginalDigest.Valid {
+		if row.OriginalDigest.String != intent.Metadata.Digest {
+			return ErrDescriptorChanged
+		}
+		if !present {
+			stagePresent, stageErr := service.observeCapturePath(ctx, intent, true)
+			if stageErr != nil {
+				return stageErr
+			}
+			if stagePresent {
+				return fmt.Errorf("%w: descriptor has a bound capture stage", ErrCaptureUncertain)
+			}
+			if err := service.finishCaptureIntent(ctx, intent, "aborted"); err != nil {
+				return fmt.Errorf("%w: close missing capture intent before delete: %v", ErrCaptureUncertain, err)
+			}
+			return nil
+		}
+		if stagePresent, stageErr := service.observeCapturePath(ctx, intent, true); stageErr != nil {
+			return stageErr
+		} else if stagePresent {
+			if stageErr := service.cleanupPendingCaptureStage(ctx, intent); stageErr != nil {
+				return stageErr
+			}
+		}
+		if err := service.finishCaptureIntent(ctx, intent, "committed"); err != nil {
+			return fmt.Errorf("%w: complete capture intent before delete: %v", ErrCaptureUncertain, err)
+		}
+		return nil
+	}
+	if present {
+		return fmt.Errorf("%w: unavailable descriptor has a bound capture object", ErrCaptureUncertain)
+	}
+	stagePresent, stageErr := service.observeCapturePath(ctx, intent, true)
+	if stageErr != nil {
+		return stageErr
+	}
+	if stagePresent {
+		return fmt.Errorf("%w: unavailable descriptor has a bound capture stage", ErrCaptureUncertain)
+	}
+	return service.finishCaptureIntent(ctx, intent, "aborted")
 }
 
 // pendingDeleteIntent returns whether an append-only, redacted deletion
@@ -1033,11 +1922,28 @@ func (service *Service) updateUnavailable(ctx context.Context, id, storagePath, 
 		  AND NOT EXISTS (
 			  SELECT 1
 			  FROM audit_events
-			  WHERE action = ?
-			    AND resource_kind = 'descriptor'
-			    AND resource_id = descriptors.id
-			    AND outcome = 'pending'
-		  )`, storagePath, source, reason, id, deleteIntentAction)
+				  WHERE action = ?
+				    AND resource_kind = 'descriptor'
+				    AND resource_id = descriptors.id
+				    AND outcome = 'pending'
+				  )
+			  AND NOT EXISTS (
+				  SELECT 1
+				  FROM audit_events AS capture_intent
+				  WHERE capture_intent.action = ?
+				    AND capture_intent.resource_kind = 'descriptor'
+				    AND capture_intent.resource_id = descriptors.id
+				    AND capture_intent.outcome = 'pending'
+				    AND NOT EXISTS (
+					  SELECT 1
+					  FROM audit_events AS capture_terminal
+					  WHERE capture_terminal.action = ?
+					    AND capture_terminal.resource_kind = 'descriptor'
+					    AND capture_terminal.resource_id = capture_intent.resource_id
+					    AND capture_terminal.outcome IN ('committed', 'aborted')
+					    AND json_extract(capture_terminal.metadata_json, '$.intent_event_id') = capture_intent.event_id
+				    )
+				  )`, storagePath, source, reason, id, deleteIntentAction, captureIntentAction, captureTerminalAction)
 	if err != nil {
 		if contextErr := contextCheckpoint(ctx); contextErr != nil {
 			return contextErr
@@ -1552,6 +2458,10 @@ func removeFileIfSame(name string, expected fs.FileInfo) error {
 // callers. They let synthetic tests inject a mutation at each safety boundary.
 var afterSourceRead = func(*os.File) {}
 var beforeCaptureMaterialize = func(string) {}
+var beforeCaptureMetadata = func(string) error { return nil }
+var removeCapturedObject = func(service *Service, storagePath, id, expectedIdentity string) error {
+	return service.removeGeneratedObject(storagePath, id, expectedIdentity)
+}
 var beforeDeleteIntent = func(string) {}
 var afterDeleteIntent = func(string) {}
 var beforeDeleteDescriptor = func(string) {}

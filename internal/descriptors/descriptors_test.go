@@ -338,6 +338,228 @@ func TestRecordUnavailablePreservesHonestStateAndCanBeReplaced(t *testing.T) {
 	}
 }
 
+func TestCaptureIntentReconcilesMetadataAndCleanupFailureAfterRestart(t *testing.T) {
+	fixture := newDescriptorFixture(t)
+	ctx := context.Background()
+	request := captureRequest(fixture, "capture-recovery")
+	unavailable, err := fixture.service.RecordUnavailable(ctx, request, "nzbget.history", "not_exported")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("descriptor bytes survive a failed metadata and cleanup transition")
+
+	originalBeforeMetadata := beforeCaptureMetadata
+	originalRemoveObject := removeCapturedObject
+	beforeCaptureMetadata = func(id string) error {
+		if id != unavailable.ID {
+			t.Errorf("metadata failure id = %q, want %q", id, unavailable.ID)
+		}
+		return ErrStorage
+	}
+	removeCapturedObject = func(_ *Service, _, id, _ string) error {
+		if id != unavailable.ID {
+			t.Errorf("cleanup failure id = %q, want %q", id, unavailable.ID)
+		}
+		return errors.New("synthetic cleanup unavailable")
+	}
+	t.Cleanup(func() {
+		beforeCaptureMetadata = originalBeforeMetadata
+		removeCapturedObject = originalRemoveObject
+	})
+
+	if _, err := fixture.service.CaptureExport(ctx, request, syntheticExport(data)); !errors.Is(err, ErrCaptureUncertain) {
+		t.Fatalf("failed capture error = %v, want uncertain", err)
+	}
+	objectPathValue := filepath.Join(fixture.root, objectPath(unavailable.ID))
+	retained, err := os.ReadFile(objectPathValue)
+	if err != nil {
+		t.Fatalf("orphaned operation object read = %v", err)
+	}
+	if !bytes.Equal(retained, data) {
+		t.Fatalf("retained operation object = %q, want %q", retained, data)
+	}
+	var pending int
+	if err := fixture.store.DB().QueryRow(`SELECT count(*) FROM audit_events WHERE action = ? AND resource_id = ? AND outcome = 'pending'`, captureIntentAction, unavailable.ID).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 1 {
+		t.Fatalf("pending capture intents = %d, want 1", pending)
+	}
+
+	// A fresh service must not let acknowledged deletion discard the bound
+	// object. It must first surface the unresolved capture identity.
+	beforeCaptureMetadata = originalBeforeMetadata
+	removeCapturedObject = originalRemoveObject
+	if _, err := fixture.service.Delete(ctx, DeleteRequest{DescriptorID: unavailable.ID, IrreversibleAcknowledged: true}); !errors.Is(err, ErrCaptureUncertain) {
+		t.Fatalf("delete during pending capture = %v, want uncertain", err)
+	}
+
+	if err := fixture.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := storage.Open(fixture.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	fresh, err := New(reopened.DB(), Options{
+		StorageRoot: fixture.root,
+		MountedRoot: fixture.mounted,
+		Clock:       fixture.service.clock,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := fresh.CaptureExport(ctx, request, syntheticExport(data))
+	if err != nil {
+		t.Fatalf("fresh capture reconciliation = %v", err)
+	}
+	if recovered.ID != unavailable.ID || !recovered.Available || recovered.Size != int64(len(data)) {
+		t.Fatalf("recovered capture = %#v", recovered)
+	}
+	content, err := fresh.Content(ctx, recovered.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(content, data) {
+		t.Fatalf("recovered content = %q, want %q", content, data)
+	}
+	var committed, stillPending int
+	if err := reopened.DB().QueryRow(`SELECT count(*) FROM audit_events WHERE action = ? AND resource_id = ? AND outcome = 'committed'`, captureTerminalAction, unavailable.ID).Scan(&committed); err != nil {
+		t.Fatal(err)
+	}
+	if err := reopened.DB().QueryRow(`SELECT count(*) FROM audit_events WHERE action = ? AND resource_id = ? AND outcome = 'pending'`, captureIntentAction, unavailable.ID).Scan(&stillPending); err != nil {
+		t.Fatal(err)
+	}
+	if committed != 1 || stillPending != 1 {
+		t.Fatalf("capture audit recovery = committed %d pending %d, want committed 1 and durable intent 1", committed, stillPending)
+	}
+	deleted, err := fresh.Delete(ctx, DeleteRequest{DescriptorID: recovered.ID, IrreversibleAcknowledged: true})
+	if err != nil {
+		t.Fatalf("delete after capture recovery = %v", err)
+	}
+	if deleted.Retention != RetentionDeleted || deleted.Available {
+		t.Fatalf("deleted recovered descriptor = %#v", deleted)
+	}
+	if _, err := os.Stat(objectPathValue); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("recovered object after delete = %v, want absent", err)
+	}
+}
+
+func TestCaptureIntentRecoversNewDescriptorAfterMetadataFailure(t *testing.T) {
+	fixture := newDescriptorFixture(t)
+	ctx := context.Background()
+	request := captureRequest(fixture, "capture-new-recovery")
+	data := []byte("new descriptor bytes survive metadata publication failure")
+
+	originalBeforeMetadata := beforeCaptureMetadata
+	originalRemoveObject := removeCapturedObject
+	beforeCaptureMetadata = func(string) error { return ErrStorage }
+	removeCapturedObject = func(_ *Service, _, _ string, _ string) error {
+		return errors.New("synthetic cleanup unavailable")
+	}
+	t.Cleanup(func() {
+		beforeCaptureMetadata = originalBeforeMetadata
+		removeCapturedObject = originalRemoveObject
+	})
+
+	if _, err := fixture.service.CaptureExport(ctx, request, syntheticExport(data)); !errors.Is(err, ErrCaptureUncertain) {
+		t.Fatalf("failed new capture error = %v, want uncertain", err)
+	}
+	var id, metadata string
+	if err := fixture.store.DB().QueryRow(`SELECT resource_id, metadata_json FROM audit_events WHERE action = ? AND outcome = 'pending' ORDER BY id DESC LIMIT 1`, captureIntentAction).Scan(&id, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if id == "" || bytes.Contains([]byte(metadata), data) || bytes.Contains([]byte(metadata), []byte(fixture.root)) {
+		t.Fatalf("capture intent leaked identity or source bytes: id=%q metadata=%q", id, metadata)
+	}
+
+	beforeCaptureMetadata = originalBeforeMetadata
+	removeCapturedObject = originalRemoveObject
+	if err := fixture.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := storage.Open(fixture.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	fresh, err := New(reopened.DB(), Options{
+		StorageRoot: fixture.root,
+		MountedRoot: fixture.mounted,
+		Clock:       fixture.service.clock,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := fresh.CaptureExport(ctx, request, syntheticExport(data))
+	if err != nil {
+		t.Fatalf("fresh new capture reconciliation = %v", err)
+	}
+	if recovered.ID != id || !recovered.Available || recovered.Size != int64(len(data)) {
+		t.Fatalf("recovered new capture = %#v, want id %q", recovered, id)
+	}
+	content, err := fresh.Content(ctx, recovered.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(content, data) {
+		t.Fatalf("recovered new content = %q, want %q", content, data)
+	}
+}
+
+func TestCaptureIntentRecoversStageBeforeFinalPublication(t *testing.T) {
+	fixture := newDescriptorFixture(t)
+	ctx := context.Background()
+	request := captureRequest(fixture, "capture-stage-recovery")
+	data := []byte("durably staged descriptor bytes")
+	id, err := newID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stageFile, stagePath, stageInfo, err := createPrivateStage(fixture.service.objectsRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stageFile.Write(data); err != nil {
+		_ = stageFile.Close()
+		t.Fatal(err)
+	}
+	if err := stageFile.Sync(); err != nil {
+		_ = stageFile.Close()
+		t.Fatal(err)
+	}
+	if err := stageFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+	intent, err := fixture.service.ensureCaptureIntent(ctx, id, nil, request, digestBytes(data), int64(len(data)), "qbittorrent.export", filepath.Base(stagePath), stageInfo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if intent.EventID == "" {
+		t.Fatal("stage capture intent has no event identity")
+	}
+
+	fresh, err := New(fixture.store.DB(), Options{
+		StorageRoot: fixture.root,
+		MountedRoot: fixture.mounted,
+		Clock:       fixture.service.clock,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := fresh.CaptureExport(ctx, request, syntheticExport(data))
+	if err != nil {
+		t.Fatalf("stage recovery capture = %v", err)
+	}
+	if recovered.ID != id || !recovered.Available || recovered.Size != int64(len(data)) {
+		t.Fatalf("stage recovery record = %#v", recovered)
+	}
+	if _, err := os.Stat(stagePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stage after recovery = %v, want absent", err)
+	}
+}
+
 func TestDeleteRequiresAcknowledgementRetainsAuditMetadataAndIsIdempotent(t *testing.T) {
 	fixture := newDescriptorFixture(t)
 	ctx := context.Background()
