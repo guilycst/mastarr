@@ -16,7 +16,7 @@
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
   "activeImplementationTasks": [
-    "W-03"
+    "W-02"
   ],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
@@ -2913,7 +2913,7 @@
       "nextAction": "Implement W-01 correction round 1 from dca41abdd99361cee7de0c7dcc10892323c773f2, addressing R1-R5, then review the correction independently."
     },
     "W-02": {
-      "status": "done",
+      "status": "in_progress",
       "owner": "/root/x05_implementer",
       "baseSha": "16ad883172e4ebac45ea6f67309bc111708fa405",
       "integratedSha": "ff23e1b939f04c1136cba8134d3c9ae505094dba",
@@ -2957,7 +2957,8 @@
         "e1f125a6dbc135fd3bfec65dd27c42952e3e1afb W-02 correction round six handoff records deterministic dual-marker outage recovery, focused/race/vet/root/module/API/Vacuum/lint/architecture/planning/guardrail checks, and Linux amd64/arm64 builds; restart durability remains through durable markers/startup recovery and G-01 remains open.",
         "W-02 correction round six review dispatch will use /root/x05_reviewer against source ff23e1b939f04c1136cba8134d3c9ae505094dba.",
         "3d29a776397983f5757b92a8615d1901cf779189 W-02 correction round seven independent review approved the final product tree; dual-marker outage, fresh-executor fallback, exact fencing, and restart boundary all pass.",
-        "02c0b2113d4327119eb55fe419915ea1c99e6093 integrated W-02 approval receipt. G-01 remains open; no upstream write capability was enabled."
+        "02c0b2113d4327119eb55fe419915ea1c99e6093 integrated W-02 approval receipt. G-01 remains open; no upstream write capability was enabled.",
+        "Cross-lane finding from W-03 review receipt d11938398a0a7b2dbd4cc530212e35c751a73fb8, integrated as d386489beb52cbb247d6326f34d201e2c596cd43: the executor ignores a DispatchResult whenever dispatch also returns an error and journals all effects unknown with empty evidence. W-02 correction round eight must preserve handler-provided effects, certainty and evidence before returning the error."
       ],
       "review": {
         "status": "approved",
@@ -3010,28 +3011,30 @@
         ],
         "reviewer": "/root/x05_reviewer",
         "reviewCommit": "fc67e8b5ea2ade046bfca38fd68f87690a552b99",
-        "correctionRound": 7,
+        "correctionRound": 8,
         "correctionOwner": "/root/x05_implementer",
-        "correctionBaseSha": "ff23e1b939f04c1136cba8134d3c9ae505094dba",
-        "correctionReviewPath": "docs/execution/handoffs/W-02-review-round7.md",
+        "correctionBaseSha": "d386489beb52cbb247d6326f34d201e2c596cd43",
+        "correctionReviewPath": "docs/execution/handoffs/W-02-review-round8.md",
         "correctionReviewer": "/root/x05_reviewer",
         "correctionCheckout": "shared main",
-        "correctionImplementationCommit": "ff23e1b939f04c1136cba8134d3c9ae505094dba",
-        "correctionHandoffCommit": "e1f125a6dbc135fd3bfec65dd27c42952e3e1afb",
-        "correctionDispatchCommit": "3b285d15defaedaa02629e542710d1c69cf648f0",
-        "correctionStatus": "approved",
-        "correctionProductCommits": [
-          "ff23e1b939f04c1136cba8134d3c9ae505094dba"
-        ],
-        "correctionReviewSourceCommit": "ff23e1b939f04c1136cba8134d3c9ae505094dba",
+        "correctionStatus": "implementation",
         "reviewerReroute": {
           "previousReviewer": "/root/d02_reviewer",
           "status": "rerouted_before_dispatch",
           "reason": "previously selected reviewer was unavailable after two platform-filter errors on the F-05 review lane",
           "newReviewer": "/root/x05_reviewer"
         },
-        "correctionReviewCommit": "3d29a776397983f5757b92a8615d1901cf779189",
-        "correctionReviewIntegrationCommit": "02c0b2113d4327119eb55fe419915ea1c99e6093"
+        "status": "implementation",
+        "correctionHandoffPath": "docs/execution/handoffs/W-02-correction-round8.md",
+        "correctionReason": "W-03 review R2b found DispatchResult effects are discarded on non-nil handler errors; preserve partial effect certainty and evidence in the durable attempt journal.",
+        "priorCorrectionRound": 7,
+        "priorCorrectionImplementationCommit": "ff23e1b939f04c1136cba8134d3c9ae505094dba",
+        "priorCorrectionHandoffCommit": "e1f125a6dbc135fd3bfec65dd27c42952e3e1afb",
+        "priorCorrectionReviewCommit": "3d29a776397983f5757b92a8615d1901cf779189",
+        "priorCorrectionReviewIntegrationCommit": "02c0b2113d4327119eb55fe419915ea1c99e6093",
+        "priorCrossLaneFindingReceipt": "d11938398a0a7b2dbd4cc530212e35c751a73fb8",
+        "priorCrossLaneFindingIntegration": "d386489beb52cbb247d6326f34d201e2c596cd43",
+        "priorCrossLaneFindingSourceTask": "W-03"
       },
       "reviewHistory": [
         {
@@ -3098,7 +3101,7 @@
       "reviewIntegrationCommit": "02c0b2113d4327119eb55fe419915ea1c99e6093"
     },
     "W-03": {
-      "status": "in_review",
+      "status": "in_progress",
       "owner": "/root/x05_implementer",
       "baseSha": "a040db83627735e62fb90d8db8b2c06198eedef4",
       "integratedSha": null,
@@ -3111,7 +3114,8 @@
         "Focused/race/vet, root internal tests, generation/Vacuum, architecture/lint/planning, full offline guardrails, all module verification and Linux amd64/arm64 CGO-free builds passed.",
         "577a15a61947ac44ec7621d381b63a4a6cb87a1a independent review round one requests four P1 corrections against fc2bab90bd3db21c6801842babee6b473e2742da; 3336ff668d1e47daee8407d3c8067fe125b06964 integrates the receipt. Six deterministic race regressions failed 10/10: partial Arr/filesystem effects were relabeled pending and SafeToRetry, affected filesystem effects were discarded after a port call, native rename crossed source and destination roots, and a filesystem handler was bound to one client while omitting client reservations.",
         "0c120a1bf5e377510d332ebdadac61e40f77e652 W-03 correction round one fixes all four P1 findings: per-effect certainty is preserved for partial Arr/filesystem materialization, affected filesystem effects survive returned errors, native rename rejects cross-root requests, and filesystem handlers resolve action-specific linked clients with shared client reservations. Focused six-scenario regressions, race, vet, module verification, full offline guardrails and cross-builds passed.",
-        "735e87f1de11e592cd8b3bea485e2f92d5b3ac86 records the correction handoff, exact checks and remaining F-05/G-01 capability gates."
+        "735e87f1de11e592cd8b3bea485e2f92d5b3ac86 records the correction handoff, exact checks and remaining F-05/G-01 capability gates.",
+        "W-03 round-two R2b is an executor-owned cross-lane blocker: W-02 discards DispatchResult whenever a handler returns an error, so corrected partial effect evidence cannot become durable. W-02 correction round eight is dispatched first; W-03 R2a remains to be rechecked afterward."
       ],
       "review": {
         "status": "changes_requested",
@@ -3159,7 +3163,7 @@
         "reviewPath": "docs/execution/handoffs/W-03-review-round1.md",
         "handoffPath": "docs/execution/handoffs/W-03.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "review_pending",
+        "status": "waiting_dependency",
         "dependencyCommits": {
           "W-01": "6af605497e62ac182d0d4d4e222cac81aa4232e1",
           "W-02": "ff23e1b939f04c1136cba8134d3c9ae505094dba",
@@ -3178,7 +3182,7 @@
         "implementationCommit": "fc2bab90bd3db21c6801842babee6b473e2742da",
         "handoffCommit": "19b13f86411c74ae2bec249e0481de8ebcf16187",
         "reviewSourceCommit": "fc2bab90bd3db21c6801842babee6b473e2742da",
-        "correctionStatus": "review_pending",
+        "correctionStatus": "waiting_dependency",
         "reviewCommit": null,
         "reviewIntegrationCommit": null,
         "correctionRound": 1,
@@ -3194,7 +3198,9 @@
         "correctionProductCommits": [
           "0c120a1bf5e377510d332ebdadac61e40f77e652"
         ],
-        "correctionReviewSourceCommit": "0c120a1bf5e377510d332ebdadac61e40f77e652"
+        "correctionReviewSourceCommit": "0c120a1bf5e377510d332ebdadac61e40f77e652",
+        "waitingOn": "W-02 correction round 8",
+        "waitingReason": "internal/execution must journal the DispatchResult effects and certainty before W-03 can complete its partial-effect contract."
       },
       "reviewHistory": [
         {
@@ -5159,7 +5165,7 @@
       ]
     }
   },
-  "nextAction": "W-03 correction round one is ready for independent review at 0c120a1bf5e377510d332ebdadac61e40f77e652; handoff 735e87f1de11e592cd8b3bea485e2f92d5b3ac86. F-05 Linux organize mutations remain capability-blocked and G-01 keeps Arr writes blocked.",
+  "nextAction": "W-02 correction round eight is in implementation for durable DispatchResult effect/evidence journaling; W-03 waits on that fix before rechecking R2a/R2b, F-05 remains capability-blocked, and G-01 keeps Arr writes blocked.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
