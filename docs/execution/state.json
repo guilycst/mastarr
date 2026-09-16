@@ -4050,18 +4050,19 @@
       "evidence": [
         "dispatched after X-15, X-16 and X-03 approvals and C-06 guardrail approval; owns only the Arr read adapter and synthetic fixture paths.",
         "Nested Sonarr/Radarr modules are present in the public repository but have no release tags; the worker must keep current adapters and record a bootstrap blocker if a released pseudo-version cannot be consumed without a local replace.",
-        "3d744e835290d372ccdecca37a4a19660e3239b8 independent review found P1 identity-safety failures: native Sonarr file observations accept contradictory same-ID path/size and different IDs at one path; native catalog can claim complete for the collision; malformed Radarr duplicate-ID JSON falls through the broad legacy fallback and returns a last-wins complete record."
+        "3d744e835290d372ccdecca37a4a19660e3239b8 independent review found P1 identity-safety failures: native Sonarr file observations accept contradictory same-ID path/size and different IDs at one path; native catalog can claim complete for the collision; malformed Radarr duplicate-ID JSON falls through the broad legacy fallback and returns a last-wins complete record.",
+        "a8511095a181d029861463d74fcc94aee8331652 independent review round two closes the collision and duplicate-key findings but finds P1 preview fallback bypass: one unrelated legacy rejection alias can authorize decoding the whole mixed response, allowing a candidate missing episode.seriesId to become an accepted file; reproduced three times under race with two GETs and no error."
       ],
       "review": {
         "status": "changes_requested",
         "decision": "changes_requested",
         "reviewer": "/root/x05_reviewer",
-        "commit": "3d744e835290d372ccdecca37a4a19660e3239b8",
+        "commit": "a8511095a181d029861463d74fcc94aee8331652",
         "findings": [
-          "P1 native Sonarr file identity/path/size contradictions are accepted and a same-path different-ID collision can be reported complete",
-          "P1 malformed native Radarr duplicate-ID response is re-decoded by broad legacy fallback and can produce a false complete record"
+          "R1 closed: native file identity collisions and strict duplicate-key fallback bypass now reject or remain incomplete",
+          "P1 legacy preview shape gate accepts a mixed response when an unrelated rejection alias is present; missing nested episode seriesId can become an accepted file"
         ],
-        "round": 1
+        "round": 2
       },
       "dispatch": {
         "assignedAt": "2026-09-15",
@@ -4098,14 +4099,14 @@
           "X-16": "1ef0c07af604e7e63d88bc68955c8097479f7e82",
           "C-06": "ba746f38f7473a019a539f16267e07ac9e230407"
         },
-        "reviewCommit": "3d744e835290d372ccdecca37a4a19660e3239b8",
-        "reviewIntegrationCommit": "8355b140ea9f8903ad594d0dab043da232b45fc8",
-        "reviewRound": 1,
-        "correctionRound": 1,
+        "reviewCommit": "a8511095a181d029861463d74fcc94aee8331652",
+        "reviewIntegrationCommit": "b06671b997039c6fe1b42c53f5a7378080e0e5b5",
+        "reviewRound": 2,
+        "correctionRound": 2,
         "correctionOwner": "/root/x05_implementer",
-        "correctionBaseSha": "a03066b4923cb51d4797bdd40eaedc3dad9305b3",
-        "correctionReviewPath": "docs/execution/handoffs/X-19-review-round2.md",
-        "correctionHandoffPath": "docs/execution/handoffs/X-19-correction-round1.md",
+        "correctionBaseSha": "4384a873d54df46b6d0f996a3bc03f6a2bde2edd",
+        "correctionReviewPath": "docs/execution/handoffs/X-19-review-round3.md",
+        "correctionHandoffPath": "docs/execution/handoffs/X-19-correction-round2.md",
         "correctionReviewer": "/root/x05_reviewer",
         "correctionStatus": "changes_requested"
       },
@@ -4118,6 +4119,15 @@
           "sourceCommit": "a03066b4923cb51d4797bdd40eaedc3dad9305b3",
           "receipt": "docs/execution/handoffs/X-19-review-round1.md",
           "integratedCommit": "8355b140ea9f8903ad594d0dab043da232b45fc8"
+        },
+        {
+          "round": 2,
+          "reviewer": "/root/x05_reviewer",
+          "commit": "a8511095a181d029861463d74fcc94aee8331652",
+          "status": "changes_requested",
+          "sourceCommit": "4384a873d54df46b6d0f996a3bc03f6a2bde2edd",
+          "receipt": "docs/execution/handoffs/X-19-review-round2.md",
+          "integratedCommit": "b06671b997039c6fe1b42c53f5a7378080e0e5b5"
         }
       ]
     },
@@ -4288,7 +4298,7 @@
       ]
     }
   },
-  "nextAction": "Dispatch X-19 Arr read adapter migration from the approved C-06 checkpoint, recording the unpublished nested-module bootstrap blocker if root imports cannot use a released client version.",
+  "nextAction": "Run X-19 correction round two from product 4384a873d54df46b6d0f996a3bc03f6a2bde2edd: make preview fallback row-scoped and reject missing nested episode identity; record exact handoff, then request independent round-three review.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
