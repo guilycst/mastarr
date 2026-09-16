@@ -3098,7 +3098,7 @@
       "reviewIntegrationCommit": "02c0b2113d4327119eb55fe419915ea1c99e6093"
     },
     "W-03": {
-      "status": "in_progress",
+      "status": "in_review",
       "owner": "/root/x05_implementer",
       "baseSha": "a040db83627735e62fb90d8db8b2c06198eedef4",
       "integratedSha": null,
@@ -3109,7 +3109,9 @@
         "fc2bab90bd3db21c6801842babee6b473e2742da W-03 product implements typed Arr, filesystem, client, descriptor and Jellyfin refresh handlers; 19b13f86411c74ae2bec249e0481de8ebcf16187 records the handoff and full checks.",
         "Handlers use bounded intents, observe-before-write, capability and linked-client gates, idempotency, cancellation/deadline handling, per-effect evidence and native-client routing. F-05 organize writes remain fail-closed, G-01 keeps Arr registration/import disabled, and planning imports require an explicit preview revision envelope.",
         "Focused/race/vet, root internal tests, generation/Vacuum, architecture/lint/planning, full offline guardrails, all module verification and Linux amd64/arm64 CGO-free builds passed.",
-        "577a15a61947ac44ec7621d381b63a4a6cb87a1a independent review round one requests four P1 corrections against fc2bab90bd3db21c6801842babee6b473e2742da; 3336ff668d1e47daee8407d3c8067fe125b06964 integrates the receipt. Six deterministic race regressions failed 10/10: partial Arr/filesystem effects were relabeled pending and SafeToRetry, affected filesystem effects were discarded after a port call, native rename crossed source and destination roots, and a filesystem handler was bound to one client while omitting client reservations."
+        "577a15a61947ac44ec7621d381b63a4a6cb87a1a independent review round one requests four P1 corrections against fc2bab90bd3db21c6801842babee6b473e2742da; 3336ff668d1e47daee8407d3c8067fe125b06964 integrates the receipt. Six deterministic race regressions failed 10/10: partial Arr/filesystem effects were relabeled pending and SafeToRetry, affected filesystem effects were discarded after a port call, native rename crossed source and destination roots, and a filesystem handler was bound to one client while omitting client reservations.",
+        "0c120a1bf5e377510d332ebdadac61e40f77e652 W-03 correction round one fixes all four P1 findings: per-effect certainty is preserved for partial Arr/filesystem materialization, affected filesystem effects survive returned errors, native rename rejects cross-root requests, and filesystem handlers resolve action-specific linked clients with shared client reservations. Focused six-scenario regressions, race, vet, module verification, full offline guardrails and cross-builds passed.",
+        "735e87f1de11e592cd8b3bea485e2f92d5b3ac86 records the correction handoff, exact checks and remaining F-05/G-01 capability gates."
       ],
       "review": {
         "status": "changes_requested",
@@ -3157,7 +3159,7 @@
         "reviewPath": "docs/execution/handoffs/W-03-review-round1.md",
         "handoffPath": "docs/execution/handoffs/W-03.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "implementation",
+        "status": "review_pending",
         "dependencyCommits": {
           "W-01": "6af605497e62ac182d0d4d4e222cac81aa4232e1",
           "W-02": "ff23e1b939f04c1136cba8134d3c9ae505094dba",
@@ -3176,7 +3178,7 @@
         "implementationCommit": "fc2bab90bd3db21c6801842babee6b473e2742da",
         "handoffCommit": "19b13f86411c74ae2bec249e0481de8ebcf16187",
         "reviewSourceCommit": "fc2bab90bd3db21c6801842babee6b473e2742da",
-        "correctionStatus": "implementation",
+        "correctionStatus": "review_pending",
         "reviewCommit": null,
         "reviewIntegrationCommit": null,
         "correctionRound": 1,
@@ -3186,7 +3188,13 @@
         "correctionHandoffPath": "docs/execution/handoffs/W-03-correction-round1.md",
         "correctionReviewer": "/root/x05_reviewer",
         "priorReviewCommit": "577a15a61947ac44ec7621d381b63a4a6cb87a1a",
-        "priorReviewIntegrationCommit": "3336ff668d1e47daee8407d3c8067fe125b06964"
+        "priorReviewIntegrationCommit": "3336ff668d1e47daee8407d3c8067fe125b06964",
+        "correctionImplementationCommit": "0c120a1bf5e377510d332ebdadac61e40f77e652",
+        "correctionHandoffCommit": "735e87f1de11e592cd8b3bea485e2f92d5b3ac86",
+        "correctionProductCommits": [
+          "0c120a1bf5e377510d332ebdadac61e40f77e652"
+        ],
+        "correctionReviewSourceCommit": "0c120a1bf5e377510d332ebdadac61e40f77e652"
       },
       "reviewHistory": [
         {
@@ -5151,7 +5159,7 @@
       ]
     }
   },
-  "nextAction": "W-03 correction round one is dispatched for effect-certainty propagation, cross-root native rename rejection, and per-client filesystem reservations; F-05 remains capability-blocked and G-01 keeps Arr writes blocked.",
+  "nextAction": "W-03 correction round one is ready for independent review at 0c120a1bf5e377510d332ebdadac61e40f77e652; handoff 735e87f1de11e592cd8b3bea485e2f92d5b3ac86. F-05 Linux organize mutations remain capability-blocked and G-01 keeps Arr writes blocked.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
