@@ -1606,6 +1606,7 @@ func TestErroredDispatchPersistsReturnedPartialEffectsAndReconciles(t *testing.T
 	first := executionEffect("copy", "one.bin")
 	second := executionEffect("copy", "two.bin")
 	second.Ordinal = 1
+	second.Evidence = json.RawMessage(`{"approved_scope":"two.bin","digest":"sha256:synthetic"}`)
 	returned := first
 	returned.State = EffectApplied
 	returned.Evidence = json.RawMessage(`[` + `"handler_applied"` + `]`)
@@ -1621,8 +1622,9 @@ func TestErroredDispatchPersistsReturnedPartialEffectsAndReconciles(t *testing.T
 		},
 		dispatchFn: func(_ context.Context, _ Action, _ Attempt) (DispatchResult, error) {
 			return DispatchResult{
-				Evidence: []string{"one_file_published", "response_lost"},
-				Effects:  []Effect{returned},
+				ExternalID: "command-partial",
+				Evidence:   []string{"one_file_published", "response_lost"},
+				Effects:    []Effect{returned},
 			}, NewDispatchedFailure(FailureUncertain, errors.New("response lost after partial dispatch"))
 		},
 		reconcileFn: func(_ context.Context, _ Action, _ Attempt) (ReconcileResult, error) {
@@ -1642,11 +1644,23 @@ func TestErroredDispatchPersistsReturnedPartialEffectsAndReconciles(t *testing.T
 	if len(effects) != 2 || effects[0].State != EffectApplied || effects[1].State != EffectUnknown {
 		t.Fatalf("errored partial effects = %+v, want applied plus unknown", effects)
 	}
-	if !strings.Contains(string(effects[0].Evidence), "handler_applied") || !strings.Contains(string(effects[1].Evidence), "dispatch_result_unreported") {
+	var omittedEvidence map[string]json.RawMessage
+	if err := json.Unmarshal(effects[1].Evidence, &omittedEvidence); err != nil {
+		t.Fatalf("omitted opaque evidence is invalid: %v", err)
+	}
+	var approvedScope string
+	if err := json.Unmarshal(omittedEvidence["approved_scope"], &approvedScope); err != nil || approvedScope != "two.bin" {
+		t.Fatalf("omitted opaque evidence lost approved scope: %s (%v)", omittedEvidence["approved_scope"], err)
+	}
+	var markers []string
+	if err := json.Unmarshal(omittedEvidence["_mastarr_execution_markers"], &markers); err != nil || !equalStrings(markers, []string{"dispatch_result_unreported"}) {
+		t.Fatalf("omitted opaque evidence markers = %v (%v), want unreported marker", markers, err)
+	}
+	if !strings.Contains(string(effects[0].Evidence), "handler_applied") {
 		t.Fatalf("handler effect evidence was not persisted: %+v", effects)
 	}
 	attempts := mustAttempts(t, journal, action.ID)
-	if len(attempts) != 2 || attempts[1].State != domain.AttemptReconciling || attempts[1].OutcomeCertainty != CertaintyUncertain {
+	if len(attempts) != 2 || attempts[1].State != domain.AttemptReconciling || attempts[1].OutcomeCertainty != CertaintyUncertain || attempts[1].ExternalID != "command-partial" {
 		t.Fatalf("errored partial attempts = %+v, want uncertain dispatch attempt", attempts)
 	}
 	if !strings.Contains(string(attempts[1].Evidence), "one_file_published") || !strings.Contains(string(attempts[1].Evidence), "dispatch_effect_count=1") {
@@ -1663,6 +1677,47 @@ func TestErroredDispatchPersistsReturnedPartialEffectsAndReconciles(t *testing.T
 	effects = mustEffects(t, journal, action.ID)
 	if len(effects) != 2 || effects[0].State != EffectApplied || effects[1].State != EffectApplied {
 		t.Fatalf("reconciled partial effects = %+v, want applied effects", effects)
+	}
+}
+
+func TestExternalIDOnlyErroredDependencyForcesReconciliation(t *testing.T) {
+	journal, action := newMemoryAction("external-id-only-dispatch", domain.ActionFSCopy, domain.ActionQueued)
+	effect := executionEffect("copy", "payload.bin")
+	handler := &scriptedHandler{
+		kind: domain.ActionFSCopy,
+		observeFn: func(_ context.Context, _ Action, _ int) (Observation, error) {
+			return Observation{State: ObserveNeedsAction, Effects: []Effect{effect}}, nil
+		},
+		dispatchFn: func(_ context.Context, _ Action, _ Attempt) (DispatchResult, error) {
+			return DispatchResult{ExternalID: "command-123"}, NewFailure(FailureDependency, errors.New("command status unavailable"))
+		},
+		reconcileFn: func(_ context.Context, _ Action, _ Attempt) (ReconcileResult, error) {
+			applied := effect
+			applied.State = EffectApplied
+			applied.Evidence = json.RawMessage(`{"read_back":"command-123"}`)
+			return ReconcileResult{Outcome: domain.OutcomeApplied, Effects: []Effect{applied}, Evidence: []string{"command_read_back"}}, nil
+		},
+	}
+
+	firstRun := mustRunOnce(t, newTestExecutor(t, journal, handler, executionClock()))
+	if len(firstRun.Results) != 1 || firstRun.Results[0].State != domain.ActionReconciling || !firstRun.Results[0].Dispatched {
+		t.Fatalf("external-ID-only dispatch result = %+v, want dispatched reconciliation", firstRun.Results)
+	}
+	current := mustAction(t, journal, action.ID)
+	if current.State != domain.ActionReconciling {
+		t.Fatalf("external-ID-only action = %+v, want reconciling", current)
+	}
+	attempts := mustAttempts(t, journal, action.ID)
+	if len(attempts) != 2 || attempts[1].ExternalID != "command-123" || attempts[1].OutcomeCertainty != CertaintyUncertain {
+		t.Fatalf("external-ID-only attempts = %+v, want durable uncertain command ID", attempts)
+	}
+
+	secondRun := mustRunOnce(t, newTestExecutor(t, journal, handler, func() time.Time { return executionTime().Add(10 * time.Second) }))
+	if len(secondRun.Results) != 1 || secondRun.Results[0].State != domain.ActionSucceeded || secondRun.Results[0].Outcome != domain.OutcomeApplied {
+		t.Fatalf("external-ID-only reconciliation result = %+v, want success", secondRun.Results)
+	}
+	if handler.dispatchCalls() != 1 || handler.reconcileCalls() != 1 {
+		t.Fatalf("external-ID-only calls = dispatch %d reconcile %d, want one dispatch and one reconciliation", handler.dispatchCalls(), handler.reconcileCalls())
 	}
 }
 

@@ -7,6 +7,7 @@
 package execution
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -2340,6 +2341,7 @@ func (executor *Executor) finishDispatchError(ctx context.Context, result Result
 		finished.OutcomeCertainty = CertaintyUncertain
 		finished.ErrorCode = string(FailureUncertain)
 		finished.ErrorDetail = safeDetail(dispatchErr)
+		finished.ExternalID = dispatchResult.ExternalID
 		finished.Evidence = evidenceJSON(dispatchErrorEvidence(dispatchResult))
 		if _, err := executor.updateAttemptOwned(ctx, result.Action, finished); err != nil {
 			result.Err = err
@@ -2388,7 +2390,7 @@ func (executor *Executor) finishDispatchError(ctx context.Context, result Result
 }
 
 func dispatchResultHasEvidence(result DispatchResult) bool {
-	return result.Accepted || result.Outcome.Valid() || len(result.Evidence) > 0 || len(result.Effects) > 0
+	return strings.TrimSpace(result.ExternalID) != "" || result.Accepted || result.Outcome.Valid() || len(result.Evidence) > 0 || len(result.Effects) > 0
 }
 
 func dispatchErrorEvidence(result DispatchResult) []string {
@@ -2862,9 +2864,44 @@ func appendEvidence(raw json.RawMessage, values ...string) json.RawMessage {
 	if len(values) == 0 {
 		return append(json.RawMessage(nil), raw...)
 	}
+	trimmed := bytes.TrimSpace(raw)
 	var existing []string
-	if len(raw) > 0 && json.Unmarshal(raw, &existing) == nil {
+	if len(trimmed) > 0 && trimmed[0] == '[' && json.Unmarshal(trimmed, &existing) == nil {
 		return evidenceJSON(append(existing, values...))
+	}
+	// Effect evidence is intentionally opaque. Preserve an object byte-for-byte
+	// while adding a namespaced execution marker, rather than replacing the
+	// handler's fields with the executor's string-list envelope.
+	if len(trimmed) >= 2 && trimmed[0] == '{' && trimmed[len(trimmed)-1] == '}' && json.Valid(trimmed) {
+		marker, err := json.Marshal(values)
+		if err == nil {
+			body := bytes.TrimSpace(trimmed[1 : len(trimmed)-1])
+			field := append([]byte(`"_mastarr_execution_markers":`), marker...)
+			if len(body) == 0 {
+				return append(append(json.RawMessage{'{'}, field...), '}')
+			}
+			result := make([]byte, 0, len(trimmed)+len(field)+1)
+			result = append(result, '{')
+			result = append(result, body...)
+			result = append(result, ',')
+			result = append(result, field...)
+			result = append(result, '}')
+			return json.RawMessage(result)
+		}
+	}
+	// Non-object valid evidence still needs to survive annotation. Keep its
+	// exact bytes inside a durable envelope with a separate marker list.
+	if len(trimmed) > 0 && json.Valid(trimmed) {
+		marker, err := json.Marshal(values)
+		if err == nil {
+			result := make([]byte, 0, len(trimmed)+len(marker)+32)
+			result = append(result, `{"_mastarr_prior":`...)
+			result = append(result, trimmed...)
+			result = append(result, `,"_mastarr_execution_markers":`...)
+			result = append(result, marker...)
+			result = append(result, '}')
+			return json.RawMessage(result)
+		}
 	}
 	return evidenceJSON(values)
 }
