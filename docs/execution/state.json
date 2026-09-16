@@ -15,9 +15,7 @@
   "resumeDocument": "docs/execution/RESUME.md",
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
-  "activeImplementationTasks": [
-    "X-20"
-  ],
+  "activeImplementationTasks": [],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
   "guardrailBaseline": {
@@ -4259,10 +4257,13 @@
       ]
     },
     "X-20": {
-      "status": "in_progress",
+      "status": "blocked",
       "owner": "/root/x05_implementer",
       "baseSha": "52d22eead7e6c934352fa70483e433697197eb1e",
-      "integratedSha": null,
+      "integratedSha": "8e4c722eae49051eabc4572f8ba7fb1176445f0f",
+      "implementationCommit": "8e4c722eae49051eabc4572f8ba7fb1176445f0f",
+      "handoffCommit": "ac4370b4a6b434010a7fda67ffe834115c9c567e",
+      "reviewSourceCommit": "8e4c722eae49051eabc4572f8ba7fb1176445f0f",
       "evidence": [
         "dispatched after X-06, X-15 and X-16 approvals; owns only the root Arr write-adapter migration and synthetic fixtures.",
         "Keep registration/manual-import validation, exact preview binding, strict read-back and G-01 fail-closed behavior unchanged while translating through standalone Sonarr and Radarr clients.",
@@ -4272,17 +4273,16 @@
         "ad0302c1c309cb8cac4a714a415e15c70a99fcbc independent review round one requests one P1 provider-namespace identity fix, two P2 root context/settings fixes, and an explicit transport-ownership blocker or client contract extension.",
         "923e31bbc22aac9782a9d72ca0d59cb8d857f1b8 and ba56aaf0f7b2aafc15923c2c92765f89f42a0007 product commits plus afabf91e3cedca9e4f594578a209de3116869493 handoff isolate provider namespaces, make context errors request-local, preserve metadata presence and contradictions, and retain the bounded transport-ownership blocker with all local checks passing.",
         "c55d73bacb004a4a8238342a019e4b42b01151b4 independent round-two review closes foreign-namespace, context, metadata and bounded-transport findings but reproduces a P1 where contradictory same-namespace primary and alias IDs collapse to nonmatch and can trigger a duplicate POST.",
-        "8e4c722eae49051eabc4572f8ba7fb1176445f0f product and ac4370b4a6b434010a7fda67ffe834115c9c567e handoff add tri-state provider matching for Radarr TMDB, Sonarr TVDB and IMDb, reject contradictions before capability/payload dispatch, preserve valid aliases, and retain the documented partial transport blocker."
+        "8e4c722eae49051eabc4572f8ba7fb1176445f0f product and ac4370b4a6b434010a7fda67ffe834115c9c567e handoff add tri-state provider matching for Radarr TMDB, Sonarr TVDB and IMDb, reject contradictions before capability/payload dispatch, preserve valid aliases, and retain the documented partial transport blocker.",
+        "fe6c1e62f053ace5b42109a8cabec763c79fac83 independent round-three approval accepts the explicitly partial X-20 scope after provider contradiction, context, metadata and boundary checks; root metadata/history/mutation transport remains blocked pending standalone contract extensions."
       ],
       "review": {
-        "status": "changes_requested",
-        "decision": "changes_requested",
+        "status": "approved",
+        "decision": "approved",
         "reviewer": "/root/x05_reviewer",
-        "commit": "c55d73bacb004a4a8238342a019e4b42b01151b4",
-        "findings": [
-          "P1: contradictory same-namespace primary and alias provider IDs are reduced to nonmatch, so a command-capable Register path can POST a duplicate title."
-        ],
-        "round": 2
+        "commit": "fe6c1e62f053ace5b42109a8cabec763c79fac83",
+        "findings": [],
+        "round": 3
       },
       "dispatch": {
         "assignedAt": "2026-09-15",
@@ -4310,13 +4310,13 @@
         "reviewPath": "docs/execution/handoffs/X-20-review-round1.md",
         "handoffPath": "docs/execution/handoffs/X-20.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "review_pending",
+        "status": "blocked",
         "implementationCommit": "c20315353bab7e0545204d21a5fd9e1362964b49",
         "handoffCommit": "c111c546429f83d4322e08e7edd495f8de1b29c4",
         "reviewSourceCommit": "c20315353bab7e0545204d21a5fd9e1362964b49",
-        "reviewCommit": "c55d73bacb004a4a8238342a019e4b42b01151b4",
-        "reviewIntegrationCommit": "843a0ba679df879283bf8d6e7e7258357736300c",
-        "reviewRound": 2,
+        "reviewCommit": "fe6c1e62f053ace5b42109a8cabec763c79fac83",
+        "reviewIntegrationCommit": "3d64153b7b63295f6b372578e34f0b40d51103b7",
+        "reviewRound": 3,
         "correctionRound": 2,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "ba56aaf0f7b2aafc15923c2c92765f89f42a0007",
@@ -4324,7 +4324,7 @@
         "correctionReviewPath": "docs/execution/handoffs/X-20-review-round3.md",
         "correctionHandoffPath": "docs/execution/handoffs/X-20-correction-round2.md",
         "correctionReviewer": "/root/x05_reviewer",
-        "correctionStatus": "review_pending",
+        "correctionStatus": "approved",
         "previousCorrectionProductCommits": [
           "923e31bbc22aac9782a9d72ca0d59cb8d857f1b8",
           "ba56aaf0f7b2aafc15923c2c92765f89f42a0007"
@@ -4338,6 +4338,9 @@
         "correctionHandoffCommit": "ac4370b4a6b434010a7fda67ffe834115c9c567e",
         "correctionReviewSourceCommit": "8e4c722eae49051eabc4572f8ba7fb1176445f0f",
         "correctionDispatchCommit": "6d71570728edba2c6d9d90b07faeb9ce6117b46c",
+        "correctionReviewCommit": "fe6c1e62f053ace5b42109a8cabec763c79fac83",
+        "correctionReviewIntegrationCommit": "3d64153b7b63295f6b372578e34f0b40d51103b7",
+        "blocker": "Standalone Sonarr/Radarr published contracts still omit registration metadata, history and mutation methods. The root adapter keeps those calls bounded and documented; X-20 remains blocked until a separately reviewed client-contract extension moves that transport into the nested modules. G-01 also keeps native writes fail-closed.",
         "dependencyCommits": {
           "X-06": "0bbf8405859ac604d9d05237badef45dd0ee7fbc",
           "X-15": "828e0084f2d88f86050db5912412352c1a363bc1",
@@ -4354,15 +4357,24 @@
           "receipt": "docs/execution/handoffs/X-20-review-round1.md",
           "integratedCommit": "93f3535322c772e2fd349728f77f6ecd1d200f6c"
         },
-        {
-          "round": 2,
-          "reviewer": "/root/x05_reviewer",
-          "commit": "c55d73bacb004a4a8238342a019e4b42b01151b4",
-          "status": "changes_requested",
-          "sourceCommit": "ba56aaf0f7b2aafc15923c2c92765f89f42a0007",
-          "receipt": "docs/execution/handoffs/X-20-review-round2.md",
-          "integratedCommit": "843a0ba679df879283bf8d6e7e7258357736300c"
-        }
+      {
+        "round": 2,
+        "reviewer": "/root/x05_reviewer",
+        "commit": "c55d73bacb004a4a8238342a019e4b42b01151b4",
+        "status": "changes_requested",
+        "sourceCommit": "ba56aaf0f7b2aafc15923c2c92765f89f42a0007",
+        "receipt": "docs/execution/handoffs/X-20-review-round2.md",
+        "integratedCommit": "843a0ba679df879283bf8d6e7e7258357736300c"
+      },
+      {
+        "round": 3,
+        "reviewer": "/root/x05_reviewer",
+        "commit": "fe6c1e62f053ace5b42109a8cabec763c79fac83",
+        "status": "approved",
+        "sourceCommit": "8e4c722eae49051eabc4572f8ba7fb1176445f0f",
+        "receipt": "docs/execution/handoffs/X-20-review-round3.md",
+        "integratedCommit": "3d64153b7b63295f6b372578e34f0b40d51103b7"
+      }
       ]
     },
     "X-21": {
@@ -4613,7 +4625,7 @@
       ]
     }
   },
-  "nextAction": "X-20 tri-state provider correction 8e4c722eae49051eabc4572f8ba7fb1176445f0f and handoff ac4370b4a6b434010a7fda67ffe834115c9c567e are ready for independent review; the bounded transport blocker and G-01 remain open.",
+  "nextAction": "X-20 partial migration is review-approved at 8e4c722eae49051eabc4572f8ba7fb1176445f0f, with the standalone-client transport blocker recorded. Dispatch the next dependency-ready lane; keep G-01 open.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
