@@ -16,7 +16,6 @@
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
   "activeImplementationTasks": [
-    "X-19"
   ],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
@@ -4043,26 +4042,27 @@
       ]
     },
     "X-19": {
-      "status": "in_progress",
+      "status": "done",
       "owner": "/root/x05_implementer",
       "baseSha": "ba746f38f7473a019a539f16267e07ac9e230407",
-      "integratedSha": null,
+      "integratedSha": "7bb07b5708335701b1884d2acf48e0d3391e4c1a",
+      "implementationCommit": "7bb07b5708335701b1884d2acf48e0d3391e4c1a",
+      "handoffCommit": "42d72767a614c99d9f7452cc3ed12f75b416ac3e",
+      "reviewSourceCommit": "7bb07b5708335701b1884d2acf48e0d3391e4c1a",
       "evidence": [
         "dispatched after X-15, X-16 and X-03 approvals and C-06 guardrail approval; owns only the Arr read adapter and synthetic fixture paths.",
         "Nested Sonarr/Radarr modules are present in the public repository but have no release tags; the worker must keep current adapters and record a bootstrap blocker if a released pseudo-version cannot be consumed without a local replace.",
         "3d744e835290d372ccdecca37a4a19660e3239b8 independent review found P1 identity-safety failures: native Sonarr file observations accept contradictory same-ID path/size and different IDs at one path; native catalog can claim complete for the collision; malformed Radarr duplicate-ID JSON falls through the broad legacy fallback and returns a last-wins complete record.",
-        "a8511095a181d029861463d74fcc94aee8331652 independent review round two closes the collision and duplicate-key findings but finds P1 preview fallback bypass: one unrelated legacy rejection alias can authorize decoding the whole mixed response, allowing a candidate missing episode.seriesId to become an accepted file; reproduced three times under race with two GETs and no error."
+        "a8511095a181d029861463d74fcc94aee8331652 independent review round two closes the collision and duplicate-key findings but finds P1 preview fallback bypass: one unrelated legacy rejection alias can authorize decoding the whole mixed response, allowing a candidate missing episode.seriesId to become an accepted file; reproduced three times under race with two GETs and no error.",
+        "26b0a4748b94817575e2a98b6aa472915cd1bdde independent review round three approves X-19: mixed-row preview regression and missing/null nested identity controls pass three race runs; original collision/read-back and duplicate-key probes remain green; valid legacy/native controls pass; no generated DTO leakage or module bootstrap blocker."
       ],
       "review": {
-        "status": "changes_requested",
-        "decision": "changes_requested",
+      "status": "approved",
+        "decision": "approved",
         "reviewer": "/root/x05_reviewer",
-        "commit": "a8511095a181d029861463d74fcc94aee8331652",
-        "findings": [
-          "R1 closed: native file identity collisions and strict duplicate-key fallback bypass now reject or remain incomplete",
-          "P1 legacy preview shape gate accepts a mixed response when an unrelated rejection alias is present; missing nested episode seriesId can become an accepted file"
-        ],
-        "round": 2
+        "commit": "26b0a4748b94817575e2a98b6aa472915cd1bdde",
+        "findings": [],
+        "round": 3
       },
       "dispatch": {
         "assignedAt": "2026-09-15",
@@ -4099,16 +4099,20 @@
           "X-16": "1ef0c07af604e7e63d88bc68955c8097479f7e82",
           "C-06": "ba746f38f7473a019a539f16267e07ac9e230407"
         },
-        "reviewCommit": "a8511095a181d029861463d74fcc94aee8331652",
-        "reviewIntegrationCommit": "b06671b997039c6fe1b42c53f5a7378080e0e5b5",
-        "reviewRound": 2,
+        "reviewCommit": "26b0a4748b94817575e2a98b6aa472915cd1bdde",
+        "reviewIntegrationCommit": "b8d2cc7728384b70ee3efe0af36046510a60078b",
+        "reviewRound": 3,
         "correctionRound": 2,
         "correctionOwner": "/root/x05_implementer",
-        "correctionBaseSha": "4384a873d54df46b6d0f996a3bc03f6a2bde2edd",
+        "correctionBaseSha": "7425ca77f70054a57b7b8cdad4d7b6055b1f2613",
         "correctionReviewPath": "docs/execution/handoffs/X-19-review-round3.md",
         "correctionHandoffPath": "docs/execution/handoffs/X-19-correction-round2.md",
         "correctionReviewer": "/root/x05_reviewer",
-        "correctionStatus": "changes_requested"
+        "correctionStatus": "approved",
+        "correctionImplementationCommit": "7bb07b5708335701b1884d2acf48e0d3391e4c1a",
+        "correctionHandoffCommit": "42d72767a614c99d9f7452cc3ed12f75b416ac3e",
+        "correctionReviewCommit": "26b0a4748b94817575e2a98b6aa472915cd1bdde",
+        "correctionReviewIntegrationCommit": "b8d2cc7728384b70ee3efe0af36046510a60078b"
       },
       "reviewHistory": [
         {
@@ -4128,6 +4132,15 @@
           "sourceCommit": "4384a873d54df46b6d0f996a3bc03f6a2bde2edd",
           "receipt": "docs/execution/handoffs/X-19-review-round2.md",
           "integratedCommit": "b06671b997039c6fe1b42c53f5a7378080e0e5b5"
+        },
+        {
+          "round": 3,
+          "reviewer": "/root/x05_reviewer",
+          "commit": "26b0a4748b94817575e2a98b6aa472915cd1bdde",
+          "status": "approved",
+          "sourceCommit": "7bb07b5708335701b1884d2acf48e0d3391e4c1a",
+          "receipt": "docs/execution/handoffs/X-19-review-round3.md",
+          "integratedCommit": "b8d2cc7728384b70ee3efe0af36046510a60078b"
         }
       ]
     },
@@ -4294,11 +4307,11 @@
           "sourceCommit": "57b5221b242639ec39afc4ff1cff1dfb867a9056",
           "receipt": "docs/execution/handoffs/C-06-review-round5.md",
           "integratedCommit": "3da4ebecec41e8cd3684d68ebd7376f6b1425275"
-        }
+      }
       ]
     }
   },
-  "nextAction": "Run X-19 correction round two from product 4384a873d54df46b6d0f996a3bc03f6a2bde2edd: make preview fallback row-scoped and reject missing nested episode identity; record exact handoff, then request independent round-three review.",
+  "nextAction": "X-19 is approved and integrated. Dispatch the next dependency-ready read migration lane after recording this checkpoint.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
