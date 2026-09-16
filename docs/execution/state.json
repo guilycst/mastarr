@@ -964,7 +964,8 @@
         "6adb5a5cf2ce7d9effd5d4ba6c2a8737d9e28b3a correction round two binds verified staging identity through publication/cleanup and snapshots exact restore manifest bytes; fe0b2b3e7299e5ea7dac8be6bec9d819d81fa115 records the handoff and checks.",
         "e5e51d9d7476c88b54732a0f4a5b42ccd8e8754d independent correction review round three requests one P1: a held staging root does not bind child contents after final verification; 7980ac79d30179d0f6165957b272db7675932ad8 integrates the receipt. Prior substitution/cleanup and source-manifest findings are accepted; exact child-set/report binding remains a blocker.",
         "91e63363c9a2c15bce8964d19508a1888a97ba51 correction round three verifies the complete staged child set and destination read-back across publication, returning the report proven by the published destination; dc743ca02c9925985294db26c0c5c5ff42805d40 records the handoff and full checks.",
-        "766903206caba0c59e4febed252b2a19e41ccd5b independent correction review round four requests one P1: final child/read-back validation remains separate from native publication and changed content can become visible at the destination; 22fd87f285880c7cdacf55ea406b0eba8bfb518c integrates the receipt. Successful report mismatch is closed, but reject-and-publish-nothing is not."
+        "766903206caba0c59e4febed252b2a19e41ccd5b independent correction review round four requests one P1: final child/read-back validation remains separate from native publication and changed content can become visible at the destination; 22fd87f285880c7cdacf55ea406b0eba8bfb518c integrates the receipt. Successful report mismatch is closed, but reject-and-publish-nothing is not.",
+        "036288114bcf303f98e0ee02e54ddce18384e504 correction round four adds identity-checked no-replace rollback after post-publication drift so Create/Restore last-read mutations leave the destination absent; 49b7873dc851948099580094b9b0017b1646a879 records the handoff and full offline checks."
       ],
       "review": {
         "status": "changes_requested",
@@ -1003,7 +1004,7 @@
         "reviewPath": "docs/execution/handoffs/D-04-review-round1.md",
         "handoffPath": "docs/execution/handoffs/D-04.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "implementation",
+        "status": "review_pending",
         "implementationCommit": "9b682b56306d450d582e4ec23f6f8e5e1df37243",
         "handoffCommit": "0d8bccedf51cc25490167cb5692374807f2fc90c",
         "reviewSourceCommit": "9b682b56306d450d582e4ec23f6f8e5e1df37243",
@@ -1016,12 +1017,18 @@
         "correctionReviewPath": "docs/execution/handoffs/D-04-review-round5.md",
         "correctionHandoffPath": "docs/execution/handoffs/D-04-correction-round4.md",
         "correctionReviewer": "/root/x05_reviewer",
-        "correctionStatus": "implementation",
+        "correctionStatus": "review_pending",
         "priorCorrectionRound": 3,
         "priorCorrectionImplementationCommit": "91e63363c9a2c15bce8964d19508a1888a97ba51",
         "priorCorrectionHandoffCommit": "dc743ca02c9925985294db26c0c5c5ff42805d40",
         "priorCorrectionReviewCommit": "766903206caba0c59e4febed252b2a19e41ccd5b",
-        "priorCorrectionReviewIntegrationCommit": "22fd87f285880c7cdacf55ea406b0eba8bfb518c"
+        "priorCorrectionReviewIntegrationCommit": "22fd87f285880c7cdacf55ea406b0eba8bfb518c",
+        "correctionImplementationCommit": "036288114bcf303f98e0ee02e54ddce18384e504",
+        "correctionHandoffCommit": "49b7873dc851948099580094b9b0017b1646a879",
+        "correctionProductCommits": [
+          "036288114bcf303f98e0ee02e54ddce18384e504"
+        ],
+        "correctionReviewSourceCommit": "036288114bcf303f98e0ee02e54ddce18384e504"
       },
       "reviewHistory": [
         {
@@ -4822,7 +4829,7 @@
       ]
     }
   },
-  "nextAction": "D-04 correction round four is dispatched for a fail-closed final-check/publication boundary after review receipt 766903206caba0c59e4febed252b2a19e41ccd5b. X-08 remains queued; X-20 transport and G-01 remain open.",
+  "nextAction": "D-04 correction round four is ready for independent review at 036288114bcf303f98e0ee02e54ddce18384e504; handoff 49b7873dc851948099580094b9b0017b1646a879. X-08 remains queued; X-20 transport and G-01 remain open.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
