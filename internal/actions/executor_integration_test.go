@@ -8,6 +8,7 @@ import (
 
 	"github.com/guilycst/mastarr/internal/domain"
 	"github.com/guilycst/mastarr/internal/execution"
+	"github.com/guilycst/mastarr/internal/filesystem/organize"
 	"github.com/guilycst/mastarr/internal/filesystem/placement"
 	"github.com/guilycst/mastarr/internal/ports"
 	"github.com/guilycst/mastarr/internal/storage"
@@ -78,7 +79,62 @@ func TestExecutorPersistsManifestAndMappingPartialFilesystemEffects(t *testing.T
 	}
 }
 
+func TestExecutorPersistsMixedDeleteStatesWithoutDowngrade(t *testing.T) {
+	absent := manifest("download", "already-gone.mkv", "", "inode-absent-executor")
+	present := manifest("download", "still-here.mkv", "", "inode-present-executor")
+	read := &fakeFilesystemRead{
+		entries: map[string]ports.FilesystemObservation{
+			targetID(domain.FileTarget{RootID: present.RootID, RelativePath: present.RelativePath}): {Entry: present, ObservedAt: actionTestNow},
+		},
+		missing: map[string]bool{targetID(domain.FileTarget{RootID: absent.RootID, RelativePath: absent.RelativePath}): true},
+	}
+	actionPort := &fakeFilesystemAction{deleteEffect: ports.FilesystemEffect{
+		Outcome:    domain.OutcomeApplied,
+		Affected:   []domain.FileManifestEntry{absent, present},
+		ObservedAt: actionTestNow,
+		Evidence:   []string{"mixed_delete_report"},
+	}, err: organize.ErrSourceChanged}
+	handler, err := NewDeleteHandler(FilesystemConfig{Read: read, Action: actionPort, Options: testOptions()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired, err := EncodeIntent(FileIntent{Manifest: []domain.FileManifestEntry{absent, present}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, journal, action := newActionsSQLFixtureForKind(t, "mixed-delete-effects", domain.ActionFSDelete, desired)
+	defer store.Close()
+	executor, err := execution.New(journal, execution.Options{WorkerID: "mixed-delete-integration", Now: testOptions().Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := executor.RegisterHandler(handler); err != nil {
+		t.Fatal(err)
+	}
+	batch, err := executor.RunOnce(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batch.Results) != 1 || batch.Results[0].State != domain.ActionReconciling || !batch.Results[0].Dispatched {
+		t.Fatalf("mixed delete must enter reconciliation after returned error: batch=%#v", batch)
+	}
+	effects, err := journal.ListEffects(context.Background(), action.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effects) != 2 {
+		t.Fatalf("persisted effects=%#v, want two mixed delete effects", effects)
+	}
+	if effects[0].State != execution.EffectAlreadySatisfied || effects[1].State != execution.EffectApplied {
+		t.Fatalf("executor downgraded read-satisfied effect: %#v", effects)
+	}
+}
+
 func newActionsSQLFixture(t *testing.T, actionID string, desired []byte) (*storage.Store, *execution.SQLJournal, execution.Action) {
+	return newActionsSQLFixtureForKind(t, actionID, domain.ActionFSCopy, desired)
+}
+
+func newActionsSQLFixtureForKind(t *testing.T, actionID string, kind domain.ActionKind, desired []byte) (*storage.Store, *execution.SQLJournal, execution.Action) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), actionID+".sqlite")
 	store, err := storage.Open(path)
@@ -89,7 +145,7 @@ func newActionsSQLFixture(t *testing.T, actionID string, desired []byte) (*stora
 	planID := actionID + "-plan"
 	digest := actionID + "-digest"
 	ctx := context.Background()
-	if _, err := store.Queries().CreateActionPlan(ctx, &sqlc.CreateActionPlanParams{ID: planID, Kind: string(domain.ActionFSCopy), State: "ready", CurrentRevision: 1, CurrentDigest: digest, CreatedAt: created, UpdatedAt: created}); err != nil {
+	if _, err := store.Queries().CreateActionPlan(ctx, &sqlc.CreateActionPlanParams{ID: planID, Kind: string(kind), State: "ready", CurrentRevision: 1, CurrentDigest: digest, CreatedAt: created, UpdatedAt: created}); err != nil {
 		store.Close()
 		t.Fatal(err)
 	}

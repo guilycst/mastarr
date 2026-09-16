@@ -701,7 +701,13 @@ func mapFilesystemAffected(kind domain.ActionKind, observation execution.Observa
 		case domain.OutcomeAlreadySatisfied:
 			state = execution.EffectAlreadySatisfied
 		}
-		value.State = state
+		// Dispatch evidence cannot downgrade a read-proven target. This is
+		// especially important for mixed manifests where one entry was already
+		// absent before a later entry was removed. Only pending effects may be
+		// terminalized by the aggregate port outcome.
+		if value.State == execution.EffectPending {
+			value.State = state
+		}
 		observed := effect.ObservedAt
 		if observed.IsZero() {
 			observed = observedAt

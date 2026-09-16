@@ -718,6 +718,41 @@ func TestDeleteDispatchPreservesAffectedManifestEffectOnError(t *testing.T) {
 	}
 }
 
+func TestDeleteDispatchPreservesReadSatisfiedEffectInMixedManifest(t *testing.T) {
+	absent := manifest("download", "already-gone.mkv", "", "inode-absent-1")
+	present := manifest("download", "still-here.mkv", "", "inode-present-1")
+	read := &fakeFilesystemRead{
+		entries: map[string]ports.FilesystemObservation{
+			targetID(domain.FileTarget{RootID: present.RootID, RelativePath: present.RelativePath}): {Entry: present, ObservedAt: actionTestNow},
+		},
+		missing: map[string]bool{targetID(domain.FileTarget{RootID: absent.RootID, RelativePath: absent.RelativePath}): true},
+	}
+	actionPort := &fakeFilesystemAction{
+		deleteEffect: ports.FilesystemEffect{
+			Outcome:    domain.OutcomeApplied,
+			Affected:   []domain.FileManifestEntry{absent, present},
+			ObservedAt: actionTestNow,
+			Evidence:   []string{"mixed_delete_report"},
+		},
+		err: organize.ErrSourceChanged,
+	}
+	handler, err := NewDeleteHandler(FilesystemConfig{Read: read, Action: actionPort, Options: testOptions()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	action := testAction(t, domain.ActionFSDelete, FileIntent{Manifest: []domain.FileManifestEntry{absent, present}})
+	for repetition := 0; repetition < 10; repetition++ {
+		result, dispatchErr := handler.Dispatch(context.Background(), action, execution.Attempt{ID: "mixed-delete"})
+		var failure *execution.Failure
+		if !errors.As(dispatchErr, &failure) || !failure.Dispatched || len(result.Effects) != 2 {
+			t.Fatalf("mixed delete must preserve both mapped effects (run %d): result=%#v err=%v failure=%#v", repetition, result, dispatchErr, failure)
+		}
+		if result.Effects[0].State != execution.EffectAlreadySatisfied || result.Effects[1].State != execution.EffectApplied {
+			t.Fatalf("aggregate outcome must not overwrite read-satisfied state (run %d): %#v", repetition, result.Effects)
+		}
+	}
+}
+
 func TestTrashManifestChildAffectedMapsToOneApprovedEffect(t *testing.T) {
 	child := manifest("download", "season/episode.mkv", "", "inode-child-1")
 	directory := domain.FileManifestEntry{
