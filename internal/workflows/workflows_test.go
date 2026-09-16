@@ -168,12 +168,13 @@ func TestRejectedReviewAtomicallyProjectsBlockedStepAcrossRestart(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	decision, err := reviewService.Approve(context.Background(), reviews.ApprovalRequest{
+	request := reviews.ApprovalRequest{
 		PlanID: plan.ID, Revision: plan.Revision, Digest: plan.Digest,
-		Decision: reviews.DecisionReject, Reason: "needs a narrower scope", Actor: "operator",
+		Decision: reviews.DecisionReject, Reason: "needs a narrower scope", Actor: "operator", CallerLabel: "review-console",
 		IdempotencyKey: "reject-registration", At: workflowTestNow,
 		WorkflowID: workflow.ID, WorkflowStepID: "register",
-	})
+	}
+	decision, err := reviewService.Approve(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,12 +196,70 @@ func TestRejectedReviewAtomicallyProjectsBlockedStepAcrossRestart(t *testing.T) 
 	if err := json.Unmarshal(metadata["decisionReason"], &recordedReason); err != nil || recordedReason != "needs a narrower scope" {
 		t.Fatalf("durable rejection reason = %q, want persisted reason", recordedReason)
 	}
+	var recordedActor, recordedCaller string
+	if err := json.Unmarshal(metadata["decisionActor"], &recordedActor); err != nil || recordedActor != request.Actor {
+		t.Fatalf("durable rejection actor = %q, want persisted actor", recordedActor)
+	}
+	if err := json.Unmarshal(metadata["decisionCallerLabel"], &recordedCaller); err != nil || recordedCaller != request.CallerLabel {
+		t.Fatalf("durable rejection caller = %q, want persisted caller", recordedCaller)
+	}
+	persistedDecision, err := store.Queries().GetReviewDecision(context.Background(), decision.DecisionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persistedDecision.Actor != request.Actor || persistedDecision.CallerLabel.String != request.CallerLabel || !persistedDecision.CallerLabel.Valid || persistedDecision.Reason.String != request.Reason || !persistedDecision.Reason.Valid {
+		t.Fatalf("durable review attribution = %+v, want actor/caller/reason from first decision", persistedDecision)
+	}
 	var actionCount int
 	if err := store.DB().QueryRow("SELECT count(*) FROM action_runs WHERE id = ?", decision.ActionRunID).Scan(&actionCount); err != nil {
 		t.Fatal(err)
 	}
 	if actionCount != 0 || decision.ActionRunID != "" {
 		t.Fatalf("rejected decision action = %q/count %d, want no action", decision.ActionRunID, actionCount)
+	}
+	var storedWorkflowState string
+	if err := store.DB().QueryRow("SELECT state FROM workflow_runs WHERE id = ?", workflow.ID).Scan(&storedWorkflowState); err != nil {
+		t.Fatal(err)
+	}
+	if storedWorkflowState != string(domain.WorkflowRunning) {
+		t.Fatalf("durable rejection workflow state = %q, want valid running bridge before projection", storedWorkflowState)
+	}
+	initialOutcome := outcome
+
+	// A fresh idempotency key is a semantic replay, so matching immutable
+	// attribution must preserve the already-persisted workflow evidence.
+	replayRequest := request
+	replayRequest.IdempotencyKey = "reject-registration-replay"
+	replayed, err := reviewService.Approve(context.Background(), replayRequest)
+	if err != nil {
+		t.Fatalf("matching fresh-key rejection replay error = %v", err)
+	}
+	if !replayed.Replayed || replayed.DecisionID != decision.DecisionID || replayed.ActionRunID != "" {
+		t.Fatalf("matching fresh-key rejection replay = %+v, want replayed decision without action", replayed)
+	}
+	var replayOutcome string
+	if err := store.DB().QueryRow("SELECT outcome_json FROM workflow_steps WHERE id = ?", request.WorkflowStepID).Scan(&replayOutcome); err != nil {
+		t.Fatal(err)
+	}
+	if replayOutcome != initialOutcome {
+		t.Fatalf("matching fresh-key replay rewrote workflow evidence = %s, want %s", replayOutcome, initialOutcome)
+	}
+	for _, testCase := range []struct {
+		name   string
+		mutate func(*reviews.ApprovalRequest)
+	}{
+		{name: "actor", mutate: func(candidate *reviews.ApprovalRequest) { candidate.Actor = "another-operator" }},
+		{name: "caller", mutate: func(candidate *reviews.ApprovalRequest) { candidate.CallerLabel = "other-console" }},
+		{name: "reason", mutate: func(candidate *reviews.ApprovalRequest) { candidate.Reason = "rewritten" }},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			candidate := request
+			candidate.IdempotencyKey = "reject-registration-conflict-" + testCase.name
+			testCase.mutate(&candidate)
+			if _, err := reviewService.Approve(context.Background(), candidate); !errors.Is(err, reviews.ErrDecisionConflict) {
+				t.Fatalf("conflicting fresh-key %s replay error = %v, want reviews.ErrDecisionConflict", testCase.name, err)
+			}
+		})
 	}
 
 	// A fresh service instance must observe the committed rejection without
@@ -217,8 +276,8 @@ func TestRejectedReviewAtomicallyProjectsBlockedStepAcrossRestart(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if projected.Steps[0].State != domain.StepBlocked || projected.State != domain.WorkflowRunning {
-		t.Fatalf("restarted rejection projection = state %q/step %q, want running/blocked", projected.State, projected.Steps[0].State)
+	if projected.Steps[0].State != domain.StepBlocked || projected.State != domain.WorkflowNeedsReview {
+		t.Fatalf("restarted rejection projection = state %q/step %q, want needs_review/blocked", projected.State, projected.Steps[0].State)
 	}
 	if _, err := restarted.ApproveStep(context.Background(), ApprovalRequest{
 		WorkflowID: workflow.ID, StepID: "register", Decision: reviews.DecisionApprove,

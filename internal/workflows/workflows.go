@@ -1286,11 +1286,17 @@ func projectAggregate(ctx context.Context, tx *sql.Tx, row *sqlc.WorkflowRun, st
 		if err != nil {
 			return current, domain.WorkflowNeedsReview, err
 		}
-		if raw, ok := metadata["decision"]; !ok || string(raw) != `"reject"` {
+		rejected, err := rejectedStepDecision(metadata)
+		if err != nil {
+			return current, domain.WorkflowNeedsReview, err
+		}
+		if !rejected {
 			if err := updateStepState(ctx, tx, steps[current], domain.StepQueued, metadata, now); err != nil {
 				return current, domain.WorkflowNeedsReview, err
 			}
 			steps[current].State = string(domain.StepQueued)
+		} else {
+			return current, domain.WorkflowNeedsReview, nil
 		}
 	}
 	if current >= len(steps) {
@@ -1306,7 +1312,17 @@ func projectAggregate(ctx context.Context, tx *sql.Tx, row *sqlc.WorkflowRun, st
 		}
 		if step.State == string(domain.StepBlocked) {
 			var metadata stepMetadata
-			metadata, _ = decodeMetadata(step.OutcomeJson)
+			metadata, err := decodeMetadata(step.OutcomeJson)
+			if err != nil {
+				return current, domain.WorkflowNeedsReview, err
+			}
+			rejected, err := rejectedStepDecision(metadata)
+			if err != nil {
+				return current, domain.WorkflowNeedsReview, err
+			}
+			if rejected {
+				return current, domain.WorkflowNeedsReview, nil
+			}
 			if raw, ok := metadata["actionState"]; ok && string(raw) == `"needs_review"` {
 				return current, domain.WorkflowNeedsReview, nil
 			}
@@ -1321,6 +1337,18 @@ func projectAggregate(ctx context.Context, tx *sql.Tx, row *sqlc.WorkflowRun, st
 		}
 	}
 	return current, next, nil
+}
+
+func rejectedStepDecision(metadata stepMetadata) (bool, error) {
+	raw, ok := metadata["decision"]
+	if !ok {
+		return false, nil
+	}
+	var decision string
+	if err := json.Unmarshal(raw, &decision); err != nil {
+		return false, fmt.Errorf("%w: rejection decision evidence is malformed", ErrWorkflowConflict)
+	}
+	return decision == string(reviews.DecisionReject), nil
 }
 
 func mustActionState(ctx context.Context, tx *sql.Tx, step *sqlc.WorkflowStep) (domain.ActionState, bool) {

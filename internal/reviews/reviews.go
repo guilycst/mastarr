@@ -414,6 +414,13 @@ func (service *Service) Approve(ctx context.Context, request ApprovalRequest) (A
 			if existingDecision.PlanID != normalized.PlanID || existingDecision.PlanRevision != normalized.Revision || existingDecision.PlanDigest != normalized.Digest || existingDecision.Decision != string(normalized.Decision) {
 				return ErrDecisionConflict
 			}
+			// A decision ID is deterministic for the immutable plan revision, so a
+			// fresh idempotency key can reach this branch even though the request
+			// itself is not a byte-for-byte replay. The durable attribution is part
+			// of the decision authority and must never be rewritten by that replay.
+			if !sameDecisionAttribution(existingDecision, normalized) {
+				return ErrDecisionConflict
+			}
 			workflowDeadline, err := ensureWorkflowBinding(ctx, tx, queries, normalized, snapshot.Plan, decisionID, actionID, false)
 			if err != nil {
 				return err
@@ -663,11 +670,17 @@ func ensureWorkflowBinding(ctx context.Context, tx *sql.Tx, queries *sqlc.Querie
 		actionJSON, _ := json.Marshal(actionID)
 		metadata["actionRunId"] = actionJSON
 	} else {
-		decisionJSON, _ := json.Marshal(string(DecisionReject))
-		metadata["decision"] = decisionJSON
-		if request.Reason != "" {
-			reasonJSON, _ := json.Marshal(request.Reason)
-			metadata["decisionReason"] = reasonJSON
+		if err := preserveWorkflowEvidence(metadata, "decision", string(DecisionReject)); err != nil {
+			return sql.NullString{}, err
+		}
+		if err := preserveWorkflowEvidence(metadata, "decisionActor", request.Actor); err != nil {
+			return sql.NullString{}, err
+		}
+		if err := preserveWorkflowEvidence(metadata, "decisionCallerLabel", request.CallerLabel); err != nil {
+			return sql.NullString{}, err
+		}
+		if err := preserveWorkflowEvidence(metadata, "decisionReason", request.Reason); err != nil {
+			return sql.NullString{}, err
 		}
 		delete(metadata, "actionRunId")
 		stepState = domain.StepBlocked
@@ -685,7 +698,7 @@ func ensureWorkflowBinding(ctx context.Context, tx *sql.Tx, queries *sqlc.Querie
 			return sql.NullString{}, fmt.Errorf("%w: workflow step changed while binding", ErrDecisionConflict)
 		}
 	}
-	if request.Decision == DecisionApprove {
+	if request.Decision == DecisionApprove || request.Decision == DecisionReject {
 		if _, err := tx.ExecContext(ctx, `UPDATE workflow_runs SET state = CASE WHEN state = 'awaiting_approval' THEN 'running' ELSE state END, updated_at = ? WHERE id = ?`, request.At.Format(time.RFC3339Nano), request.WorkflowID); err != nil {
 			return sql.NullString{}, fmt.Errorf("%w: advance workflow state: %v", ErrDecisionConflict, err)
 		}
@@ -701,6 +714,35 @@ func sameNullableString(left, right sql.NullString) bool {
 		return true
 	}
 	return left.String == right.String
+}
+
+func sameDecisionAttribution(stored *sqlc.ReviewDecision, request normalizedApproval) bool {
+	if stored == nil {
+		return false
+	}
+	return stored.Actor == request.Actor &&
+		sameNullableString(stored.CallerLabel, nullable(request.CallerLabel)) &&
+		sameNullableString(stored.Reason, nullable(request.Reason))
+}
+
+// preserveWorkflowEvidence makes semantic replay idempotent at the workflow
+// projection as well as in review_decisions. Existing evidence is validated
+// and retained byte-for-byte; contradictory metadata is a durable conflict.
+func preserveWorkflowEvidence(metadata map[string]json.RawMessage, key, expected string) error {
+	raw, ok := metadata[key]
+	if ok {
+		var actual string
+		if err := json.Unmarshal(raw, &actual); err != nil || actual != expected {
+			return ErrDecisionConflict
+		}
+		return nil
+	}
+	encoded, err := json.Marshal(expected)
+	if err != nil {
+		return fmt.Errorf("%w: encode workflow decision evidence: %v", ErrDecisionConflict, err)
+	}
+	metadata[key] = encoded
+	return nil
 }
 
 func createIdempotency(ctx context.Context, queries *sqlc.Queries, request normalizedApproval, requestDigest string, result ApprovalResult) error {
