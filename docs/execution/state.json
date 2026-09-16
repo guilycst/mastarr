@@ -15,9 +15,7 @@
   "resumeDocument": "docs/execution/RESUME.md",
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
-  "activeImplementationTasks": [
-    "X-06"
-  ],
+  "activeImplementationTasks": [],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
   "guardrailBaseline": {
@@ -2169,13 +2167,13 @@
       ]
     },
     "X-06": {
-      "status": "in_progress",
+      "status": "done",
       "owner": "/root/x05_implementer",
       "baseSha": "208165fed313698053a91f97f929c6af02bfadf7",
-      "integratedSha": null,
-      "implementationCommit": "d131422a7319be22ccc6fba17a54a047c89e25d8",
-      "handoffCommit": "e7047e143fae06d2871afc56337709fca339a311",
-      "reviewSourceCommit": "d131422a7319be22ccc6fba17a54a047c89e25d8",
+      "integratedSha": "0bbf8405859ac604d9d05237badef45dd0ee7fbc",
+      "implementationCommit": "0bbf8405859ac604d9d05237badef45dd0ee7fbc",
+      "handoffCommit": "fa4f98b0e1f227eb072f3263d1973f6cab43c6de",
+      "reviewSourceCommit": "0bbf8405859ac604d9d05237badef45dd0ee7fbc",
       "evidence": [
         "dispatched after X-05 approval; owns the Arr registration and manual-import adapter plus synthetic fixtures and handoff.",
         "Keep root validation, explicit command/read-back evidence and capability gates intact. G-01 remains unresolved, so no live upstream writes are permitted and any unsupported capability must remain blocked rather than silently enabled.",
@@ -2186,17 +2184,16 @@
         "cf856714579f54c1cfe06fbc071d8ce89c8f6fe6 independent round-two review reproduces two P1 Sonarr read-back gaps: missing parent series identity and one episode ID claimed by distinct file IDs. All other round-one gates pass.",
         "ca242c9fcab7abb63912402c62edae4ff56136c1 product and 8434df6ff26ce79751528ca327e641a1c78bb699 handoff require positive matching Sonarr parent identity, reject episode-to-file ambiguity, preserve valid season packs, and pass focused/race/root/nested guardrails with G-01 still fail-closed.",
         "2d366197a16517eab8abc8dcd975a167d0f8307e independent round-three review closes the prior identity gaps but reproduces one P1: a duplicate episode with one fileless row and one complete-file row can still report AlreadySatisfied in either order.",
-        "0bbf8405859ac604d9d05237badef45dd0ee7fbc product and fa4f98b0e1f227eb072f3263d1973f6cab43c6de handoff validate every Sonarr episode ID before nil-file handling, reject contradictory fileless/file-bearing duplicates in either order, and pass focused/race/root/nested guardrails with G-01 still fail-closed."
+        "0bbf8405859ac604d9d05237badef45dd0ee7fbc product and fa4f98b0e1f227eb072f3263d1973f6cab43c6de handoff validate every Sonarr episode ID before nil-file handling, reject contradictory fileless/file-bearing duplicates in either order, and pass focused/race/root/nested guardrails with G-01 still fail-closed.",
+        "047b0e8069431584fede675e491b04e403920034 independent round-four approval confirms all X-06 P1/P2 probes pass under race, valid season-pack association remains intact, and G-01 still keeps native writes disabled."
       ],
       "review": {
-        "status": "changes_requested",
-        "decision": "changes_requested",
+        "status": "approved",
+        "decision": "approved",
         "reviewer": "/root/x05_reviewer",
-        "commit": "2d366197a16517eab8abc8dcd975a167d0f8307e",
-        "findings": [
-          "P1: a duplicate Sonarr episode with one fileless row and one complete-file row can produce AlreadySatisfied in either response order because nil-file rows are skipped before global episode identity validation."
-        ],
-        "round": 3
+        "commit": "047b0e8069431584fede675e491b04e403920034",
+        "findings": [],
+        "round": 4
       },
       "dispatch": {
         "assignedAt": "2026-09-15",
@@ -2228,10 +2225,10 @@
         "implementationCommit": "d131422a7319be22ccc6fba17a54a047c89e25d8",
         "handoffCommit": "e7047e143fae06d2871afc56337709fca339a311",
         "reviewSourceCommit": "d131422a7319be22ccc6fba17a54a047c89e25d8",
-        "status": "in_progress",
-        "reviewCommit": "2d366197a16517eab8abc8dcd975a167d0f8307e",
-        "reviewIntegrationCommit": "7e3f0cb36c449c5d9ac4d961c2429b598b270c3f",
-        "reviewRound": 3,
+        "status": "done",
+        "reviewCommit": "047b0e8069431584fede675e491b04e403920034",
+        "reviewIntegrationCommit": "1f84c50a1b6abff82cacd33a86e05dc94256609f",
+        "reviewRound": 4,
         "correctionRound": 3,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "ca242c9fcab7abb63912402c62edae4ff56136c1",
@@ -2240,10 +2237,12 @@
         "correctionReviewPath": "docs/execution/handoffs/X-06-review-round4.md",
         "correctionHandoffPath": "docs/execution/handoffs/X-06-correction-round3.md",
         "correctionReviewer": "/root/x05_reviewer",
-        "correctionStatus": "review_pending",
+        "correctionStatus": "approved",
         "correctionImplementationCommit": "0bbf8405859ac604d9d05237badef45dd0ee7fbc",
         "correctionHandoffCommit": "fa4f98b0e1f227eb072f3263d1973f6cab43c6de",
         "correctionReviewSourceCommit": "0bbf8405859ac604d9d05237badef45dd0ee7fbc",
+        "correctionReviewCommit": "047b0e8069431584fede675e491b04e403920034",
+        "correctionReviewIntegrationCommit": "1f84c50a1b6abff82cacd33a86e05dc94256609f",
         "dependencyCommits": {
           "X-05": "165f22c2d81c4123d2ab31cf00d7613cdba87054",
           "X-22": "ea41f1f49569a079696f091a6113ee4d97641df4"
@@ -2276,6 +2275,15 @@
           "sourceCommit": "ca242c9fcab7abb63912402c62edae4ff56136c1",
           "receipt": "docs/execution/handoffs/X-06-review-round3.md",
           "integratedCommit": "7e3f0cb36c449c5d9ac4d961c2429b598b270c3f"
+        },
+        {
+          "round": 4,
+          "reviewer": "/root/x05_reviewer",
+          "commit": "047b0e8069431584fede675e491b04e403920034",
+          "status": "approved",
+          "sourceCommit": "0bbf8405859ac604d9d05237badef45dd0ee7fbc",
+          "receipt": "docs/execution/handoffs/X-06-review-round4.md",
+          "integratedCommit": "1f84c50a1b6abff82cacd33a86e05dc94256609f"
         }
       ]
     },
@@ -4504,7 +4512,7 @@
       ]
     }
   },
-  "nextAction": "X-06 correction round three 0bbf8405859ac604d9d05237badef45dd0ee7fbc and handoff fa4f98b0e1f227eb072f3263d1973f6cab43c6de are ready for independent round-four review; keep G-01 blocked.",
+  "nextAction": "X-06 is approved and closed at 0bbf8405859ac604d9d05237badef45dd0ee7fbc. Dispatch the next dependency-ready lane while keeping G-01 blocked.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
