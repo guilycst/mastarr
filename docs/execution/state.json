@@ -2185,7 +2185,8 @@
         "8e811aa460d12eb374a623e87fb1d7531e015b3d X-06 correction round one binds writes to an exact observed preview, rejects contradictory read-back identities, sanitizes context errors and preserves explicit monitoring; da6b0aedfe27fe3a113974bd2744964b5e6c2214 records focused/race/root checks with G-01 still fail-closed.",
         "cf856714579f54c1cfe06fbc071d8ce89c8f6fe6 independent round-two review reproduces two P1 Sonarr read-back gaps: missing parent series identity and one episode ID claimed by distinct file IDs. All other round-one gates pass.",
         "ca242c9fcab7abb63912402c62edae4ff56136c1 product and 8434df6ff26ce79751528ca327e641a1c78bb699 handoff require positive matching Sonarr parent identity, reject episode-to-file ambiguity, preserve valid season packs, and pass focused/race/root/nested guardrails with G-01 still fail-closed.",
-        "2d366197a16517eab8abc8dcd975a167d0f8307e independent round-three review closes the prior identity gaps but reproduces one P1: a duplicate episode with one fileless row and one complete-file row can still report AlreadySatisfied in either order."
+        "2d366197a16517eab8abc8dcd975a167d0f8307e independent round-three review closes the prior identity gaps but reproduces one P1: a duplicate episode with one fileless row and one complete-file row can still report AlreadySatisfied in either order.",
+        "0bbf8405859ac604d9d05237badef45dd0ee7fbc product and fa4f98b0e1f227eb072f3263d1973f6cab43c6de handoff validate every Sonarr episode ID before nil-file handling, reject contradictory fileless/file-bearing duplicates in either order, and pass focused/race/root/nested guardrails with G-01 still fail-closed."
       ],
       "review": {
         "status": "changes_requested",
@@ -2234,15 +2235,15 @@
         "correctionRound": 3,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "ca242c9fcab7abb63912402c62edae4ff56136c1",
-        "correctionDispatchCommit": null,
+        "correctionDispatchCommit": "f7eefef1abae951cb25c1883e84e6249b8b20e5f",
         "correctionCheckout": "shared main",
         "correctionReviewPath": "docs/execution/handoffs/X-06-review-round4.md",
         "correctionHandoffPath": "docs/execution/handoffs/X-06-correction-round3.md",
         "correctionReviewer": "/root/x05_reviewer",
-        "correctionStatus": "dispatched",
-        "correctionImplementationCommit": null,
-        "correctionHandoffCommit": null,
-        "correctionReviewSourceCommit": null,
+        "correctionStatus": "review_pending",
+        "correctionImplementationCommit": "0bbf8405859ac604d9d05237badef45dd0ee7fbc",
+        "correctionHandoffCommit": "fa4f98b0e1f227eb072f3263d1973f6cab43c6de",
+        "correctionReviewSourceCommit": "0bbf8405859ac604d9d05237badef45dd0ee7fbc",
         "dependencyCommits": {
           "X-05": "165f22c2d81c4123d2ab31cf00d7613cdba87054",
           "X-22": "ea41f1f49569a079696f091a6113ee4d97641df4"
@@ -4503,7 +4504,7 @@
       ]
     }
   },
-  "nextAction": "X-06 round-three review 2d366197a16517eab8abc8dcd975a167d0f8307e found one P1 fileless/file-bearing Sonarr duplicate case. Queue a global episode-identity correction from ca242c9fcab7abb63912402c62edae4ff56136c1; keep G-01 blocked.",
+  "nextAction": "X-06 correction round three 0bbf8405859ac604d9d05237badef45dd0ee7fbc and handoff fa4f98b0e1f227eb072f3263d1973f6cab43c6de are ready for independent round-four review; keep G-01 blocked.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
