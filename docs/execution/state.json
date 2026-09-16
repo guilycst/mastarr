@@ -15,9 +15,7 @@
   "resumeDocument": "docs/execution/RESUME.md",
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
-  "activeImplementationTasks": [
-    "W-03"
-  ],
+  "activeImplementationTasks": [],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
   "guardrailBaseline": {
@@ -3187,10 +3185,10 @@
       "reviewIntegrationCommit": "a3054fdf92a4ff85300d2af29512f9c79b786440"
     },
     "W-03": {
-      "status": "in_progress",
+      "status": "done",
       "owner": "/root/x05_implementer",
       "baseSha": "a040db83627735e62fb90d8db8b2c06198eedef4",
-      "integratedSha": null,
+      "integratedSha": "a4ad5a0fcfee724491513224f6b082a25be82e0a",
       "evidence": [
         "dispatched from a040db83627735e62fb90d8db8b2c06198eedef4 after W-01 (6af605497e62ac182d0d4d4e222cac81aa4232e1) and W-02 (ff23e1b939f04c1136cba8134d3c9ae505094dba) approvals plus F-04, X-06, X-07, X-08 and X-09 approvals.",
         "F-05 is approved for safe fail-closed behavior but remains capability-blocked for Linux move, rename, permanent-delete and cross-device source removal. Action handlers must propagate that explicit capability result and must not enable mutation by assumption.",
@@ -3211,21 +3209,19 @@
         "5c3068edccd8e6b22f6fd5a107f939468c9f2375 W-03 correction round two review closed manifest mapping, duplicate/foreign fail-closed behavior, and W-02 durable partial-effect integration, but found P2 mixed delete state loss: mapFilesystemAffected overwrites read-proven EffectAlreadySatisfied with aggregate OutcomeApplied. Direct and real SQLite executor probes failed 10/10 under race; full offline guardrails/cross-builds passed.",
         "db3317674c592bc49761b0d653153d8bb5bc72e6 state checkpoint dispatched W-03 correction round three to /root/x05_implementer from 4871bc4999f18f2d6aa119e366ca949b6886ac45; owned paths remain internal/actions/ and docs/execution/handoffs/W-03-correction-round3.md, shared main, with GOWORK=off focused/race/vet/offline guardrail/module/cross-build checks.",
         "a4ad5a0fcfee724491513224f6b082a25be82e0a W-03 correction round three preserves read-proven EffectAlreadySatisfied entries in mixed filesystem manifests while terminalizing only pending matched effects; direct handler and real SQLite executor regressions passed, including race repetitions.",
-        "d1fb6c37f8254455e6dc773a57ec707639004dcd records the correction handoff and exact checks; independent round-four review is now pending."
+        "d1fb6c37f8254455e6dc773a57ec707639004dcd records the correction handoff and exact checks; independent round-four review is now pending.",
+        "ad858bf1e82413a3c44947a2d60a662523340199 independent W-03 correction round-three review approved product a4ad5a0fcfee724491513224f6b082a25be82e0a; no P1/P2 findings, mixed-state handler and SQLite executor probes pass 10/10 under race, and full offline guardrails/cross-builds pass.",
+        "W-03 closure is recorded from state checkpoint 395413fe60878715e89195501e34bd4f8bf1031e; receipt ad858bf1e82413a3c44947a2d60a662523340199 is integrated by the coordinator in the next state commit."
       ],
       "review": {
-        "status": "changes_requested",
-        "decision": "changes_requested",
+        "status": "approved",
+        "decision": "approved",
         "reviewer": "/root/x05_reviewer",
-        "commit": "577a15a61947ac44ec7621d381b63a4a6cb87a1a",
-        "integratedCommit": "3336ff668d1e47daee8407d3c8067fe125b06964",
-        "findings": [
-          "P1 R1: partial Arr import and partial filesystem materialization are relabeled pending with SafeToRetry=true, violating the no-effect reconciliation contract.",
-          "P1 R2: when FilesystemActionPort returns an affected effect plus ErrSourceChanged, the handler reports Dispatched=false and loses the effect evidence.",
-          "P1 R3: native rename accepts a source-root download to a destination-root library request, calls RenameFile only in the source root, and reports the library target applied.",
-          "P1 R4: one globally registered filesystem handler is hard-bound to one LinkedClient.Ref, rejects other valid stopped refs, and Reservations omits client:<ref>."
-        ],
-        "round": 1
+        "commit": "ad858bf1e82413a3c44947a2d60a662523340199",
+        "findings": [],
+        "round": 4,
+        "integratedCommit": null,
+        "correctionCommit": "a4ad5a0fcfee724491513224f6b082a25be82e0a"
       },
       "dispatch": {
         "assignedAt": "2026-09-16",
@@ -3259,7 +3255,7 @@
         "reviewPath": "docs/execution/handoffs/W-03-review-round1.md",
         "handoffPath": "docs/execution/handoffs/W-03.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "review_pending",
+        "status": "done",
         "dependencyCommits": {
           "W-01": "6af605497e62ac182d0d4d4e222cac81aa4232e1",
           "W-02": "ff23e1b939f04c1136cba8134d3c9ae505094dba",
@@ -3279,8 +3275,8 @@
         "implementationCommit": "fc2bab90bd3db21c6801842babee6b473e2742da",
         "handoffCommit": "19b13f86411c74ae2bec249e0481de8ebcf16187",
         "reviewSourceCommit": "fc2bab90bd3db21c6801842babee6b473e2742da",
-        "correctionStatus": "review_pending",
-        "reviewCommit": null,
+        "correctionStatus": "approved",
+        "reviewCommit": "ad858bf1e82413a3c44947a2d60a662523340199",
         "reviewIntegrationCommit": null,
         "correctionRound": 3,
         "correctionOwner": "/root/x05_implementer",
@@ -3303,7 +3299,9 @@
         "priorCorrectionHandoffCommit": "344b9be5010d9bec7666602dc5d67049ba727850",
         "priorCorrectionReviewCommit": "5c3068edccd8e6b22f6fd5a107f939468c9f2375",
         "priorCorrectionReviewIntegrationCommit": "3e2ea41ef8fd40be19bedf24b652718c22cc7beb",
-        "correctionDispatchCheckpoint": "db3317674c592bc49761b0d653153d8bb5bc72e6"
+        "correctionDispatchCheckpoint": "db3317674c592bc49761b0d653153d8bb5bc72e6",
+        "correctionReviewCommit": "ad858bf1e82413a3c44947a2d60a662523340199",
+        "correctionReviewIntegrationCommit": null
       },
       "reviewHistory": [
         {
@@ -3336,12 +3334,14 @@
         {
           "round": 4,
           "reviewer": "/root/x05_reviewer",
-          "commit": null,
-          "status": "review_pending",
+          "commit": "ad858bf1e82413a3c44947a2d60a662523340199",
+          "status": "approved",
           "sourceCommit": "a4ad5a0fcfee724491513224f6b082a25be82e0a",
-          "receipt": "docs/execution/handoffs/W-03-review-round4.md"
+          "receipt": "docs/execution/handoffs/W-03-review-round4.md",
+          "integratedCommit": null
         }
-      ]
+      ],
+      "implementationCommit": "a4ad5a0fcfee724491513224f6b082a25be82e0a"
     },
     "W-04": {
       "status": "planned",
@@ -5294,7 +5294,7 @@
       ]
     }
   },
-  "nextAction": "W-03 correction round three is ready for independent review from a4ad5a0fcfee724491513224f6b082a25be82e0a; review only internal/actions and the correction handoff, then either integrate the receipt and close W-03 or dispatch the next bounded correction. Keep F-05 capability-blocked and G-01 Arr native writes blocked.",
+  "nextAction": "W-03 is approved and closed. Before dispatching W-04, record a fresh base checkpoint and assign the ordered workflow/review decision lane to non-overlapping internal/workflows/ and internal/reviews/ paths; keep F-05 capability-blocked and G-01 Arr native writes blocked.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
