@@ -3346,7 +3346,7 @@
       "implementationCommit": "a4ad5a0fcfee724491513224f6b082a25be82e0a"
     },
     "W-04": {
-      "status": "in_review",
+      "status": "changes_requested",
       "owner": "/root",
       "baseSha": "4e5c46d503949a493067ae57d3395545a36021f8",
       "integratedSha": null,
@@ -3364,16 +3364,20 @@
         "W-04 is in independent review from state checkpoint 704ec47524cef4108a3e947c0c0166f6894ed610; no integration decision is recorded until the reviewer clears both product paths.",
         "Independent W-04 round-one receipt 1b22197ff8fa81ec4d836c6ad113315ffabf4c9d integrated as a1f542a: R1 workflow deadline not bound to action_runs deadline_at, R2 rejection projection split across transactions, R3 AddStep trusts caller At; focused/race/vet and full offline guardrails pass, independent probes reproduce all three.",
         "Correction round 1 dispatched from state checkpoint f4ebcea to /root/x05_implementer: fix review R1/R2/R3 in internal/workflows/ and internal/reviews/, add deadline-claim, rejection-recovery/crash-boundary, and trusted-clock AddStep regressions; product and handoff commits required, no state edits.",
-        "Correction round one product 4a43bd68c281559c0cd80386415b05db4df9e19d and handoff c0b3824aa52c3e0001614417c71bf96002a6e2c3 complete from dispatch checkpoint e0b82fae28ee4419188562befa382d1917567ea6; R1/R2/R3 regressions and full offline guardrails pass, ready for independent correction review."
+        "Correction round one product 4a43bd68c281559c0cd80386415b05db4df9e19d and handoff c0b3824aa52c3e0001614417c71bf96002a6e2c3 complete from dispatch checkpoint e0b82fae28ee4419188562befa382d1917567ea6; R1/R2/R3 regressions and full offline guardrails pass, ready for independent correction review.",
+        "Independent W-04 correction round-one receipt 78ccbb8b234b4265280c3383dfad2ac782804b48 integrated as 1edd9d3: R1/R3 and atomic R2 crash boundary closed; R2a rejected current step projects running instead of needs_review, R2b fresh-key replay rewrites decisionReason against immutable review row. Focused/race/vet/full offline guardrails pass; two P2 findings remain."
       ],
       "review": {
-        "status": "pending",
-        "decision": "pending",
+        "status": "changes_requested",
+        "decision": "changes_requested",
         "reviewer": "/root/x05_reviewer",
-        "commit": null,
-        "findings": [],
+        "commit": "78ccbb8b234b4265280c3383dfad2ac782804b48",
+        "findings": [
+          "R2a P2: rejected current step remains blocked while aggregate workflow projects running instead of needs_review after restart and Sync.",
+          "R2b P2: fresh-key same-decision replay can overwrite workflow step decisionReason while immutable review_decisions.reason remains original."
+        ],
         "round": 2,
-        "integratedCommit": null
+        "integratedCommit": "1edd9d3"
       },
       "dispatch": {
         "assignedAt": "2026-09-16",
@@ -3405,7 +3409,7 @@
         "reviewPath": "docs/execution/handoffs/W-04-review-round2.md",
         "handoffPath": "docs/execution/handoffs/W-04.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "review_pending",
+        "status": "changes_requested",
         "dependencyCommits": {
           "W-03-approved": "a4ad5a0fcfee724491513224f6b082a25be82e0a",
           "W-03-state-closure": "4e5c46d503949a493067ae57d3395545a36021f8"
@@ -3417,8 +3421,8 @@
         "implementationCommit": "2821b5bf8926849423c93fa7e862fd38b83035bc",
         "handoffCommit": "704ec47524cef4108a3e947c0c0166f6894ed610",
         "reviewSourceCommit": "4a43bd68c281559c0cd80386415b05db4df9e19d",
-        "reviewCommit": null,
-        "reviewIntegrationCommit": null,
+        "reviewCommit": "78ccbb8b234b4265280c3383dfad2ac782804b48",
+        "reviewIntegrationCommit": "1edd9d3",
         "previousAttempt": {
           "owner": "/root/x05_implementer",
           "status": "interrupted",
@@ -3486,7 +3490,7 @@
           "reason": "two bounded implementer attempts produced no workflow files; preserve the completed review slice and implement the minimum ordered composition directly",
           "status": "complete"
         },
-        "correctionStatus": "review_pending",
+        "correctionStatus": "changes_requested",
         "correctionRound": 1,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "e0b82fae28ee4419188562befa382d1917567ea6",
@@ -3496,8 +3500,8 @@
         "correctionReviewer": "/root/x05_reviewer",
         "priorReviewCommit": "1b22197ff8fa81ec4d836c6ad113315ffabf4c9d",
         "priorReviewIntegrationCommit": "a1f542a",
-        "waitingOn": "/root/x05_reviewer",
-        "waitingReason": "independent review of correction round one",
+        "waitingOn": null,
+        "waitingReason": null,
         "correctionImplementationCommit": "4a43bd68c281559c0cd80386415b05db4df9e19d",
         "correctionHandoffCommit": "c0b3824aa52c3e0001614417c71bf96002a6e2c3",
         "correctionReviewSourceCommit": "4a43bd68c281559c0cd80386415b05db4df9e19d"
@@ -3515,10 +3519,11 @@
         {
           "round": 2,
           "reviewer": "/root/x05_reviewer",
-          "commit": null,
-          "status": "review_pending",
+          "commit": "78ccbb8b234b4265280c3383dfad2ac782804b48",
+          "status": "changes_requested",
           "sourceCommit": "4a43bd68c281559c0cd80386415b05db4df9e19d",
-          "receipt": "docs/execution/handoffs/W-04-review-round2.md"
+          "receipt": "docs/execution/handoffs/W-04-review-round2.md",
+          "integratedCommit": "1edd9d3"
         }
       ]
     },
@@ -5465,7 +5470,7 @@
       ]
     }
   },
-  "nextAction": "W-04 correction round 1 product 4a43bd68c281559c0cd80386415b05db4df9e19d and handoff c0b3824aa52c3e0001614417c71bf96002a6e2c3 are ready for independent review. Review against R1/R2/R3 and record an exact receipt before integration. Keep F-05 capability-blocked and G-01 Arr native writes blocked.",
+  "nextAction": "W-04 correction review round 2 is changes_requested from source 4a43bd68c281559c0cd80386415b05db4df9e19d. Correct R2a rejected-step aggregate projection and R2b immutable rejection replay metadata, then rerun independent review. Keep F-05 capability-blocked and G-01 Arr native writes blocked.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
