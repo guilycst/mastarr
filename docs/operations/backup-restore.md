@@ -54,7 +54,12 @@ parent. Mastarr never overwrites an existing backup.
    removed, replaced or changed after verification fails closed. Only a fully
    verified tree is published through the platform's atomic no-replace
    directory operation, followed by a complete destination read-back before
-   success is returned.
+   success is returned. If that final read-back finds content drift, publication
+   attempts a second no-replace rename of the operation-owned directory back to
+   its private stage name. A proven rollback leaves the requested destination
+   absent and returns an incomplete result; if identity or rollback proof is
+   unavailable, the visible directory is retained and the result is uncertain
+   for read-only reconciliation.
 4. Treat the completed backup directory as sensitive. It contains the key
    that can decrypt the database's credential envelopes. Do not put it in a
    public artifact store or log its contents. A key supplied only through an
@@ -167,10 +172,12 @@ inspection and never publishes a destination. Publication uses a reviewed
 no-replace primitive on
 Linux and macOS. Other platforms return `ErrPublicationUnsupported` rather
 than falling back to a replace-capable rename. If the containing-parent sync
-fails after the atomic rename, or the post-publication child-set read-back
-detects a changed destination, the operation returns `ErrPublicationUncertain`;
-the destination is a visible effect and must be reconciled with `Verify` before
-retrying.
+fails after the atomic rename, the operation returns `ErrPublicationUncertain`
+and retains the visible effect for reconciliation. If post-publication
+read-back detects changed content, it first attempts an identity-checked,
+no-replace rollback to the private stage; successful rollback returns an
+incomplete result with no destination, while failed rollback returns
+`ErrPublicationUncertain` and retains the visible effect for reconciliation.
 
 The backup procedure does not claim live service availability. After an
 isolated restore has passed, upstream observations must be reacquired through

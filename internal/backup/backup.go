@@ -450,7 +450,11 @@ func Create(ctx context.Context, source Source, destination string) (Manifest, e
 		if _, err := Verify(checkCtx, stage.path); err != nil {
 			return err
 		}
-		return stagingManifestMatches(checkCtx, stage.path, manifestBytes, manifestDigest)
+		if err := stagingManifestMatches(checkCtx, stage.path, manifestBytes, manifestDigest); err != nil {
+			return err
+		}
+		afterFinalStagingRead(stage)
+		return nil
 	}
 	stage.postCheck = func(checkCtx context.Context, published string) error {
 		if _, err := Verify(checkCtx, published); err != nil {
@@ -565,6 +569,7 @@ func Restore(ctx context.Context, archive, destination string) (RestoreReport, e
 		if err := stagingManifestMatches(checkCtx, stage.path, manifestBytes, manifestDigest); err != nil {
 			return err
 		}
+		afterFinalStagingRead(stage)
 		report = finalReport
 		return nil
 	}
@@ -1402,6 +1407,11 @@ func writeManifestBytesContext(ctx context.Context, directory string, data []byt
 // the narrow window between the first identity check and native publication.
 var beforeStagingPublication = func(*stagingDirectory) {}
 
+// afterFinalStagingRead is a package-local test seam. Production callers
+// cannot install it; it lets synthetic tests mutate a child after the final
+// private read and exercise publication rollback.
+var afterFinalStagingRead = func(*stagingDirectory) {}
+
 func publishDirectory(staging, destination, parent string) error {
 	stage, err := openStagingDirectory(staging)
 	if err != nil {
@@ -1452,9 +1462,15 @@ func publishDirectoryBoundContext(ctx context.Context, stage *stagingDirectory, 
 	if stage.postCheck != nil {
 		if err := stage.postCheck(ctx, destination); err != nil {
 			// A visible destination exists, but its complete child set or
-			// report did not survive the publication boundary. Leave it for
-			// read-only reconciliation rather than claiming success.
-			return fmt.Errorf("%w: published content: %w", ErrPublicationUncertain, err)
+			// report did not survive the publication boundary. Move the
+			// operation-owned object back to its private name when the
+			// platform can prove a no-replace rollback. If that proof is not
+			// available, preserve the visible effect for reconciliation.
+			if rollbackErr := rollbackPublishedDirectory(stage, destination, parent); rollbackErr == nil {
+				return fmt.Errorf("%w: published content rejected and rolled back: %w", ErrIncomplete, err)
+			} else {
+				return fmt.Errorf("%w: published content: %v; rollback: %w", ErrPublicationUncertain, err, rollbackErr)
+			}
 		}
 	}
 	if err := syncPublishedParent(parent); err != nil {

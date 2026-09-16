@@ -900,6 +900,108 @@ func TestRestoreRejectsStagingManifestMutationBeforePublication(t *testing.T) {
 	}
 }
 
+func TestCreateRollsBackChildMutationAfterFinalRead(t *testing.T) {
+	previous := afterFinalStagingRead
+	called := false
+	afterFinalStagingRead = func(candidate *stagingDirectory) {
+		t.Helper()
+		called = true
+		before, err := candidate.file.Stat()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(candidate.path, "late-child"), []byte("changed after final read"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		after, err := candidate.file.Stat()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !os.SameFile(before, after) {
+			t.Fatal("late child mutation replaced the staging root")
+		}
+	}
+	t.Cleanup(func() { afterFinalStagingRead = previous })
+
+	fixture := newBackupFixture(t)
+	destination := filepath.Join(t.TempDir(), "archive")
+	_, err := Create(context.Background(), fixture.source(true), destination)
+	if !called {
+		t.Fatal("final-read mutation callback did not run")
+	}
+	if errors.Is(err, ErrPublicationUnsupported) {
+		t.Skipf("platform does not provide no-replace publication rollback: %v", err)
+	}
+	if !errors.Is(err, ErrIncomplete) {
+		t.Fatalf("late child mutation create error = %v, want ErrIncomplete", err)
+	}
+	if _, statErr := os.Stat(destination); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("late child mutation left destination published, stat error = %v", statErr)
+	}
+}
+
+func TestRestoreRollsBackManifestMutationAfterFinalRead(t *testing.T) {
+	fixture := newBackupFixture(t)
+	archive := filepath.Join(t.TempDir(), "archive")
+	if _, err := Create(context.Background(), fixture.source(true), archive); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	previous := afterFinalStagingRead
+	called := false
+	afterFinalStagingRead = func(candidate *stagingDirectory) {
+		t.Helper()
+		called = true
+		before, err := candidate.file.Stat()
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(candidate.path, manifestName)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var manifest Manifest
+		if err := json.Unmarshal(data, &manifest); err != nil {
+			t.Fatal(err)
+		}
+		manifest.CreatedAt = manifest.CreatedAt.Add(24 * time.Hour)
+		mutated, err := marshalManifest(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, mutated, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		after, err := candidate.file.Stat()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !os.SameFile(before, after) {
+			t.Fatal("late manifest mutation replaced the staging root")
+		}
+	}
+	t.Cleanup(func() { afterFinalStagingRead = previous })
+
+	target := filepath.Join(t.TempDir(), "restored")
+	_, err := Restore(context.Background(), archive, target)
+	if !called {
+		t.Fatal("final-read mutation callback did not run")
+	}
+	if errors.Is(err, ErrPublicationUnsupported) {
+		t.Skipf("platform does not provide no-replace publication rollback: %v", err)
+	}
+	if !errors.Is(err, ErrIncomplete) {
+		t.Fatalf("late manifest mutation restore error = %v, want ErrIncomplete", err)
+	}
+	if _, statErr := os.Stat(target); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("late manifest mutation left target published, stat error = %v", statErr)
+	}
+}
+
 func TestRestoreRejectsSameInodeManifestMutation(t *testing.T) {
 	fixture := newBackupFixture(t)
 	archive := filepath.Join(t.TempDir(), "archive")
