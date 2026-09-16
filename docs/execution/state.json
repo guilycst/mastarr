@@ -4162,7 +4162,7 @@
       "review": null
     },
     "X-22": {
-      "status": "review_pending",
+      "status": "in_progress",
       "owner": "/root/x05_implementer",
       "baseSha": "40441e8910e69f77904983db4c4014f6c73864df",
       "integratedSha": null,
@@ -4174,7 +4174,16 @@
         "The standalone Seerr module is public and read-only. Preserve the root adapter port boundary, pagination coverage and unknown availability semantics; do not add Seerr writes or generated DTO leakage.",
         "G-01 remains open. This lane must not mutate a live service and must record any unpublished-module bootstrap blocker instead of adding a local replace."
       ],
-      "review": null,
+      "review": {
+        "status": "changes_requested",
+        "decision": "changes_requested",
+        "reviewer": "/root/x05_reviewer",
+        "commit": "792eee9380edd3b48aa85e3cf96fab2cad0bac81",
+        "findings": [
+          "P2: request mapping uses Seerr source updatedAt/createdAt as ports.RequestRecord.ObservedAt; preserve source lifecycle timestamps separately and use the current read time for ObservedAt. Add old, future, created-only and missing-media timestamp regressions."
+        ],
+        "round": 1
+      },
       "dispatch": {
         "assignedAt": "2026-09-15",
         "model": "gpt-5.6-luna",
@@ -4204,13 +4213,34 @@
         "implementationCommit": "f998ae5d68fbcc8853c8b5180835a9008c60a68b",
         "handoffCommit": "4fd1f38c76c00abf59e89edd79a5d2d9a7cb2da6",
         "reviewSourceCommit": "f998ae5d68fbcc8853c8b5180835a9008c60a68b",
-        "status": "review_pending",
+        "status": "in_progress",
+        "reviewCommit": "792eee9380edd3b48aa85e3cf96fab2cad0bac81",
+        "reviewIntegrationCommit": "6419e0ca792132ebc50086618d879c3c12f623bb",
+        "reviewRound": 1,
+        "correctionRound": 1,
+        "correctionOwner": "/root/x05_implementer",
+        "correctionBaseSha": "f998ae5d68fbcc8853c8b5180835a9008c60a68b",
+        "correctionReviewPath": "docs/execution/handoffs/X-22-review-round2.md",
+        "correctionHandoffPath": "docs/execution/handoffs/X-22-correction-round1.md",
+        "correctionReviewer": "/root/x05_reviewer",
+        "correctionStatus": "dispatched",
         "dependencyCommits": {
           "X-04": "b5594b668185245304f70a0f46c1f77ae7b76d7b",
           "X-18": "a0670e0a60b7b4920ff8a672bfa311d9b93a0ce1",
           "C-06": "5e53134e40322b512efef1865d78da2da6368e5b"
         }
-      }
+      },
+      "reviewHistory": [
+        {
+          "round": 1,
+          "reviewer": "/root/x05_reviewer",
+          "commit": "792eee9380edd3b48aa85e3cf96fab2cad0bac81",
+          "status": "changes_requested",
+          "sourceCommit": "f998ae5d68fbcc8853c8b5180835a9008c60a68b",
+          "receipt": "docs/execution/handoffs/X-22-review-round1.md",
+          "integratedCommit": "6419e0ca792132ebc50086618d879c3c12f623bb"
+        }
+      ]
     },
     "C-06": {
       "status": "done",
@@ -4355,7 +4385,7 @@
       ]
     }
   },
-  "nextAction": "X-22 product f998ae5d68fbcc8853c8b5180835a9008c60a68b and handoff 4fd1f38c76c00abf59e89edd79a5d2d9a7cb2da6 are ready. Queue independent review against the exact product tree.",
+  "nextAction": "X-22 review round one requested a P2 correction: restore read-time ObservedAt while preserving Seerr source timestamps, add timestamp regression probes, then request independent round-two review.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
