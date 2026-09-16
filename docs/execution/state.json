@@ -15,7 +15,9 @@
   "resumeDocument": "docs/execution/RESUME.md",
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
-  "activeImplementationTasks": [],
+  "activeImplementationTasks": [
+    "X-08"
+  ],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
   "guardrailBaseline": {
@@ -2517,12 +2519,44 @@
       ]
     },
     "X-08": {
-      "status": "planned",
-      "owner": null,
-      "baseSha": null,
+      "status": "in_progress",
+      "owner": "/root/x05_implementer",
+      "baseSha": "ddeab139e6ca2de6ef762c77c1855cd9b413702e",
       "integratedSha": null,
-      "evidence": [],
-      "review": null
+      "evidence": [
+        "dispatched after D-03, X-01 and X-02 approvals; owns only internal/descriptors/ and its handoff.",
+        "Capture exact original descriptor bytes only from a verified upstream export or configured mounted descriptor directory. Keep storage restricted and root-confined, persist digest/provenance/availability metadata, and keep raw bytes out of ordinary responses and logs.",
+        "Prove unavailable and malformed sources explicitly, make reviewed deletion separate and idempotent, and use synthetic fixtures only. No live descriptor, credential, tracker URL, private coordinate or runtime mount."
+      ],
+      "review": null,
+      "dispatch": {
+        "assignedAt": "2026-09-16",
+        "model": "gpt-5.6-luna",
+        "reasoning": "max",
+        "role": "implementer",
+        "baseSha": "ddeab139e6ca2de6ef762c77c1855cd9b413702e",
+        "ownedPaths": [
+          "internal/descriptors/",
+          "docs/execution/handoffs/X-08.md"
+        ],
+        "checkout": "shared main",
+        "expectedChecks": [
+          "A-06",
+          "A-42",
+          "exact descriptor capture only from verified export or configured mounted directory",
+          "restricted root-confined storage, digest and provenance metadata, explicit unavailable states",
+          "raw descriptor bytes absent from ordinary response/log paths",
+          "reviewed deletion is exact-scope, idempotent and preserves audit metadata",
+          "synthetic fixtures only with no credentials or private coordinates",
+          "GOWORK=off focused tests/race/vet/mod verify",
+          "generation/API/Vacuum/architecture/planning/lint/guardrails",
+          "Linux amd64/arm64 CGO-free compile"
+        ],
+        "reviewPath": "docs/execution/handoffs/X-08-review-round1.md",
+        "handoffPath": "docs/execution/handoffs/X-08.md",
+        "nextReviewer": "/root/x05_reviewer",
+        "status": "implementation"
+      }
     },
     "X-09": {
       "status": "done",
@@ -4831,7 +4865,7 @@
       ]
     }
   },
-  "nextAction": "D-04 is complete. X-08 retained descriptor service is ready to dispatch after this state checkpoint; qBittorrent/NZBGet client and adapter lanes are already complete. X-20 remains capability-blocked and G-01 remains open.",
+  "nextAction": "X-08 retained descriptor service is dispatched from ddeab139e6ca2de6ef762c77c1855cd9b413702e to /root/x05_implementer. qBittorrent/NZBGet client and adapter lanes are complete; X-20 remains capability-blocked and G-01 remains open.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
