@@ -3554,7 +3554,7 @@
       ]
     },
     "W-05": {
-      "status": "in_review",
+      "status": "changes_requested",
       "owner": "/root/x05_implementer",
       "baseSha": "fa30ec27a2adb894cd49f7a523c84ef75e80c2e8",
       "integratedSha": null,
@@ -3563,16 +3563,22 @@
         "Own only internal/trash/ and docs/execution/handoffs/W-05.md; use existing storage, ports, action handlers, and durable action_runs/janitor rows. Do not add an outbox, schema, API, adapter, client, or worker integration in this lane.",
         "F-05 remains explicit fail-closed for unsupported filesystem trash/restore/delete primitives; G-01 keeps Arr native registration/import writes blocked; Seerr remains read-only.",
         "Synthetic fixtures and temporary SQLite only; no credentials, private coordinates, live services, inventories, or media.",
-        "37ecdde36b56a6cd3d7d147cd8af1b49eba3f45a W-05 product and 91038f799d894b58d1c7f149606ac2c686515beb handoff committed; coordinator revalidated focused tests, race, and vet."
+        "37ecdde36b56a6cd3d7d147cd8af1b49eba3f45a W-05 product and 91038f799d894b58d1c7f149606ac2c686515beb handoff committed; coordinator revalidated focused tests, race, and vet.",
+        "Independent W-05 round-one receipt 32020e76227df6a5f79fc6fa1b98353ef2a07ac7 integrated as 70348806511436ca9921d79981b30afe6ea92e70: R1 approved early purge is unwired and nonfunctional, R2 foreign affected entries are accepted, R3 held trash replay falsely reports already satisfied, R4 stop evidence is overwritten; independent ordinary/race probes and full offline guardrails passed."
       ],
       "review": {
-        "status": "pending",
-        "decision": "pending",
+        "status": "changes_requested",
+        "decision": "changes_requested",
         "reviewer": "/root/x05_reviewer",
-        "commit": null,
-        "findings": [],
+        "commit": "32020e76227df6a5f79fc6fa1b98353ef2a07ac7",
+        "findings": [
+          "R1 P1: HardDelete/Force lacks immutable approval binding and ClaimApprovedEarlyPurge, and manual claim rolls back before deletion.",
+          "R2 P1: Trash, purge, and restore accept foreign, duplicate, or contradictory Affected evidence as exact success.",
+          "R3 P1: Held or failed trash replay returns nil and OutcomeAlreadySatisfied without payload materialization.",
+          "R4 P2: Successful trash finalization overwrites durable client stop/state evidence."
+        ],
         "round": 1,
-        "integratedCommit": null
+        "integratedCommit": "70348806511436ca9921d79981b30afe6ea92e70"
       },
       "dispatch": {
         "assignedAt": "2026-09-16",
@@ -3602,7 +3608,7 @@
         "reviewPath": "docs/execution/handoffs/W-05-review-round1.md",
         "handoffPath": "docs/execution/handoffs/W-05.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "in_review",
+        "status": "changes_requested",
         "dependencyCommits": {
           "W-04-product": "780c00e92498660c08b6ac67259bbb4147c58531",
           "W-04-review": "2aef896fd5d3e10dcefc80f8f5a094852d73fd27",
@@ -3613,21 +3619,24 @@
           "G-01": "Arr native registration/import writes remain blocked; this lane must not bypass that gate.",
           "X-14": "qBittorrent removal remains metadata-only with deleteFiles=false; stop and read-back are required before payload mutation."
         },
-        "waitingOn": "/root/x05_reviewer",
-        "waitingReason": "independent W-05 review against exact product checkpoint",
+        "waitingOn": "/root/x05_implementer",
+        "waitingReason": "bounded correction for W-05 review R1-R4",
         "implementationCommit": "37ecdde36b56a6cd3d7d147cd8af1b49eba3f45a",
         "handoffCommit": "91038f799d894b58d1c7f149606ac2c686515beb",
         "reviewSourceCommit": "37ecdde36b56a6cd3d7d147cd8af1b49eba3f45a",
-        "reviewRound": 1
+        "reviewRound": 1,
+        "reviewCommit": "32020e76227df6a5f79fc6fa1b98353ef2a07ac7",
+        "reviewIntegrationCommit": "70348806511436ca9921d79981b30afe6ea92e70"
       },
       "reviewHistory": [
         {
           "round": 1,
           "reviewer": "/root/x05_reviewer",
-          "commit": null,
-          "status": "pending",
+          "commit": "32020e76227df6a5f79fc6fa1b98353ef2a07ac7",
+          "status": "changes_requested",
           "sourceCommit": "37ecdde36b56a6cd3d7d147cd8af1b49eba3f45a",
-          "receipt": "docs/execution/handoffs/W-05-review-round1.md"
+          "receipt": "docs/execution/handoffs/W-05-review-round1.md",
+          "integratedCommit": "70348806511436ca9921d79981b30afe6ea92e70"
         }
       ],
       "implementationCommit": "37ecdde36b56a6cd3d7d147cd8af1b49eba3f45a",
@@ -5569,7 +5578,7 @@
       ]
     }
   },
-  "nextAction": "Independent reviewer /root/x05_reviewer audits W-05 product 37ecdde36b56a6cd3d7d147cd8af1b49eba3f45a against A-25/A-26/A-27/A-29/A-30/A-57; receipt goes to docs/execution/handoffs/W-05-review-round1.md.",
+  "nextAction": "Record and dispatch W-05 correction round one for R1-R4 from this checkpoint; keep F-05 unsupported filesystem actions and G-01 Arr writes fail-closed.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
