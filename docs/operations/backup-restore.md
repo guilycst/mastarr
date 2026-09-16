@@ -24,6 +24,11 @@ manifest, err := backup.Create(ctx, backup.Source{
 }, "/backups/mastarr-2026-09-16")
 ```
 
+`Source.Limits` can tighten the built-in aggregate entry, tree, byte, and
+manifest-size ceilings for a deployment. Zero fields use the package defaults;
+larger values never raise the safety ceilings. Restore and Verify always apply
+the built-in ceilings enforced by this binary.
+
 The example paths are illustrative. A deployment must pass the actual
 persistent paths for that instance and a stable, non-secret tree name for each
 trash root. The destination must be a new directory below an existing secure
@@ -43,8 +48,9 @@ parent. Mastarr never overwrites an existing backup.
    root. The package takes a consistent SQLite `VACUUM INTO` snapshot, copies
    the key and private trees into a private staging directory, records SHA-256
    digests, sizes, and permission bits, writes a versioned `manifest.json`,
-   syncs the staging directory, and publishes it with an atomic directory
-   rename.
+   syncs the staging directory, and runs the complete read-only `Verify` check
+   while it is still private. Only a fully verified tree is published through
+   the platform's atomic no-replace directory operation.
 4. Treat the completed backup directory as sensitive. It contains the key
    that can decrypt the database's credential envelopes. Do not put it in a
    public artifact store or log its contents. A key supplied only through an
@@ -66,10 +72,19 @@ The manifest contains no source absolute paths or plaintext credentials. It
 binds each file and retained directory to its type, mode, size, and digest and
 records the schema version captured from `schema_migrations`.
 
-If any precondition, snapshot, copy, digest, sync, or publication step fails,
-`Create` returns an incomplete result and does not publish the destination.
-The caller must retain the prior backup and investigate the failure; a partial
+If any precondition, snapshot, copy, digest, limit, verification, sync, or
+publication step fails, `Create` returns an incomplete result and does not
+publish the destination. A wrong key or a retained descriptor/trash reference
+that is absent from the captured tree is discovered before publication. The
+caller must retain the prior backup and investigate the failure; a partial
 directory is not a restore point.
+
+The source, archive, destination parent, and every overlap check must use
+canonical paths without application-controlled symlink ancestors or lexical
+aliases. Restore refuses equal or overlapping archive and target paths before
+creating staging, and verifies that the source archive identity is unchanged
+before publication. This keeps a known-good archive usable after a refused
+restore.
 
 ## Isolated restore check
 
@@ -84,10 +99,13 @@ report, err := backup.Restore(ctx,
 ```
 
 `Restore` rejects an existing target, parses the strict versioned manifest,
-rejects duplicate/unknown fields and unsafe paths, verifies every artifact,
-copies into a private staging directory, and runs the read-only `backup.Verify`
-check before publishing the target. It never starts workers, contacts an
-upstream service, or runs a migration downgrade.
+rejects duplicate/unknown fields and unsafe paths, rejects archive/target
+overlap, verifies every artifact, copies into a private staging directory, and
+runs the read-only `backup.Verify` check before publishing the target. It
+never starts workers, contacts an upstream service, or runs a migration
+downgrade. The database and manifest schema versions must not exceed the
+embedded migration ceiling; supported older versions remain eligible for the
+normal upward migration path after the isolated check.
 
 Verification requires all of the following:
 
@@ -126,11 +144,21 @@ those inputs are supplied externally.
 
 Missing or wrong key material, changed ciphertext, changed credential binding,
 edited descriptor/trash payloads, missing retained files, dirty schema state,
-unexpected files, symlinks, path traversal, duplicate manifest fields, and
-schema-version disagreement all fail closed. The target is not published and
-the key is never regenerated over an existing encrypted database. Preserve
+unexpected files, symlinks, path traversal, duplicate manifest fields,
+schema-version disagreement, and future schemas all fail closed. The target is
+not published and the key is never regenerated over an existing encrypted
+database. Preserve
 the failing archive for diagnosis and use a known-good backup after correcting
 the source or restore environment.
+
+File work is performed in bounded chunks with context checks and aggregate
+entry/tree/byte limits. Cancellation removes only private staging and never
+publishes a destination. Publication uses a reviewed no-replace primitive on
+Linux and macOS. Other platforms return `ErrPublicationUnsupported` rather
+than falling back to a replace-capable rename. If the containing-parent sync
+fails after the atomic rename, the operation returns `ErrPublicationUncertain`;
+the destination is a visible effect and must be reconciled with `Verify` before
+retrying.
 
 The backup procedure does not claim live service availability. After an
 isolated restore has passed, upstream observations must be reacquired through
