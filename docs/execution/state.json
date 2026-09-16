@@ -2417,7 +2417,9 @@
       "evidence": [
         "dispatched after X-05 approval; owns only internal/adapters/jellyfin/write/ and its synthetic fixtures and handoff.",
         "Implement the root Jellyfin refresh adapter over the published standalone client. Keep refresh acceptance separate from later library visibility, preserve the frozen refresh port, and leave item refresh unsupported unless the client contract and tested scope support it.",
-        "No Seerr writes, live services, credentials, local replace directives or go.work dependencies. Root adapters translate client DTOs and typed errors without leaking generated upstream types."
+        "No Seerr writes, live services, credentials, local replace directives or go.work dependencies. Root adapters translate client DTOs and typed errors without leaking generated upstream types.",
+        "38f4999910b01097b55ee1f09dd463bc9add981b X-09 product commit adds the Jellyfin refresh adapter and synthetic tests; 4ca6fbed07cc1766cc620f180e9a58ad80927de5 records its handoff.",
+        "f2bf30f97068f98606251b668528afd18e479e3f coordinator commit wires clients/jellyfin v0.0.0-20260915195508-4eee8e84eff5 into the root module without replace or go.work."
       ],
       "review": null,
       "dispatch": {
@@ -2445,7 +2447,11 @@
         "reviewPath": "docs/execution/handoffs/X-09-review-round1.md",
         "handoffPath": "docs/execution/handoffs/X-09.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "implementation"
+        "status": "review_pending",
+        "implementationCommit": "38f4999910b01097b55ee1f09dd463bc9add981b",
+        "handoffCommit": "4ca6fbed07cc1766cc620f180e9a58ad80927de5",
+        "reviewSourceCommit": "38f4999910b01097b55ee1f09dd463bc9add981b",
+        "manifestIntegrationCommit": "f2bf30f97068f98606251b668528afd18e479e3f"
       }
     },
     "W-01": {
@@ -4659,7 +4665,7 @@
       ]
     }
   },
-  "nextAction": "X-09 Jellyfin refresh adapter is dispatched from 19f38fc617468db414a77f3652ecc0fce7907395 to /root/x05_implementer; review the exact product and handoff before integration. X-20 transport and G-01 remain open.",
+  "nextAction": "X-09 product 38f4999910b01097b55ee1f09dd463bc9add981b and handoff 4ca6fbed07cc1766cc620f180e9a58ad80927de5 are ready for independent review; root dependency wiring is f2bf30f97068f98606251b668528afd18e479e3f. X-20 transport and G-01 remain open.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
