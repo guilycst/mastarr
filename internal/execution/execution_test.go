@@ -1868,6 +1868,69 @@ func TestAppendEvidencePreservesOpaqueJSONKeys(t *testing.T) {
 	}
 }
 
+func TestAppendEvidencePreservesIllFormedTopLevelArrayEvidence(t *testing.T) {
+	rawInvalidUTF8 := append([]byte(`[`), []byte(`"`)...)
+	rawInvalidUTF8 = append(rawInvalidUTF8, 0xff)
+	rawInvalidUTF8 = append(rawInvalidUTF8, []byte(`"]`)...)
+	tests := []struct {
+		name      string
+		input     json.RawMessage
+		wantPrior bool
+	}{
+		{
+			name:      "escaped unpaired surrogate",
+			input:     json.RawMessage(`["\ud800"]`),
+			wantPrior: true,
+		},
+		{
+			name:      "raw invalid UTF-8",
+			input:     rawInvalidUTF8,
+			wantPrior: true,
+		},
+		{
+			name:  "lossless string array stays compact",
+			input: json.RawMessage(`["source_marker"]`),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := appendEvidence(test.input, "dispatch_result_unreported")
+			if !json.Valid(got) {
+				t.Fatalf("annotated evidence is invalid JSON: %s", got)
+			}
+			if !test.wantPrior {
+				var compact map[string]json.RawMessage
+				if err := json.Unmarshal(got, &compact); err != nil {
+					t.Fatalf("compact top-level array evidence decode: %v", err)
+				}
+				if _, ok := compact["_mastarr_prior"]; ok {
+					t.Fatalf("lossless top-level array unexpectedly wrapped prior: %s", got)
+				}
+				var markers []string
+				if err := json.Unmarshal(compact["evidence"], &markers); err != nil || !equalStrings(markers, []string{"source_marker", "dispatch_result_unreported"}) {
+					t.Fatalf("lossless top-level array markers = %v, want source and unreported markers", markers)
+				}
+				return
+			}
+			if !jsonObjectHasUniqueKeys(got) {
+				t.Fatalf("annotated evidence has duplicate top-level keys: %s", got)
+			}
+			var envelope map[string]json.RawMessage
+			if err := json.Unmarshal(got, &envelope); err != nil {
+				t.Fatalf("annotated evidence object decode: %v", err)
+			}
+			prior, ok := envelope["_mastarr_prior"]
+			if test.wantPrior && (!ok || !bytes.Equal(bytes.TrimSpace(prior), bytes.TrimSpace(test.input))) {
+				t.Fatalf("raw top-level array prior = %s, want %s", prior, test.input)
+			}
+			markers, ok := decodeExecutionMarkers(envelope["_mastarr_execution_markers"])
+			if !ok || !equalStrings(markers, []string{"dispatch_result_unreported"}) {
+				t.Fatalf("top-level array markers = %v, want unreported marker", markers)
+			}
+		})
+	}
+}
+
 func TestPartialDispatchPreservesIllFormedMarkerEvidence(t *testing.T) {
 	rawInvalidUTF8 := append([]byte(`{"_mastarr_execution_markers":["`), 0xff)
 	rawInvalidUTF8 = append(rawInvalidUTF8, []byte(`"],"approved_scope":"two.bin"}`)...)
@@ -1939,6 +2002,86 @@ func TestPartialDispatchPreservesIllFormedMarkerEvidence(t *testing.T) {
 			}
 			if handler.dispatchCalls() != 1 || handler.reconcileCalls() != 1 {
 				t.Fatalf("ill-formed partial calls = dispatch %d reconcile %d, want one dispatch and one reconciliation", handler.dispatchCalls(), handler.reconcileCalls())
+			}
+		})
+	}
+}
+
+func TestPartialDispatchPreservesIllFormedTopLevelArrayEvidence(t *testing.T) {
+	rawInvalidUTF8 := append([]byte(`[`), []byte(`"`)...)
+	rawInvalidUTF8 = append(rawInvalidUTF8, 0xff)
+	rawInvalidUTF8 = append(rawInvalidUTF8, []byte(`"]`)...)
+	tests := []struct {
+		name     string
+		evidence json.RawMessage
+	}{
+		{
+			name:     "escaped unpaired surrogate",
+			evidence: json.RawMessage(`["\ud800"]`),
+		},
+		{
+			name:     "raw invalid UTF-8",
+			evidence: rawInvalidUTF8,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			actionID := "partial-top-level-array-" + strings.ReplaceAll(test.name, " ", "-")
+			journal, action := newMemoryAction(actionID, domain.ActionFSCopy, domain.ActionQueued)
+			first := executionEffect("copy", "one.bin")
+			second := executionEffect("copy", "two.bin")
+			second.Ordinal = 1
+			second.Evidence = test.evidence
+			returned := first
+			returned.State = EffectApplied
+			returned.Evidence = json.RawMessage(`["handler_applied"]`)
+			reconciledFirst := returned
+			reconciledSecond := second
+			reconciledSecond.State = EffectApplied
+			reconciledSecond.Evidence = json.RawMessage(`["read_back_applied"]`)
+			handler := &scriptedHandler{
+				kind: domain.ActionFSCopy,
+				observeFn: func(_ context.Context, _ Action, _ int) (Observation, error) {
+					return Observation{State: ObserveNeedsAction, Effects: []Effect{first, second}}, nil
+				},
+				dispatchFn: func(_ context.Context, _ Action, _ Attempt) (DispatchResult, error) {
+					return DispatchResult{ExternalID: "top-level-array-command", Effects: []Effect{returned}}, NewDispatchedFailure(FailureUncertain, errors.New("response lost after partial dispatch"))
+				},
+				reconcileFn: func(_ context.Context, _ Action, _ Attempt) (ReconcileResult, error) {
+					return ReconcileResult{Outcome: domain.OutcomeApplied, Effects: []Effect{reconciledFirst, reconciledSecond}}, nil
+				},
+			}
+
+			firstRun := mustRunOnce(t, newTestExecutor(t, journal, handler, executionClock()))
+			if len(firstRun.Results) != 1 || firstRun.Results[0].State != domain.ActionReconciling || !firstRun.Results[0].Dispatched {
+				t.Fatalf("ill-formed top-level array partial result = %+v, want dispatched reconciliation", firstRun.Results)
+			}
+			effects := mustEffects(t, journal, action.ID)
+			if len(effects) != 2 || effects[1].State != EffectUnknown {
+				t.Fatalf("ill-formed top-level array partial effects = %+v, want unknown omitted effect", effects)
+			}
+			if !jsonObjectHasUniqueKeys(effects[1].Evidence) {
+				t.Fatalf("ill-formed top-level array partial evidence has duplicate top-level keys: %s", effects[1].Evidence)
+			}
+			var envelope map[string]json.RawMessage
+			if err := json.Unmarshal(effects[1].Evidence, &envelope); err != nil {
+				t.Fatalf("ill-formed top-level array partial evidence is invalid: %v", err)
+			}
+			prior, ok := envelope["_mastarr_prior"]
+			if !ok || !bytes.Equal(bytes.TrimSpace(prior), bytes.TrimSpace(test.evidence)) {
+				t.Fatalf("ill-formed top-level array partial raw prior = %s, want %s", prior, test.evidence)
+			}
+			markers, ok := decodeExecutionMarkers(envelope["_mastarr_execution_markers"])
+			if !ok || !equalStrings(markers, []string{"dispatch_result_unreported"}) {
+				t.Fatalf("ill-formed top-level array partial markers = %v, want unreported marker", markers)
+			}
+
+			secondRun := mustRunOnce(t, newTestExecutor(t, journal, handler, func() time.Time { return executionTime().Add(10 * time.Second) }))
+			if len(secondRun.Results) != 1 || secondRun.Results[0].State != domain.ActionSucceeded || secondRun.Results[0].Outcome != domain.OutcomeApplied {
+				t.Fatalf("ill-formed top-level array partial reconciliation = %+v, want applied success", secondRun.Results)
+			}
+			if handler.dispatchCalls() != 1 || handler.reconcileCalls() != 1 {
+				t.Fatalf("ill-formed top-level array partial calls = dispatch %d reconcile %d, want one dispatch and one reconciliation", handler.dispatchCalls(), handler.reconcileCalls())
 			}
 		})
 	}

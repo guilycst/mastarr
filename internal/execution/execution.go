@@ -2931,9 +2931,16 @@ func appendEvidence(raw json.RawMessage, values ...string) json.RawMessage {
 		return append(json.RawMessage(nil), raw...)
 	}
 	trimmed := bytes.TrimSpace(raw)
-	var existing []string
-	if len(trimmed) > 0 && trimmed[0] == '[' && json.Unmarshal(trimmed, &existing) == nil {
-		return evidenceJSON(append(existing, values...))
+	if len(trimmed) > 0 && trimmed[0] == '[' {
+		// Decode array members from raw JSON first. encoding/json replaces
+		// invalid UTF-8 and unpaired surrogate escapes while decoding into
+		// []string, which would destroy opaque upstream evidence. Keep the
+		// compact array form only when every member is losslessly decodable;
+		// otherwise the valid-array fallback below retains the exact bytes in
+		// _mastarr_prior.
+		if existing, ok := decodeExecutionMarkers(trimmed); ok {
+			return evidenceJSON(append(existing, values...))
+		}
 	}
 	// Effect evidence is intentionally opaque. Preserve an object's fields
 	// while adding a namespaced execution marker, rather than replacing the
