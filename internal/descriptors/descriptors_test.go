@@ -670,6 +670,83 @@ func TestCaptureRecoveryFencePreventsDeleteAbortDuringPublication(t *testing.T) 
 	}
 }
 
+func TestCaptureFenceOwnerAndGenerationPreventLiveReuseRelease(t *testing.T) {
+	fixture := newDescriptorFixture(t)
+	ctx := context.Background()
+	request := captureRequest(fixture, "capture-fence-owner")
+	unavailable, err := fixture.service.RecordUnavailable(ctx, request, "qbittorrent.export", "pending")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("owner-fenced recovery bytes")
+	stageFile, stagePath, stageInfo, err := createPrivateStage(fixture.service.objectsRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stageFile.Write(data); err != nil {
+		_ = stageFile.Close()
+		t.Fatal(err)
+	}
+	if err := stageFile.Sync(); err != nil {
+		_ = stageFile.Close()
+		t.Fatal(err)
+	}
+	if err := stageFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := fixture.service.getStored(ctx, unavailable.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err := fixture.service.ensureCaptureIntent(ctx, unavailable.ID, &stored, request, digestBytes(data), int64(len(data)), "qbittorrent.export", filepath.Base(stagePath), stageInfo)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	firstService, err := New(fixture.store.DB(), Options{StorageRoot: fixture.root, MountedRoot: fixture.mounted, Clock: fixture.service.clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondService, err := New(fixture.store.DB(), Options{StorageRoot: fixture.root, MountedRoot: fixture.mounted, Clock: fixture.service.clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	thirdService, err := New(fixture.store.DB(), Options{StorageRoot: fixture.root, MountedRoot: fixture.mounted, Clock: fixture.service.clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := firstService.acquireCaptureFence(ctx, intent, "capture-recover")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := secondService.acquireCaptureFence(ctx, intent, "capture-recover")
+	if err != nil {
+		t.Fatalf("same-operation recovery acquisition = %v", err)
+	}
+	if first.EventID == second.EventID || first.OwnerID == second.OwnerID || first.Generation == 0 || second.Generation == 0 {
+		t.Fatalf("fence ownership was reused: first=%#v second=%#v", first, second)
+	}
+	if err := secondService.finishCaptureIntentOwned(ctx, intent, "committed", &second); !errors.Is(err, ErrCaptureUncertain) {
+		t.Fatalf("non-owner terminal transition = %v, want uncertainty", err)
+	}
+	if err := secondService.releaseCaptureFence(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := thirdService.acquireCaptureFence(ctx, intent, "delete-reconcile"); !errors.Is(err, ErrCaptureUncertain) {
+		t.Fatalf("delete acquired while live owner remained = %v, want uncertainty", err)
+	}
+	if err := firstService.releaseCaptureFence(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	third, err := thirdService.acquireCaptureFence(ctx, intent, "delete-reconcile")
+	if err != nil {
+		t.Fatalf("delete acquisition after exact owner release = %v", err)
+	}
+	if err := thirdService.releaseCaptureFence(ctx, third); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDeleteRequiresAcknowledgementRetainsAuditMetadataAndIsIdempotent(t *testing.T) {
 	fixture := newDescriptorFixture(t)
 	ctx := context.Background()
