@@ -2968,7 +2968,8 @@
         "fd136ea077a620c47c26d9f9235798ef89f3237d state checkpoint dispatched W-02 correction round ten to /root/x05_implementer from 89ebf83aa677a7d078a0c113c04b89c84c9d5c57; owned paths remain internal/execution/ and docs/execution/handoffs/W-02-correction-round10.md, shared main, with GOWORK=off focused/race/vet/offline guardrail/module/cross-build checks.",
         "e46ab80265c6bfbcde7c51f29cfa04c0df421f19 W-02 correction round ten propagates dispatch ExternalID into fresh/existing reconciliation attempts, preserves IDs through validation/read-back failures, prevents stale ID reuse, and merges opaque _mastarr_execution_markers without duplicate keys. Focused/repeated/race/restart tests and offline guardrails passed.",
         "8ef12618496f623421cbfb638fdda3d8b93c7ba0 records the W-02 correction round ten handoff and exact checks.",
-        "62668bedf67bfe25ceac528890d7e96c0a8b9d8e W-02 correction round ten review closed the ExternalID P1 under fresh/restart/read-back failure races and found P2 marker merge loss: null marker values are overwritten, duplicate marker keys collapse to the last value, and duplicate ordinary keys lose source evidence. Full guardrails and cross-builds passed."
+        "62668bedf67bfe25ceac528890d7e96c0a8b9d8e W-02 correction round ten review closed the ExternalID P1 under fresh/restart/read-back failure races and found P2 marker merge loss: null marker values are overwritten, duplicate marker keys collapse to the last value, and duplicate ordinary keys lose source evidence. Full guardrails and cross-builds passed.",
+        "8ab9eee2a50c195dda9fadf5160358d2fb535b11 state checkpoint dispatched W-02 correction round eleven to /root/x05_implementer from e46ab80265c6bfbcde7c51f29cfa04c0df421f19; owned paths remain internal/execution/ and docs/execution/handoffs/W-02-correction-round11.md, shared main, with GOWORK=off focused/race/vet/offline guardrail/module/cross-build checks."
       ],
       "review": {
         "status": "approved",
@@ -3049,7 +3050,7 @@
         "correctionHandoffCommit": null,
         "correctionProductCommits": [],
         "correctionReviewSourceCommit": null,
-        "correctionDispatchCheckpoint": "fd136ea077a620c47c26d9f9235798ef89f3237d"
+        "correctionDispatchCheckpoint": "8ab9eee2a50c195dda9fadf5160358d2fb535b11"
       },
       "reviewHistory": [
         {
