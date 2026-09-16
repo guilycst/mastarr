@@ -178,6 +178,10 @@ func openRootDirectory(root string) (*os.File, error) {
 }
 
 func removeConstrainedFile(root, relative string, expected fs.FileInfo) error {
+	return removeConstrainedFileWithGuard(root, relative, expected, nil)
+}
+
+func removeConstrainedFileWithGuard(root, relative string, expected fs.FileInfo, beforeUnlink func() error) error {
 	parent, name, err := openConstrainedParent(root, relative)
 	if err != nil {
 		return err
@@ -190,6 +194,11 @@ func removeConstrainedFile(root, relative string, expected fs.FileInfo) error {
 	_ = file.Close()
 	if expected == nil || !os.SameFile(expected, info) {
 		return ErrDescriptorChanged
+	}
+	if beforeUnlink != nil {
+		if err := beforeUnlink(); err != nil {
+			return err
+		}
 	}
 	// The descriptor-relative unlink keeps parent resolution confined. The
 	// object is private to the service root; callers still receive uncertainty

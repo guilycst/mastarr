@@ -104,6 +104,10 @@ func removeConstrainedFile(_, _ string, _ fs.FileInfo) error {
 	return ErrDeleteUncertain
 }
 
+func removeConstrainedFileWithGuard(_, _ string, _ fs.FileInfo, _ func() error) error {
+	return ErrDeleteUncertain
+}
+
 func syncDirectoryPath(pathValue string) error {
 	directory, err := os.Open(pathValue)
 	if err != nil {

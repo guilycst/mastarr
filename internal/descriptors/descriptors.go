@@ -619,14 +619,14 @@ func (service *Service) capture(ctx context.Context, request CaptureRequest, dat
 			return Record{}, service.reconcileCaptureFailure(ctx, intent, err)
 		}
 		if metadataErr := beforeCaptureMetadata(existing.ID); metadataErr != nil {
-			cleanupErr := removeCapturedObject(service, object, existing.ID, intent.Metadata.ObjectIdentity)
+			cleanupErr := service.removeCapturedObjectWithFence(ctx, intent, object, existing.ID, intent.Metadata.ObjectIdentity)
 			if cleanupErr != nil {
 				return Record{}, service.reconcileCaptureFailure(ctx, intent, fmt.Errorf("%w: capture metadata update: %v; cleanup: %v", ErrCaptureUncertain, metadataErr, cleanupErr))
 			}
 			return Record{}, service.reconcileCaptureFailure(ctx, intent, metadataErr)
 		}
 		if metadataErr := service.updateCaptured(ctx, existing.ID, object, digest, source, service.now()); metadataErr != nil {
-			cleanupErr := removeCapturedObject(service, object, existing.ID, intent.Metadata.ObjectIdentity)
+			cleanupErr := service.removeCapturedObjectWithFence(ctx, intent, object, existing.ID, intent.Metadata.ObjectIdentity)
 			if cleanupErr != nil {
 				return Record{}, service.reconcileCaptureFailure(ctx, intent, fmt.Errorf("%w: capture metadata update: %v; cleanup: %v", ErrCaptureUncertain, metadataErr, cleanupErr))
 			}
@@ -663,14 +663,14 @@ func (service *Service) capture(ctx context.Context, request CaptureRequest, dat
 	}
 	row := storedRecord{ID: id, DownloadID: sql.NullString{String: request.DownloadID, Valid: true}, DescriptorType: request.DescriptorType, StoragePath: object, OriginalDigest: sql.NullString{String: digest, Valid: true}, CaptureSource: source, CapturedAt: service.now().Format(time.RFC3339Nano), Retention: string(RetentionRetain)}
 	if metadataErr := beforeCaptureMetadata(row.ID); metadataErr != nil {
-		cleanupErr := removeCapturedObject(service, row.StoragePath, row.ID, intent.Metadata.ObjectIdentity)
+		cleanupErr := service.removeCapturedObjectWithFence(ctx, intent, row.StoragePath, row.ID, intent.Metadata.ObjectIdentity)
 		if cleanupErr != nil {
 			return Record{}, service.reconcileCaptureFailure(ctx, intent, fmt.Errorf("%w: capture metadata insert: %v; cleanup: %v", ErrCaptureUncertain, metadataErr, cleanupErr))
 		}
 		return Record{}, service.reconcileCaptureFailure(ctx, intent, metadataErr)
 	}
 	if metadataErr := service.insert(ctx, row); metadataErr != nil {
-		cleanupErr := removeCapturedObject(service, row.StoragePath, row.ID, intent.Metadata.ObjectIdentity)
+		cleanupErr := service.removeCapturedObjectWithFence(ctx, intent, row.StoragePath, row.ID, intent.Metadata.ObjectIdentity)
 		if cleanupErr != nil {
 			return Record{}, service.reconcileCaptureFailure(ctx, intent, fmt.Errorf("%w: capture metadata insert: %v; cleanup: %v", ErrCaptureUncertain, metadataErr, cleanupErr))
 		}
@@ -835,6 +835,10 @@ func (service *Service) writeObjectWithIntent(ctx context.Context, id string, da
 }
 
 func (service *Service) removeGeneratedObject(storagePath, id, expectedIdentity string) error {
+	return service.removeGeneratedObjectFenced(context.Background(), storagePath, id, expectedIdentity, nil)
+}
+
+func (service *Service) removeGeneratedObjectFenced(ctx context.Context, storagePath, id, expectedIdentity string, fence *captureFence) error {
 	if err := validateStoragePath(storagePath, id); err != nil {
 		return err
 	}
@@ -858,7 +862,9 @@ func (service *Service) removeGeneratedObject(storagePath, id, expectedIdentity 
 	if err := file.Close(); err != nil {
 		return fmt.Errorf("%w: close generated descriptor", ErrCaptureUncertain)
 	}
-	return removeConstrainedFile(service.storageRoot, storagePath, info)
+	return removeConstrainedFileWithGuard(service.storageRoot, storagePath, info, func() error {
+		return service.ensureCaptureFenceLive(ctx, fence)
+	})
 }
 
 type deleteIntentMetadata struct {
@@ -1509,11 +1515,112 @@ func (service *Service) acquireCaptureFence(ctx context.Context, intent captureI
 	return captureFence{EventID: eventID, IntentEventID: intent.EventID, ResourceID: intent.ResourceID, Operation: operation, OwnerID: service.ownerID, Generation: generation, LeaseUntil: now.Add(captureFenceLease)}, nil
 }
 
-func (service *Service) releaseCaptureFence(ctx context.Context, fence captureFence) error {
-	if fence.EventID == "" || fence.IntentEventID == "" || fence.ResourceID == "" || fence.OwnerID == "" || fence.Generation == 0 {
+// ensureCaptureFenceLive revalidates the exact owner and generation immediately
+// before a recovery-owned filesystem transition. The append-only fence row is
+// the cross-service lease record; checking it again prevents an executor whose
+// lease expired from publishing or removing a pathname after another executor
+// acquired the recovery/delete fence. Every other live fence is rejected too,
+// including a same-operation owner, so two recovery executors cannot both
+// mutate the same stage.
+func (service *Service) ensureCaptureFenceLive(ctx context.Context, fence *captureFence) error {
+	if fence == nil {
+		return nil
+	}
+	if err := contextCheckpoint(ctx); err != nil {
+		return err
+	}
+	if fence.EventID == "" || fence.IntentEventID == "" || fence.ResourceID == "" || fence.Operation == "" || fence.OwnerID == "" || fence.Generation == 0 || fence.LeaseUntil.IsZero() {
 		return fmt.Errorf("%w: capture fence identity unavailable", ErrCaptureUncertain)
 	}
-	metadata, err := json.Marshal(captureFenceMetadata{Scope: "descriptor", IntentEventID: fence.IntentEventID, ResourceID: fence.ResourceID, Operation: fence.Operation, OwnerID: fence.OwnerID, Generation: fence.Generation, FenceEventID: fence.EventID})
+	now := service.now()
+	var ownRaw string
+	err := service.db.QueryRowContext(ctx, `
+		SELECT metadata_json
+		FROM audit_events AS fence
+		WHERE fence.action = ?
+		  AND fence.resource_kind = 'descriptor'
+		  AND fence.resource_id = ?
+		  AND fence.event_id = ?
+		  AND fence.outcome = 'pending'
+		  AND NOT EXISTS (
+			  SELECT 1
+			  FROM audit_events AS released
+			  WHERE released.action = ?
+			    AND released.resource_kind = 'descriptor'
+			    AND released.resource_id = fence.resource_id
+			    AND released.outcome = 'released'
+			    AND json_extract(released.metadata_json, '$.fence_event_id') = fence.event_id
+		  )`, captureFenceAction, fence.ResourceID, fence.EventID, captureFenceAction).Scan(&ownRaw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: capture fence is no longer live", ErrCaptureUncertain)
+	}
+	if err != nil {
+		if contextErr := contextCheckpoint(ctx); contextErr != nil {
+			return contextErr
+		}
+		return fmt.Errorf("%w: read capture fence before filesystem transition", ErrStorage)
+	}
+	metadata, decodeErr := decodeCaptureFenceMetadata(ownRaw)
+	if decodeErr != nil || !captureFenceMatches(fence.EventID, metadata, fence) || metadata.LeaseUntil != fence.LeaseUntil.UTC().Format(time.RFC3339Nano) {
+		return fmt.Errorf("%w: capture fence owner changed before filesystem transition", ErrCaptureUncertain)
+	}
+	leaseUntil, parseErr := time.Parse(time.RFC3339Nano, metadata.LeaseUntil)
+	if parseErr != nil || !leaseUntil.After(now) {
+		return fmt.Errorf("%w: capture fence lease expired before filesystem transition", ErrCaptureUncertain)
+	}
+
+	rows, err := service.db.QueryContext(ctx, `
+		SELECT fence.event_id, fence.metadata_json
+		FROM audit_events AS fence
+		WHERE fence.action = ?
+		  AND fence.resource_kind = 'descriptor'
+		  AND fence.resource_id = ?
+		  AND fence.outcome = 'pending'
+		  AND json_extract(fence.metadata_json, '$.intent_event_id') = ?
+		  AND NOT EXISTS (
+			  SELECT 1
+			  FROM audit_events AS released
+			  WHERE released.action = ?
+			    AND released.resource_kind = 'descriptor'
+			    AND released.resource_id = fence.resource_id
+			    AND released.outcome = 'released'
+			    AND json_extract(released.metadata_json, '$.fence_event_id') = fence.event_id
+		  )`, captureFenceAction, fence.ResourceID, fence.IntentEventID, captureFenceAction)
+	if err != nil {
+		if contextErr := contextCheckpoint(ctx); contextErr != nil {
+			return contextErr
+		}
+		return fmt.Errorf("%w: read capture fences before filesystem transition", ErrStorage)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var eventID, raw string
+		if err := rows.Scan(&eventID, &raw); err != nil {
+			return fmt.Errorf("%w: read capture fence before filesystem transition", ErrStorage)
+		}
+		other, decodeErr := decodeCaptureFenceMetadata(raw)
+		if decodeErr != nil {
+			return decodeErr
+		}
+		otherLease, parseErr := time.Parse(time.RFC3339Nano, other.LeaseUntil)
+		if parseErr != nil {
+			return fmt.Errorf("%w: invalid capture fence lease", ErrStorage)
+		}
+		if eventID != fence.EventID && otherLease.After(now) {
+			return fmt.Errorf("%w: another capture fence owns filesystem transition", ErrCaptureUncertain)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("%w: read capture fences before filesystem transition", ErrStorage)
+	}
+	return nil
+}
+
+func (service *Service) releaseCaptureFence(ctx context.Context, fence captureFence) error {
+	if fence.EventID == "" || fence.IntentEventID == "" || fence.ResourceID == "" || fence.Operation == "" || fence.OwnerID == "" || fence.Generation == 0 || fence.LeaseUntil.IsZero() {
+		return fmt.Errorf("%w: capture fence identity unavailable", ErrCaptureUncertain)
+	}
+	metadata, err := json.Marshal(captureFenceMetadata{Scope: "descriptor", IntentEventID: fence.IntentEventID, ResourceID: fence.ResourceID, Operation: fence.Operation, OwnerID: fence.OwnerID, Generation: fence.Generation, LeaseUntil: fence.LeaseUntil.UTC().Format(time.RFC3339Nano), FenceEventID: fence.EventID})
 	if err != nil {
 		return fmt.Errorf("%w: encode capture fence release", ErrStorage)
 	}
@@ -1564,12 +1671,36 @@ func (service *Service) releaseCaptureFence(ctx context.Context, fence captureFe
 	return nil
 }
 
+// removeCapturedObjectWithFence performs a recovery-owned final removal only
+// while this exact owner and generation still hold a live fence. The existing
+// package seam remains available to synthetic tests and the ordinary capture
+// path, but the irreversible cleanup itself is fenced whenever it follows a
+// durable capture intent.
+func (service *Service) removeCapturedObjectWithFence(ctx context.Context, intent captureIntent, storagePath, id, expectedIdentity string) (resultErr error) {
+	if intent.EventID == "" {
+		return removeCapturedObject(ctx, service, storagePath, id, expectedIdentity, nil)
+	}
+	fence, err := service.acquireCaptureFence(ctx, intent, "capture-cleanup")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if releaseErr := service.releaseCaptureFence(ctx, fence); releaseErr != nil {
+			resultErr = fmt.Errorf("%w: release capture cleanup fence: %v", ErrCaptureUncertain, releaseErr)
+		}
+	}()
+	if err := service.ensureCaptureFenceLive(ctx, &fence); err != nil {
+		return err
+	}
+	return removeCapturedObject(ctx, service, storagePath, id, expectedIdentity, &fence)
+}
+
 func (service *Service) finishCaptureIntent(ctx context.Context, intent captureIntent, outcome string) error {
 	return service.finishCaptureIntentOwned(ctx, intent, outcome, nil)
 }
 
 func captureFenceMatches(eventID string, metadata captureFenceMetadata, fence *captureFence) bool {
-	return fence != nil && eventID == fence.EventID && metadata.IntentEventID == fence.IntentEventID && metadata.ResourceID == fence.ResourceID && metadata.Operation == fence.Operation && metadata.OwnerID == fence.OwnerID && metadata.Generation == fence.Generation && metadata.FenceEventID == ""
+	return fence != nil && eventID == fence.EventID && metadata.IntentEventID == fence.IntentEventID && metadata.ResourceID == fence.ResourceID && metadata.Operation == fence.Operation && metadata.OwnerID == fence.OwnerID && metadata.Generation == fence.Generation && metadata.LeaseUntil == fence.LeaseUntil.UTC().Format(time.RFC3339Nano) && metadata.FenceEventID == ""
 }
 
 func (service *Service) finishCaptureIntentOwned(ctx context.Context, intent captureIntent, outcome string, owner *captureFence) error {
@@ -1602,7 +1733,7 @@ func (service *Service) finishCaptureIntentOwned(ctx context.Context, intent cap
 			return fmt.Errorf("%w: capture terminal owner is missing", ErrCaptureUncertain)
 		}
 		ownerMetadata, decodeErr := decodeCaptureFenceMetadata(ownerRaw)
-		if decodeErr != nil || !captureFenceMatches(owner.EventID, ownerMetadata, owner) {
+		if decodeErr != nil || !captureFenceMatches(owner.EventID, ownerMetadata, owner) || ownerMetadata.LeaseUntil != owner.LeaseUntil.UTC().Format(time.RFC3339Nano) {
 			return fmt.Errorf("%w: capture terminal owner changed", ErrCaptureUncertain)
 		}
 		leaseUntil, parseErr := time.Parse(time.RFC3339Nano, ownerMetadata.LeaseUntil)
@@ -1750,7 +1881,11 @@ func (service *Service) captureObjectPresent(ctx context.Context, intent capture
 // the final link is no-replace, and the final bytes are read back before the
 // stage is removed. Any failure leaves the intent and operation-owned bytes
 // available for another reconciliation attempt.
-func (service *Service) publishPendingCaptureStage(ctx context.Context, intent captureIntent) error {
+func (service *Service) publishPendingCaptureStage(ctx context.Context, intent captureIntent, fences ...*captureFence) error {
+	var fence *captureFence
+	if len(fences) > 0 {
+		fence = fences[0]
+	}
 	stageFile, stageInfo, err := openConstrainedFile(service.objectsRoot, intent.Metadata.StagePath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -1776,6 +1911,9 @@ func (service *Service) publishPendingCaptureStage(ctx context.Context, intent c
 		return fmt.Errorf("%w: close pending capture stage: %v", ErrCaptureUncertain, err)
 	}
 	beforeCaptureStagePublication(intent.ResourceID)
+	if err := service.ensureCaptureFenceLive(ctx, fence); err != nil {
+		return err
+	}
 
 	destination := filepath.Join(service.storageRoot, intent.Metadata.StoragePath)
 	if _, err := os.Lstat(destination); err == nil {
@@ -1784,6 +1922,9 @@ func (service *Service) publishPendingCaptureStage(ctx context.Context, intent c
 		return fmt.Errorf("%w: inspect pending capture destination", ErrCaptureUncertain)
 	}
 	stagePath := filepath.Join(service.objectsRoot, intent.Metadata.StagePath)
+	if err := service.ensureCaptureFenceLive(ctx, fence); err != nil {
+		return err
+	}
 	if err := os.Link(stagePath, destination); err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			return ErrDescriptorConflict
@@ -1799,8 +1940,13 @@ func (service *Service) publishPendingCaptureStage(ctx context.Context, intent c
 	if digestErr != nil || closeErr != nil || !os.SameFile(stageInfo, publishedInfo) || publishedInfo.Size() != intent.Metadata.Size || publishedDigest != intent.Metadata.Digest {
 		return fmt.Errorf("%w: verify recovered capture object", ErrCaptureUncertain)
 	}
-	if err := removeFileIfSame(stagePath, stageInfo); err != nil {
+	if err := removeFileIfSameWithGuard(stagePath, stageInfo, func() error {
+		return service.ensureCaptureFenceLive(ctx, fence)
+	}); err != nil {
 		return fmt.Errorf("%w: clean recovered capture stage: %v", ErrCaptureUncertain, err)
+	}
+	if err := service.ensureCaptureFenceLive(ctx, fence); err != nil {
+		return err
 	}
 	if err := syncDirectoryPath(service.objectsRoot); err != nil {
 		return fmt.Errorf("%w: sync recovered capture stage: %v", ErrCaptureUncertain, err)
@@ -1808,7 +1954,11 @@ func (service *Service) publishPendingCaptureStage(ctx context.Context, intent c
 	return nil
 }
 
-func (service *Service) cleanupPendingCaptureStage(ctx context.Context, intent captureIntent) error {
+func (service *Service) cleanupPendingCaptureStage(ctx context.Context, intent captureIntent, fences ...*captureFence) error {
+	var fence *captureFence
+	if len(fences) > 0 {
+		fence = fences[0]
+	}
 	stageFile, stageInfo, err := openConstrainedFile(service.objectsRoot, intent.Metadata.StagePath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -1830,8 +1980,13 @@ func (service *Service) cleanupPendingCaptureStage(ctx context.Context, intent c
 	if closeErr != nil || digest != intent.Metadata.Digest || stageInfo.Size() != intent.Metadata.Size {
 		return fmt.Errorf("%w: verify pending capture stage", ErrCaptureUncertain)
 	}
-	if err := removeFileIfSame(filepath.Join(service.objectsRoot, intent.Metadata.StagePath), stageInfo); err != nil {
+	if err := removeFileIfSameWithGuard(filepath.Join(service.objectsRoot, intent.Metadata.StagePath), stageInfo, func() error {
+		return service.ensureCaptureFenceLive(ctx, fence)
+	}); err != nil {
 		return fmt.Errorf("%w: remove pending capture stage: %v", ErrCaptureUncertain, err)
+	}
+	if err := service.ensureCaptureFenceLive(ctx, fence); err != nil {
+		return err
 	}
 	return syncDirectoryPath(service.objectsRoot)
 }
@@ -1885,7 +2040,7 @@ func (service *Service) resolvePendingCapture(ctx context.Context, request Captu
 			return Record{}, false, stageErr
 		}
 		if stagePresent {
-			if err := service.publishPendingCaptureStage(ctx, intent); err != nil {
+			if err := service.publishPendingCaptureStage(ctx, intent, &fence); err != nil {
 				return Record{}, false, err
 			}
 			present, err = service.observeCapturePath(ctx, intent, false)
@@ -1909,7 +2064,7 @@ func (service *Service) resolvePendingCapture(ctx context.Context, request Captu
 	if stagePresent, stageErr := service.observeCapturePath(ctx, intent, true); stageErr != nil {
 		return Record{}, false, stageErr
 	} else if stagePresent {
-		if stageErr := service.cleanupPendingCaptureStage(ctx, intent); stageErr != nil {
+		if stageErr := service.cleanupPendingCaptureStage(ctx, intent, &fence); stageErr != nil {
 			return Record{}, false, stageErr
 		}
 	}
@@ -1983,7 +2138,7 @@ func (service *Service) reconcileCaptureBeforeDelete(ctx context.Context, row st
 		if stagePresent, stageErr := service.observeCapturePath(ctx, intent, true); stageErr != nil {
 			return stageErr
 		} else if stagePresent {
-			if stageErr := service.cleanupPendingCaptureStage(ctx, intent); stageErr != nil {
+			if stageErr := service.cleanupPendingCaptureStage(ctx, intent, &fence); stageErr != nil {
 				return stageErr
 			}
 		}
@@ -2807,6 +2962,10 @@ func minInt64(left, right int64) int {
 }
 
 func removeFileIfSame(name string, expected fs.FileInfo) error {
+	return removeFileIfSameWithGuard(name, expected, nil)
+}
+
+func removeFileIfSameWithGuard(name string, expected fs.FileInfo, beforeRemove func() error) error {
 	current, err := os.Lstat(name)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -2816,6 +2975,11 @@ func removeFileIfSame(name string, expected fs.FileInfo) error {
 	}
 	if expected == nil || !os.SameFile(expected, current) {
 		return ErrDescriptorChanged
+	}
+	if beforeRemove != nil {
+		if err := beforeRemove(); err != nil {
+			return err
+		}
 	}
 	return os.Remove(name)
 }
@@ -2827,8 +2991,8 @@ var beforeCaptureMaterialize = func(string) {}
 var beforeCaptureMetadata = func(string) error { return nil }
 var beforeCaptureStagePublication = func(string) {}
 var beforeCaptureDeleteReconcile = func(string) {}
-var removeCapturedObject = func(service *Service, storagePath, id, expectedIdentity string) error {
-	return service.removeGeneratedObject(storagePath, id, expectedIdentity)
+var removeCapturedObject = func(ctx context.Context, service *Service, storagePath, id, expectedIdentity string, fence *captureFence) error {
+	return service.removeGeneratedObjectFenced(ctx, storagePath, id, expectedIdentity, fence)
 }
 var beforeDeleteIntent = func(string) {}
 var afterDeleteIntent = func(string) {}

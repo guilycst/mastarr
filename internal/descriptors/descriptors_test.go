@@ -356,7 +356,7 @@ func TestCaptureIntentReconcilesMetadataAndCleanupFailureAfterRestart(t *testing
 		}
 		return ErrStorage
 	}
-	removeCapturedObject = func(_ *Service, _, id, _ string) error {
+	removeCapturedObject = func(_ context.Context, _ *Service, _, id, _ string, _ *captureFence) error {
 		if id != unavailable.ID {
 			t.Errorf("cleanup failure id = %q, want %q", id, unavailable.ID)
 		}
@@ -455,7 +455,7 @@ func TestCaptureIntentRecoversNewDescriptorAfterMetadataFailure(t *testing.T) {
 	originalBeforeMetadata := beforeCaptureMetadata
 	originalRemoveObject := removeCapturedObject
 	beforeCaptureMetadata = func(string) error { return ErrStorage }
-	removeCapturedObject = func(_ *Service, _, _ string, _ string) error {
+	removeCapturedObject = func(_ context.Context, _ *Service, _, _ string, _ string, _ *captureFence) error {
 		return errors.New("synthetic cleanup unavailable")
 	}
 	t.Cleanup(func() {
@@ -806,6 +806,206 @@ func TestCaptureFenceExpiredLeaseAllowsFreshOwner(t *testing.T) {
 	}
 	if err := firstService.releaseCaptureFence(ctx, first); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCaptureFenceReleasePersistsLeaseAndIsIdempotent(t *testing.T) {
+	fixture := newDescriptorFixture(t)
+	ctx := context.Background()
+	request := captureRequest(fixture, "capture-fence-release")
+	unavailable, err := fixture.service.RecordUnavailable(ctx, request, "qbittorrent.export", "pending")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("release metadata retains the owner lease")
+	stageFile, stagePath, stageInfo, err := createPrivateStage(fixture.service.objectsRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stageFile.Write(data); err != nil {
+		_ = stageFile.Close()
+		t.Fatal(err)
+	}
+	if err := stageFile.Sync(); err != nil {
+		_ = stageFile.Close()
+		t.Fatal(err)
+	}
+	if err := stageFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := fixture.service.getStored(ctx, unavailable.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err := fixture.service.ensureCaptureIntent(ctx, unavailable.ID, &stored, request, digestBytes(data), int64(len(data)), "qbittorrent.export", filepath.Base(stagePath), stageInfo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fence, err := fixture.service.acquireCaptureFence(ctx, intent, "capture-recover")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.service.releaseCaptureFence(ctx, fence); err != nil {
+		t.Fatal(err)
+	}
+	var releasedCount int
+	var releasedRaw string
+	if err := fixture.store.DB().QueryRow(`
+		SELECT count(*), max(metadata_json)
+		FROM audit_events
+		WHERE action = ? AND resource_id = ? AND outcome = 'released'
+		  AND json_extract(metadata_json, '$.fence_event_id') = ?`, captureFenceAction, fence.ResourceID, fence.EventID).Scan(&releasedCount, &releasedRaw); err != nil {
+		t.Fatal(err)
+	}
+	if releasedCount != 1 {
+		t.Fatalf("released fence rows = %d, want 1", releasedCount)
+	}
+	released, err := decodeCaptureFenceMetadata(releasedRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if released.FenceEventID != fence.EventID || released.OwnerID != fence.OwnerID || released.Generation != fence.Generation || released.LeaseUntil != fence.LeaseUntil.UTC().Format(time.RFC3339Nano) {
+		t.Fatalf("released fence metadata = %#v, fence = %#v", released, fence)
+	}
+	if err := fixture.service.releaseCaptureFence(ctx, fence); err != nil {
+		t.Fatalf("repeated exact-owner release = %v", err)
+	}
+	if err := fixture.store.DB().QueryRow(`
+		SELECT count(*)
+		FROM audit_events
+		WHERE action = ? AND resource_id = ? AND outcome = 'released'
+		  AND json_extract(metadata_json, '$.fence_event_id') = ?`, captureFenceAction, fence.ResourceID, fence.EventID).Scan(&releasedCount); err != nil {
+		t.Fatal(err)
+	}
+	if releasedCount != 1 {
+		t.Fatalf("repeated release rows = %d, want 1", releasedCount)
+	}
+}
+
+func TestExpiredCaptureOwnerCannotPublishAfterOpposingDeleteFence(t *testing.T) {
+	fixture := newDescriptorFixture(t)
+	ctx := context.Background()
+	request := captureRequest(fixture, "capture-fence-expired-publication")
+	unavailable, err := fixture.service.RecordUnavailable(ctx, request, "qbittorrent.export", "pending")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("expired owner must not publish after delete fencing")
+	stageFile, stagePath, stageInfo, err := createPrivateStage(fixture.service.objectsRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stageFile.Write(data); err != nil {
+		_ = stageFile.Close()
+		t.Fatal(err)
+	}
+	if err := stageFile.Sync(); err != nil {
+		_ = stageFile.Close()
+		t.Fatal(err)
+	}
+	if err := stageFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := fixture.service.getStored(ctx, unavailable.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.service.ensureCaptureIntent(ctx, unavailable.ID, &stored, request, digestBytes(data), int64(len(data)), "qbittorrent.export", filepath.Base(stagePath), stageInfo); err != nil {
+		t.Fatal(err)
+	}
+	current := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
+	var clockMu sync.Mutex
+	clock := func() time.Time {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		return current
+	}
+	advance := func(delta time.Duration) {
+		clockMu.Lock()
+		current = current.Add(delta)
+		clockMu.Unlock()
+	}
+	captureService, err := New(fixture.store.DB(), Options{StorageRoot: fixture.root, MountedRoot: fixture.mounted, Clock: clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleteService, err := New(fixture.store.DB(), Options{StorageRoot: fixture.root, MountedRoot: fixture.mounted, Clock: clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleteFenceEntered := make(chan struct{})
+	releaseDeleteFence := make(chan struct{})
+	deleteResult := make(chan error, 1)
+	var deleteFenceOnce sync.Once
+	originalDeleteHook := beforeCaptureDeleteReconcile
+	beforeCaptureDeleteReconcile = func(resourceID string) {
+		if resourceID != unavailable.ID {
+			t.Errorf("delete fence resource = %q, want %q", resourceID, unavailable.ID)
+		}
+		deleteFenceOnce.Do(func() { close(deleteFenceEntered) })
+		<-releaseDeleteFence
+	}
+	originalPublicationHook := beforeCaptureStagePublication
+	beforeCaptureStagePublication = func(resourceID string) {
+		if resourceID != unavailable.ID {
+			t.Errorf("publication hook resource = %q, want %q", resourceID, unavailable.ID)
+		}
+		advance(captureFenceLease + time.Second)
+		go func() {
+			_, err := deleteService.Delete(ctx, DeleteRequest{DescriptorID: unavailable.ID, IrreversibleAcknowledged: true})
+			deleteResult <- err
+		}()
+		select {
+		case <-deleteFenceEntered:
+		case <-time.After(2 * time.Second):
+			t.Errorf("delete did not acquire opposing capture fence")
+		}
+	}
+	t.Cleanup(func() {
+		beforeCaptureStagePublication = originalPublicationHook
+		beforeCaptureDeleteReconcile = originalDeleteHook
+		select {
+		case <-releaseDeleteFence:
+		default:
+			close(releaseDeleteFence)
+		}
+	})
+	_, captureErr := captureService.CaptureExport(ctx, request, syntheticExport(data))
+	if !errors.Is(captureErr, ErrCaptureUncertain) {
+		t.Fatalf("expired capture publication = %v, want uncertainty", captureErr)
+	}
+	close(releaseDeleteFence)
+	var deleteErr error
+	select {
+	case deleteErr = <-deleteResult:
+	case <-time.After(2 * time.Second):
+		t.Fatal("delete did not finish after capture owner rejected publication")
+	}
+	if !errors.Is(deleteErr, ErrCaptureUncertain) {
+		t.Fatalf("opposing delete result = %v, want uncertainty", deleteErr)
+	}
+	if _, err := os.Stat(filepath.Join(fixture.root, objectPath(unavailable.ID))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expired owner published final object = %v", err)
+	}
+	if _, err := os.Stat(stagePath); err != nil {
+		t.Fatalf("operation stage after fenced rejection = %v", err)
+	}
+	recovered, err := fixture.service.Get(ctx, unavailable.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Available || recovered.Retention == RetentionDeleted {
+		t.Fatalf("descriptor changed after expired publication = %#v", recovered)
+	}
+	var pending, deleted int
+	if err := fixture.store.DB().QueryRow(`SELECT count(*) FROM audit_events WHERE action = ? AND resource_id = ? AND outcome = 'pending'`, captureIntentAction, unavailable.ID).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.store.DB().QueryRow(`SELECT count(*) FROM audit_events WHERE action = 'descriptor.delete' AND resource_id = ?`, unavailable.ID).Scan(&deleted); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 1 || deleted != 0 {
+		t.Fatalf("fenced publication journal = pending %d deleted %d, want pending 1 deleted 0", pending, deleted)
 	}
 }
 
