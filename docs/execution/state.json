@@ -15,9 +15,7 @@
   "resumeDocument": "docs/execution/RESUME.md",
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
-  "activeImplementationTasks": [
-    "X-09"
-  ],
+  "activeImplementationTasks": [],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
   "guardrailBaseline": {
@@ -2410,10 +2408,13 @@
       "review": null
     },
     "X-09": {
-      "status": "in_progress",
+      "status": "done",
       "owner": "/root/x05_implementer",
       "baseSha": "19f38fc617468db414a77f3652ecc0fce7907395",
-      "integratedSha": null,
+      "integratedSha": "ff3d7d55490435c9b99d38ad97edd3b2f27f9df5",
+      "implementationCommit": "ff3d7d55490435c9b99d38ad97edd3b2f27f9df5",
+      "handoffCommit": "c2065ab1ce2cb0cfb6e5dbac61b6768028acf257",
+      "reviewSourceCommit": "ff3d7d55490435c9b99d38ad97edd3b2f27f9df5",
       "evidence": [
         "dispatched after X-05 approval; owns only internal/adapters/jellyfin/write/ and its synthetic fixtures and handoff.",
         "Implement the root Jellyfin refresh adapter over the published standalone client. Keep refresh acceptance separate from later library visibility, preserve the frozen refresh port, and leave item refresh unsupported unless the client contract and tested scope support it.",
@@ -2421,17 +2422,16 @@
         "38f4999910b01097b55ee1f09dd463bc9add981b X-09 product commit adds the Jellyfin refresh adapter and synthetic tests; 4ca6fbed07cc1766cc620f180e9a58ad80927de5 records its handoff.",
         "f2bf30f97068f98606251b668528afd18e479e3f coordinator commit wires clients/jellyfin v0.0.0-20260915195508-4eee8e84eff5 into the root module without replace or go.work.",
         "4f611b5a988c89b73143a05ff792763de091edbb independent review requests one P1 capability-gate correction; 2535a1200392337eae1735acd200cd4ff47b9d6d integrates the review receipt.",
-        "ff3d7d55490435c9b99d38ad97edd3b2f27f9df5 correction requires fresh System/Info/Public runtime evidence, fails closed with zero refresh POSTs for missing/unknown/unavailable/mismatched versions, and adds synthetic regressions; c2065ab1ce2cb0cfb6e5dbac61b6768028acf257 records the handoff."
+        "ff3d7d55490435c9b99d38ad97edd3b2f27f9df5 correction requires fresh System/Info/Public runtime evidence, fails closed with zero refresh POSTs for missing/unknown/unavailable/mismatched versions, and adds synthetic regressions; c2065ab1ce2cb0cfb6e5dbac61b6768028acf257 records the handoff.",
+        "d460363223110e088391929809f4a847e60d754d independent correction review approves X-09 with no P1/P2 findings; c8cd64f95729577b883df5f219f2b9f1e6780101 integrates the receipt. A-55 contribution is accepted; A-33 durable recovery remains handler/executor scope."
       ],
       "review": {
-        "status": "changes_requested",
-        "decision": "changes_requested",
+        "status": "approved",
+        "decision": "approved",
         "reviewer": "/root/x05_reviewer",
-        "commit": "4f611b5a988c89b73143a05ff792763de091edbb",
-        "findings": [
-          "P1: Capabilities reports jellyfin.refresh.library supported and Refresh dispatches POST without a version-bound native observation; fail closed as unknown with zero-POST missing, unknown and mismatch regressions before enabling the capability."
-        ],
-        "round": 1
+        "commit": "d460363223110e088391929809f4a847e60d754d",
+        "findings": [],
+        "round": 2
       },
       "dispatch": {
         "assignedAt": "2026-09-16",
@@ -2458,13 +2458,11 @@
         "reviewPath": "docs/execution/handoffs/X-09-review-round1.md",
         "handoffPath": "docs/execution/handoffs/X-09.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "correction_pending",
+        "status": "done",
         "implementationCommit": "38f4999910b01097b55ee1f09dd463bc9add981b",
         "handoffCommit": "4ca6fbed07cc1766cc620f180e9a58ad80927de5",
         "reviewSourceCommit": "38f4999910b01097b55ee1f09dd463bc9add981b",
         "manifestIntegrationCommit": "f2bf30f97068f98606251b668528afd18e479e3f",
-        "reviewCommit": "4f611b5a988c89b73143a05ff792763de091edbb",
-        "reviewIntegrationCommit": "2535a1200392337eae1735acd200cd4ff47b9d6d",
         "reviewRound": 1,
         "correctionRound": 1,
         "correctionOwner": "/root/x05_implementer",
@@ -2472,13 +2470,18 @@
         "correctionReviewPath": "docs/execution/handoffs/X-09-review-round2.md",
         "correctionHandoffPath": "docs/execution/handoffs/X-09-correction-round1.md",
         "correctionReviewer": "/root/x05_reviewer",
-        "correctionStatus": "review_pending",
+        "correctionStatus": "approved",
         "correctionImplementationCommit": "ff3d7d55490435c9b99d38ad97edd3b2f27f9df5",
         "correctionProductCommits": [
           "ff3d7d55490435c9b99d38ad97edd3b2f27f9df5"
         ],
         "correctionHandoffCommit": "c2065ab1ce2cb0cfb6e5dbac61b6768028acf257",
-        "correctionReviewSourceCommit": "ff3d7d55490435c9b99d38ad97edd3b2f27f9df5"
+        "correctionReviewSourceCommit": "ff3d7d55490435c9b99d38ad97edd3b2f27f9df5",
+        "correctionReviewCommit": "d460363223110e088391929809f4a847e60d754d",
+        "correctionReviewIntegrationCommit": "c8cd64f95729577b883df5f219f2b9f1e6780101",
+        "reviewCommit": "d460363223110e088391929809f4a847e60d754d",
+        "reviewIntegrationCommit": "c8cd64f95729577b883df5f219f2b9f1e6780101",
+        "reviewRound": 2
       },
       "reviewHistory": [
         {
@@ -2489,6 +2492,15 @@
           "sourceCommit": "38f4999910b01097b55ee1f09dd463bc9add981b",
           "receipt": "docs/execution/handoffs/X-09-review-round1.md",
           "integratedCommit": "2535a1200392337eae1735acd200cd4ff47b9d6d"
+        },
+        {
+          "round": 2,
+          "reviewer": "/root/x05_reviewer",
+          "commit": "d460363223110e088391929809f4a847e60d754d",
+          "status": "approved",
+          "sourceCommit": "ff3d7d55490435c9b99d38ad97edd3b2f27f9df5",
+          "receipt": "docs/execution/handoffs/X-09-review-round2.md",
+          "integratedCommit": "c8cd64f95729577b883df5f219f2b9f1e6780101"
         }
       ]
     },
@@ -4703,7 +4715,7 @@
       ]
     }
   },
-  "nextAction": "X-09 correction ff3d7d55490435c9b99d38ad97edd3b2f27f9df5 with handoff c2065ab1ce2cb0cfb6e5dbac61b6768028acf257 is ready for independent review; verify the version gate and zero-POST regressions. X-20 transport and G-01 remain open.",
+  "nextAction": "X-09 correction is review-approved at d460363223110e088391929809f4a847e60d754d and integrated at c8cd64f95729577b883df5f219f2b9f1e6780101; close the lane and dispatch the next dependency-ready task. X-20 transport and G-01 remain open.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
