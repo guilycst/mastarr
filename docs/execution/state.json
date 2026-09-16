@@ -3567,7 +3567,8 @@
         "Independent W-05 round-one receipt 32020e76227df6a5f79fc6fa1b98353ef2a07ac7 integrated as 70348806511436ca9921d79981b30afe6ea92e70: R1 approved early purge is unwired and nonfunctional, R2 foreign affected entries are accepted, R3 held trash replay falsely reports already satisfied, R4 stop evidence is overwritten; independent ordinary/race probes and full offline guardrails passed.",
         "Correction round one dispatched from state checkpoint a0f6d9d1548d233cc5f59f806ed5cb2540ed1ae3 to /root/x05_implementer for R1-R4: bind HardDelete to immutable approved early-purge claims, reject foreign/duplicate/contradictory affected evidence, keep held/failed replay non-success, and merge rather than overwrite client stop evidence. Add synthetic regressions and preserve F-05/G-01 gates.",
         "W-05 correction round one product 2f843b3e678d86e9300ce60f48f31e3c87f18791 and handoff c8c862f92e32dc894f5273e657323720af777694 complete from dispatch checkpoint c436ce2abe6c16f72227bd6b5c307c106b09ef5e; R1-R4 regressions, focused/race/vet/root checks and fast guardrails passed, ready for independent correction review.",
-        "Independent W-05 correction round-two receipt 5954ee826f56a1f9558417fdde614b62387a1ae0 integrated as 118720ddf571698c5403bfb58558bbc56b3d201f: changes requested for R1a/R2a/R3a/R2b; exact ordinary and race probes reproduced all four findings, and full offline guardrails passed."
+        "Independent W-05 correction round-two receipt 5954ee826f56a1f9558417fdde614b62387a1ae0 integrated as 118720ddf571698c5403bfb58558bbc56b3d201f: changes requested for R1a/R2a/R3a/R2b; exact ordinary and race probes reproduced all four findings, and full offline guardrails passed.",
+        "W-05 correction round two dispatched from state checkpoint 8df72860d4ef56e69393753a3814c288bb9860d2 to /root/x05_implementer. Scope is R1a approval-bound early-purge recovery, R2a unresolved foreign-effect retention, R3a planned replay read-only reconciliation, and R2b exact directory bookkeeping; product paths remain internal/trash/ with synthetic regressions and no schema/API/adapters/clients changes."
       ],
       "review": {
         "status": "changes_requested",
@@ -3608,10 +3609,10 @@
           "GOWORK=off focused tests/race/vet/module verification and full offline guardrails",
           "generation/API/Vacuum/lint/architecture checks and Linux amd64/arm64 CGO-free builds"
         ],
-        "reviewPath": "docs/execution/handoffs/W-05-review-round2.md",
-        "handoffPath": "docs/execution/handoffs/W-05.md",
+        "reviewPath": "docs/execution/handoffs/W-05-review-round3.md",
+        "handoffPath": "docs/execution/handoffs/W-05-correction-round2.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "changes_requested",
+        "status": "in_progress",
         "dependencyCommits": {
           "W-04-product": "780c00e92498660c08b6ac67259bbb4147c58531",
           "W-04-review": "2aef896fd5d3e10dcefc80f8f5a094852d73fd27",
@@ -3623,26 +3624,29 @@
           "X-14": "qBittorrent removal remains metadata-only with deleteFiles=false; stop and read-back are required before payload mutation."
         },
         "waitingOn": "/root/x05_implementer",
-        "waitingReason": "correction round two for R1a/R2a/R3a/R2b",
+        "waitingReason": "W-05 correction round two implementation for independent review findings R1a/R2a/R3a/R2b",
         "implementationCommit": "37ecdde36b56a6cd3d7d147cd8af1b49eba3f45a",
         "handoffCommit": "91038f799d894b58d1c7f149606ac2c686515beb",
         "reviewSourceCommit": "2f843b3e678d86e9300ce60f48f31e3c87f18791",
         "reviewRound": 2,
-        "reviewCommit": "5954ee826f56a1f9558417fdde614b62387a1ae0",
-        "reviewIntegrationCommit": "118720ddf571698c5403bfb58558bbc56b3d201f",
-        "correctionStatus": "changes_requested",
-        "correctionRound": 1,
+        "reviewCommit": null,
+        "reviewIntegrationCommit": null,
+        "correctionStatus": "in_progress",
+        "correctionRound": 2,
         "correctionOwner": "/root/x05_implementer",
-        "correctionBaseSha": "a0f6d9d1548d233cc5f59f806ed5cb2540ed1ae3",
-        "correctionDispatchCheckpoint": "a0f6d9d1548d233cc5f59f806ed5cb2540ed1ae3",
-        "correctionReviewPath": "docs/execution/handoffs/W-05-review-round2.md",
-        "correctionHandoffPath": "docs/execution/handoffs/W-05-correction-round1.md",
+        "correctionBaseSha": "8df72860d4ef56e69393753a3814c288bb9860d2",
+        "correctionDispatchCheckpoint": "8df72860d4ef56e69393753a3814c288bb9860d2",
+        "correctionReviewPath": "docs/execution/handoffs/W-05-review-round3.md",
+        "correctionHandoffPath": "docs/execution/handoffs/W-05-correction-round2.md",
         "correctionReviewer": "/root/x05_reviewer",
         "priorReviewCommit": "5954ee826f56a1f9558417fdde614b62387a1ae0",
         "priorReviewIntegrationCommit": "118720ddf571698c5403bfb58558bbc56b3d201f",
-        "correctionImplementationCommit": "2f843b3e678d86e9300ce60f48f31e3c87f18791",
-        "correctionHandoffCommit": "c8c862f92e32dc894f5273e657323720af777694",
-        "correctionReviewSourceCommit": "2f843b3e678d86e9300ce60f48f31e3c87f18791"
+        "correctionImplementationCommit": null,
+        "correctionHandoffCommit": null,
+        "correctionReviewSourceCommit": null,
+        "priorCorrectionRound": 1,
+        "priorCorrectionImplementationCommit": "2f843b3e678d86e9300ce60f48f31e3c87f18791",
+        "priorCorrectionHandoffCommit": "c8c862f92e32dc894f5273e657323720af777694"
       },
       "reviewHistory": [
         {
@@ -5609,7 +5613,7 @@
       ]
     }
   },
-  "nextAction": "Record and dispatch W-05 correction round two for R1a/R2a/R3a/R2b from the current clean checkpoint; keep other feature lanes paused until W-05 receives independent approval.",
+  "nextAction": "W-05 correction round two is dispatched from 8df72860d4ef56e69393753a3814c288bb9860d2; await product and handoff commits, then queue independent review round three from the exact product SHA.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
