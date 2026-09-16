@@ -7,12 +7,52 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"golang.org/x/sys/unix"
 )
 
 const descriptorOpenReadOnly = unix.O_RDONLY | unix.O_CLOEXEC | unix.O_NOFOLLOW
+
+func createPrivateStage(root string) (*os.File, string, fs.FileInfo, error) {
+	directory, err := openRootDirectory(root)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	defer directory.Close()
+	for range 8 {
+		identifier, err := newID()
+		if err != nil {
+			return nil, "", nil, err
+		}
+		name := privateStagePrefix + strings.ReplaceAll(identifier, "-", "")
+		fd, err := unix.Openat(int(directory.Fd()), name, unix.O_WRONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_CREAT|unix.O_EXCL, 0o600)
+		if err != nil {
+			if errors.Is(err, unix.EEXIST) {
+				continue
+			}
+			return nil, "", nil, classifyPathError(err)
+		}
+		file := os.NewFile(uintptr(fd), name)
+		if file == nil {
+			_ = unix.Close(fd)
+			_ = unix.Unlinkat(int(directory.Fd()), name, 0)
+			return nil, "", nil, ErrSpecialFile
+		}
+		info, statErr := file.Stat()
+		if statErr != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+			_ = file.Close()
+			_ = unix.Unlinkat(int(directory.Fd()), name, 0)
+			if statErr != nil {
+				return nil, "", nil, statErr
+			}
+			return nil, "", nil, ErrSpecialFile
+		}
+		return file, filepath.Join(root, name), info, nil
+	}
+	return nil, "", nil, os.ErrExist
+}
 
 func openConstrainedFile(root, relative string) (*os.File, fs.FileInfo, error) {
 	parent, name, err := openConstrainedParent(root, relative)

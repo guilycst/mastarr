@@ -13,6 +13,23 @@ import (
 // Platforms without the reviewed Unix no-follow primitives still use a
 // canonical, no-symlink path check. Deletion remains fail closed because a
 // descriptor-bound unlink is unavailable.
+func createPrivateStage(root string) (*os.File, string, fs.FileInfo, error) {
+	file, err := os.CreateTemp(root, privateStagePrefix+"*")
+	if err != nil {
+		return nil, "", nil, err
+	}
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+		_ = file.Close()
+		_ = os.Remove(file.Name())
+		if err != nil {
+			return nil, "", nil, err
+		}
+		return nil, "", nil, ErrSpecialFile
+	}
+	return file, file.Name(), info, nil
+}
+
 func openConstrainedFile(root, relative string) (*os.File, fs.FileInfo, error) {
 	if err := validateRelativePath(relative); err != nil {
 		return nil, nil, err

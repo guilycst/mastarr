@@ -556,21 +556,21 @@ func (service *Service) writeObject(ctx context.Context, id string, data []byte)
 	if err != nil || !objectsInfo.IsDir() || objectsInfo.Mode().Perm()&0o077 != 0 {
 		return "", fmt.Errorf("%w: object root unavailable", ErrPathEscape)
 	}
-	temporary, err := os.CreateTemp(service.objectsRoot, privateStagePrefix+"*")
+	temporary, temporaryName, temporaryInfo, err := createPrivateStage(service.objectsRoot)
 	if err != nil {
 		return "", fmt.Errorf("%w: create private descriptor stage", ErrStorage)
 	}
-	temporaryName := temporary.Name()
-	temporaryInfo, infoErr := temporary.Stat()
-	if infoErr != nil {
-		_ = temporary.Close()
-		_ = os.Remove(temporaryName)
-		return "", fmt.Errorf("%w: inspect descriptor stage", ErrStorage)
-	}
 	removeStage := true
+	publishedLink := false
+	completed := false
 	defer func() {
 		_ = temporary.Close()
-		if removeStage {
+		if !completed && publishedLink {
+			// The destination link is operation-owned only while it still
+			// names the stage inode. A replacement is deliberately preserved.
+			_ = removeFileIfSame(destination, temporaryInfo)
+		}
+		if !completed && removeStage {
 			_ = removeFileIfSame(temporaryName, temporaryInfo)
 		}
 	}()
@@ -621,9 +621,23 @@ func (service *Service) writeObject(ctx context.Context, id string, data []byte)
 		}
 		return "", fmt.Errorf("%w: publish descriptor object", ErrStorage)
 	}
+	publishedLink = true
 	destinationInfo, err := os.Stat(destination)
-	if err != nil || !os.SameFile(temporaryInfo, destinationInfo) || destinationInfo.Size() != int64(len(data)) || destinationInfo.Mode().Perm() != 0o600 || hex.EncodeToString(hasher.Sum(nil)) != digestBytes(data)[len("sha256:"):] {
+	stageDigest := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
+	if err != nil || !os.SameFile(temporaryInfo, destinationInfo) || destinationInfo.Size() != int64(len(data)) || destinationInfo.Mode().Perm() != 0o600 || stageDigest != digestBytes(data) {
 		return "", fmt.Errorf("%w: verify descriptor object", ErrStorage)
+	}
+	publishedFile, publishedInfo, err := openConstrainedFile(service.storageRoot, object)
+	if err != nil {
+		return "", fmt.Errorf("%w: open published descriptor", ErrStorage)
+	}
+	publishedData, publishedDigest, publishedBefore, readErr := readStableFile(ctx, publishedFile, publishedInfo, service.maxBytes)
+	if readErr == nil {
+		readErr = verifyStableFile(ctx, publishedFile, publishedBefore, publishedDigest, int64(len(publishedData)), service.maxBytes)
+	}
+	closeErr := publishedFile.Close()
+	if readErr != nil || closeErr != nil || !os.SameFile(temporaryInfo, publishedInfo) || publishedDigest != digestBytes(data) || int64(len(publishedData)) != int64(len(data)) {
+		return "", fmt.Errorf("%w: verify published descriptor bytes", ErrStorage)
 	}
 	if err := removeFileIfSame(temporaryName, temporaryInfo); err != nil {
 		return "", fmt.Errorf("%w: clean descriptor stage", ErrStorage)
@@ -632,6 +646,7 @@ func (service *Service) writeObject(ctx context.Context, id string, data []byte)
 	if err := syncDirectoryPath(service.objectsRoot); err != nil {
 		return "", fmt.Errorf("%w: sync descriptor object directory", ErrStorage)
 	}
+	completed = true
 	return object, nil
 }
 
@@ -914,10 +929,10 @@ func readExport(ctx context.Context, export VerifiedExport, maximum int64) ([]by
 	if export.Reader != nil {
 		data, err = readBounded(ctx, export.Reader, maximum)
 	} else {
-		data = append([]byte(nil), export.Bytes...)
-		if int64(len(data)) > maximum {
+		if int64(len(export.Bytes)) > maximum {
 			return nil, ErrDescriptorTooLarge
 		}
+		data = append([]byte(nil), export.Bytes...)
 		if err := contextCheckpoint(ctx); err != nil {
 			return nil, err
 		}
