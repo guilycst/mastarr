@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/guilycst/mastarr/internal/credentials"
 	"github.com/guilycst/mastarr/internal/storage"
@@ -712,6 +713,170 @@ func TestPublicationParentSyncFailureIsUncertainAndReconciles(t *testing.T) {
 	}
 	if _, verifyErr := Verify(context.Background(), destination); verifyErr != nil {
 		t.Fatalf("uncertain destination did not reconcile: %v", verifyErr)
+	}
+}
+
+func TestPublicationRejectsSubstitutedStagingDirectory(t *testing.T) {
+	parent := t.TempDir()
+	stagePath := filepath.Join(parent, "stage")
+	destination := filepath.Join(parent, "destination")
+	if err := os.Mkdir(stagePath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stagePath, "marker"), []byte("verified"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stage, err := openStagingDirectory(stagePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stage.close() }()
+	previous := beforeStagingPublication
+	beforeStagingPublication = func(candidate *stagingDirectory) {
+		t.Helper()
+		moved := candidate.path + ".verified"
+		if err := os.Rename(candidate.path, moved); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(candidate.path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(candidate.path, "marker"), []byte("replacement"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { beforeStagingPublication = previous })
+
+	err = publishDirectoryBound(stage, destination, parent)
+	if !errors.Is(err, ErrIncomplete) || !errors.Is(err, ErrStagingChanged) {
+		t.Fatalf("substituted staging publication error = %v, want incomplete/staging changed", err)
+	}
+	if _, statErr := os.Stat(destination); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("substituted stage was published, stat error = %v", statErr)
+	}
+	data, readErr := os.ReadFile(filepath.Join(stagePath, "marker"))
+	if readErr != nil || string(data) != "replacement" {
+		t.Fatalf("replacement staging entry changed: data=%q err=%v", data, readErr)
+	}
+}
+
+func TestPublicationUncertaintyRetainsReplacementStagingDirectory(t *testing.T) {
+	parent := t.TempDir()
+	stagePath := filepath.Join(parent, "stage")
+	destination := filepath.Join(parent, "destination")
+	if err := os.Mkdir(stagePath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stagePath, "marker"), []byte("verified"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stage, err := openStagingDirectory(stagePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stage.close() }()
+	previousBefore := beforeStagingPublication
+	previousSync := syncPublishedParent
+	beforeStagingPublication = func(candidate *stagingDirectory) {}
+	syncPublishedParent = func(string) error {
+		if err := os.Mkdir(stagePath, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(stagePath, "marker"), []byte("replacement"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return errors.New("synthetic parent sync failure")
+	}
+	t.Cleanup(func() {
+		beforeStagingPublication = previousBefore
+		syncPublishedParent = previousSync
+	})
+
+	err = publishDirectoryBound(stage, destination, parent)
+	if !errors.Is(err, ErrPublicationUncertain) {
+		t.Fatalf("uncertain publication error = %v, want ErrPublicationUncertain", err)
+	}
+	if data, readErr := os.ReadFile(filepath.Join(destination, "marker")); readErr != nil || string(data) != "verified" {
+		t.Fatalf("published destination changed: data=%q err=%v", data, readErr)
+	}
+	if data, readErr := os.ReadFile(filepath.Join(stagePath, "marker")); readErr != nil || string(data) != "replacement" {
+		t.Fatalf("replacement stage was removed: data=%q err=%v", data, readErr)
+	}
+}
+
+func TestRestoreRejectsSameInodeManifestMutation(t *testing.T) {
+	fixture := newBackupFixture(t)
+	archive := filepath.Join(t.TempDir(), "archive")
+	if _, err := Create(context.Background(), fixture.source(true), archive); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(archive, manifestName)
+	original, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var originalManifest Manifest
+	if err := json.Unmarshal(original, &originalManifest); err != nil {
+		t.Fatal(err)
+	}
+	oldTimestamp, err := json.Marshal(originalManifest.CreatedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newTimestamp, err := json.Marshal(originalManifest.CreatedAt.Add(24 * time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(oldTimestamp) != len(newTimestamp) {
+		t.Fatalf("timestamp mutation changed encoded size: %q -> %q", oldTimestamp, newTimestamp)
+	}
+	// Force the exact manifest copy through multiple bounded chunks while
+	// keeping the archive manifest valid and on the same inode.
+	padded := append(bytes.Repeat([]byte(" "), 64*1024), original...)
+	if err := os.WriteFile(manifestPath, padded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mutated := false
+	ctx := context.WithValue(context.Background(), progressObserverKey{}, progressObserver{
+		CopyChunk: func() {
+			if mutated {
+				return
+			}
+			mutated = true
+			current, readErr := os.ReadFile(manifestPath)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if !bytes.Contains(current, oldTimestamp) {
+				t.Fatal("padded manifest did not contain encoded timestamp")
+			}
+			current = bytes.Replace(current, oldTimestamp, newTimestamp, 1)
+			file, openErr := os.OpenFile(manifestPath, os.O_WRONLY, 0)
+			if openErr != nil {
+				t.Fatal(openErr)
+			}
+			if _, writeErr := file.WriteAt(current, 0); writeErr != nil {
+				_ = file.Close()
+				t.Fatal(writeErr)
+			}
+			if closeErr := file.Close(); closeErr != nil {
+				t.Fatal(closeErr)
+			}
+		},
+	})
+	target := filepath.Join(t.TempDir(), "restored")
+	_, err = Restore(ctx, archive, target)
+	if !mutated {
+		t.Fatal("manifest mutation callback did not run")
+	}
+	if !errors.Is(err, ErrIncomplete) {
+		t.Fatalf("same-inode manifest mutation error = %v, want ErrIncomplete", err)
+	}
+	if _, statErr := os.Stat(target); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("manifest mutation published target, stat error = %v", statErr)
 	}
 }
 

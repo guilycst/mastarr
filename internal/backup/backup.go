@@ -79,6 +79,9 @@ var (
 	// ErrPublicationUnsupported means this platform cannot provide the
 	// no-replace directory publication primitive required by this package.
 	ErrPublicationUnsupported = errors.New("backup publication is unsupported")
+	// ErrStagingChanged means the operation-owned private staging directory no
+	// longer has the identity that passed verification.
+	ErrStagingChanged = errors.New("backup staging directory changed")
 )
 
 // Limits bounds one backup capture. Zero fields use the package defaults. A
@@ -244,6 +247,79 @@ type RestoreReport struct {
 	TrashRestoreReady        bool
 }
 
+// stagingDirectory retains the descriptor and identity of the operation's
+// private tree. The path is still needed by native rename APIs, but it is only
+// used after the descriptor and path name have been cross-checked. Keeping the
+// descriptor open also lets the post-publication read-back prove which object
+// became visible at the destination.
+type stagingDirectory struct {
+	path string
+	file *os.File
+	info fs.FileInfo
+}
+
+func openStagingDirectory(path string) (*stagingDirectory, error) {
+	if err := validateAbsoluteDirectory(path); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrIncomplete, ErrStagingChanged)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("%w: open staging directory: %w", ErrIncomplete, err)
+	}
+	info, err := file.Stat()
+	if err != nil || !info.IsDir() {
+		_ = file.Close()
+		return nil, fmt.Errorf("%w: %w", ErrIncomplete, ErrStagingChanged)
+	}
+	// Revalidate with Lstat after opening. This rejects a symlink exchange in
+	// the open window instead of binding the descriptor to an aliased object.
+	if err := validateAbsoluteDirectory(path); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("%w: %w", ErrIncomplete, ErrStagingChanged)
+	}
+	pathInfo, err := os.Stat(path)
+	if err != nil || !os.SameFile(info, pathInfo) {
+		_ = file.Close()
+		return nil, fmt.Errorf("%w: %w", ErrIncomplete, ErrStagingChanged)
+	}
+	return &stagingDirectory{path: path, file: file, info: info}, nil
+}
+
+func (stage *stagingDirectory) close() error {
+	if stage == nil || stage.file == nil {
+		return nil
+	}
+	err := stage.file.Close()
+	stage.file = nil
+	return err
+}
+
+func (stage *stagingDirectory) verifyPathIdentity() error {
+	if stage == nil || stage.file == nil || stage.info == nil {
+		return ErrStagingChanged
+	}
+	info, err := stage.file.Stat()
+	if err != nil || !info.IsDir() || !os.SameFile(stage.info, info) {
+		return ErrStagingChanged
+	}
+	pathInfo, err := os.Lstat(stage.path)
+	if err != nil || pathInfo.Mode()&os.ModeSymlink != 0 || !pathInfo.IsDir() || !os.SameFile(stage.info, pathInfo) {
+		return ErrStagingChanged
+	}
+	return nil
+}
+
+func (stage *stagingDirectory) verifyPublishedIdentity(destination string) error {
+	if stage == nil || stage.info == nil {
+		return ErrStagingChanged
+	}
+	info, err := os.Lstat(destination)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || !os.SameFile(stage.info, info) {
+		return ErrStagingChanged
+	}
+	return nil
+}
+
 // Create captures a quiescent source into a new destination directory. The
 // destination must not exist. Database consistency comes from SQLite's
 // VACUUM INTO on the store-owned handle; descriptor and trash consistency also
@@ -270,16 +346,18 @@ func Create(ctx context.Context, source Source, destination string) (Manifest, e
 	if err != nil {
 		return Manifest{}, fmt.Errorf("%w: create staging directory", ErrIncomplete)
 	}
-	if err := os.Chmod(staging, 0o700); err != nil {
-		_ = os.RemoveAll(staging)
+	stage, err := openStagingDirectory(staging)
+	if err != nil {
+		return Manifest{}, err
+	}
+	if err := stage.file.Chmod(0o700); err != nil {
+		_ = stage.close()
 		return Manifest{}, fmt.Errorf("%w: secure staging directory", ErrIncomplete)
 	}
-	published := false
-	defer func() {
-		if !published {
-			_ = os.RemoveAll(staging)
-		}
-	}()
+	// Failed or uncertain operations deliberately retain the operation-owned
+	// stage for a janitor. Closing the descriptor is safe; removing a mutable
+	// pathname after an identity check is not.
+	defer func() { _ = stage.close() }()
 
 	version, err := migrationVersion(ctx, source.Store.DB())
 	if err != nil {
@@ -361,16 +439,15 @@ func Create(ctx context.Context, source Source, destination string) (Manifest, e
 	if err := contextCheckpoint(ctx); err != nil {
 		return Manifest{}, err
 	}
-	if err := publishDirectory(staging, destination, parent); err != nil {
+	if err := publishDirectoryBound(stage, destination, parent); err != nil {
 		return Manifest{}, err
 	}
-	published = true
 	return manifest, nil
 }
 
 // Restore copies a validated backup directory into a new isolated target and
-// verifies it before publication. A failed verification removes the private
-// staging target and leaves no partially restored destination.
+// verifies it before publication. A failed verification leaves the private
+// staging target for safe janitor inspection and leaves no published target.
 func Restore(ctx context.Context, archive, destination string) (RestoreReport, error) {
 	if err := validContext(ctx); err != nil {
 		return RestoreReport{}, err
@@ -395,10 +472,11 @@ func Restore(ctx context.Context, archive, destination string) (RestoreReport, e
 		return RestoreReport{}, fmt.Errorf("%w: archive overlaps destination", ErrIncomplete)
 	}
 	preflightContext := withoutProgressObserver(ctx)
-	manifest, err := readManifestContext(preflightContext, archive)
+	manifest, manifestBytes, err := readManifestSnapshotContext(preflightContext, archive)
 	if err != nil {
 		return RestoreReport{}, err
 	}
+	manifestDigest := sha256.Sum256(manifestBytes)
 	if err := ensureSupportedSchema(manifest.SchemaVersion); err != nil {
 		return RestoreReport{}, err
 	}
@@ -409,17 +487,22 @@ func Restore(ctx context.Context, archive, destination string) (RestoreReport, e
 	if err != nil {
 		return RestoreReport{}, fmt.Errorf("%w: create restore staging directory", ErrIncomplete)
 	}
-	if err := os.Chmod(staging, 0o700); err != nil {
-		_ = os.RemoveAll(staging)
+	stage, err := openStagingDirectory(staging)
+	if err != nil {
+		return RestoreReport{}, err
+	}
+	if err := stage.file.Chmod(0o700); err != nil {
+		_ = stage.close()
 		return RestoreReport{}, fmt.Errorf("%w: secure restore staging directory", ErrIncomplete)
 	}
-	published := false
-	defer func() {
-		if !published {
-			_ = os.RemoveAll(staging)
-		}
-	}()
-	if err := copyManifestTreeContext(ctx, archive, staging, manifest, newCopyBudget(Limits{})); err != nil {
+	// Keep the stage descriptor through verification, publication and any
+	// uncertain return. The janitor may later inspect the retained pathname;
+	// this operation never removes a name that could have been exchanged.
+	defer func() { _ = stage.close() }()
+	if err := copyManifestTreeSnapshotContext(ctx, archive, staging, manifest, manifestBytes, newCopyBudget(Limits{})); err != nil {
+		return RestoreReport{}, err
+	}
+	if err := manifestSnapshotMatches(ctx, archive, manifestBytes, manifestDigest); err != nil {
 		return RestoreReport{}, err
 	}
 	if err := syncTreeContext(ctx, staging); err != nil {
@@ -428,6 +511,17 @@ func Restore(ctx context.Context, archive, destination string) (RestoreReport, e
 	report, err := Verify(ctx, staging)
 	if err != nil {
 		return RestoreReport{}, err
+	}
+	if err := manifestSnapshotMatches(ctx, archive, manifestBytes, manifestDigest); err != nil {
+		return RestoreReport{}, err
+	}
+	stagedManifest, stagedManifestBytes, err := readManifestSnapshotContext(ctx, staging)
+	if err != nil {
+		return RestoreReport{}, err
+	}
+	stagedDigest := sha256.Sum256(stagedManifestBytes)
+	if stagedDigest != manifestDigest || !bytes.Equal(stagedManifestBytes, manifestBytes) {
+		return RestoreReport{}, fmt.Errorf("%w: staged manifest differs from preflight", ErrIncomplete)
 	}
 	currentArchiveInfo, err := os.Stat(archive)
 	if err != nil || !os.SameFile(archiveInfo, currentArchiveInfo) {
@@ -439,11 +533,10 @@ func Restore(ctx context.Context, archive, destination string) (RestoreReport, e
 	if err := contextCheckpoint(ctx); err != nil {
 		return RestoreReport{}, err
 	}
-	if err := publishDirectory(staging, destination, parent); err != nil {
+	if err := publishDirectoryBound(stage, destination, parent); err != nil {
 		return RestoreReport{}, err
 	}
-	published = true
-	report.Manifest = manifest
+	report.Manifest = stagedManifest
 	return report, nil
 }
 
@@ -1144,8 +1237,12 @@ func copyReader(ctx context.Context, destination io.Writer, source io.Reader, ex
 			return total, ErrUnsafeArtifact
 		}
 		if read > 0 {
-			if _, err := destination.Write(buffer[:read]); err != nil {
+			written, err := destination.Write(buffer[:read])
+			if err != nil {
 				return total, err
+			}
+			if written != read {
+				return total + int64(written), io.ErrShortWrite
 			}
 			if hash != nil {
 				if _, err := hash.Write(buffer[:read]); err != nil {
@@ -1187,17 +1284,32 @@ func writeManifestContext(ctx context.Context, directory string, manifest Manife
 	if len(data) > maximum {
 		return fmt.Errorf("%w: manifest exceeds configured limit", ErrIncomplete)
 	}
+	return writeManifestBytesContext(ctx, directory, data, maximum)
+}
+
+func writeManifestBytesContext(ctx context.Context, directory string, data []byte, maximum int) error {
 	if err := contextCheckpoint(ctx); err != nil {
 		return err
+	}
+	if maximum <= 0 {
+		maximum = maxManifestBytes
+	}
+	if len(data) > maximum {
+		return fmt.Errorf("%w: manifest exceeds configured limit", ErrIncomplete)
 	}
 	path := filepath.Join(directory, manifestName)
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return fmt.Errorf("%w: create manifest", ErrIncomplete)
 	}
-	if _, err := file.Write(data); err != nil {
+	written, err := copyReader(ctx, file, bytes.NewReader(data), int64(len(data)), int64(maximum), nil)
+	if err != nil {
 		_ = file.Close()
-		return incompleteError("write manifest", err)
+		return err
+	}
+	if written != int64(len(data)) {
+		_ = file.Close()
+		return fmt.Errorf("%w: write manifest", ErrIncomplete)
 	}
 	if err := contextCheckpoint(ctx); err != nil {
 		_ = file.Close()
@@ -1213,17 +1325,59 @@ func writeManifestContext(ctx context.Context, directory string, manifest Manife
 	return nil
 }
 
+// beforeStagingPublication is a package-local test seam. Production callers
+// cannot install it; it lets synthetic tests exchange the stage pathname in
+// the narrow window between the first identity check and native publication.
+var beforeStagingPublication = func(*stagingDirectory) {}
+
 func publishDirectory(staging, destination, parent string) error {
+	stage, err := openStagingDirectory(staging)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = stage.close() }()
+	return publishDirectoryBound(stage, destination, parent)
+}
+
+func publishDirectoryBound(stage *stagingDirectory, destination, parent string) error {
+	if stage == nil {
+		return fmt.Errorf("%w: %w", ErrIncomplete, ErrStagingChanged)
+	}
 	if err := validateAbsoluteDirectory(parent); err != nil {
 		return fmt.Errorf("%w: publication parent", ErrIncomplete)
 	}
-	if err := atomicPublishDirectory(staging, destination, parent); err != nil {
+	if err := stage.verifyPathIdentity(); err != nil {
+		return fmt.Errorf("%w: before publication: %w", ErrIncomplete, err)
+	}
+	beforeStagingPublication(stage)
+	if err := stage.verifyPathIdentity(); err != nil {
+		return fmt.Errorf("%w: before publication: %w", ErrIncomplete, err)
+	}
+	if err := atomicPublishDirectoryBound(stage, destination, parent); err != nil {
 		return err
+	}
+	if err := stage.verifyPublishedIdentity(destination); err != nil {
+		// A pathname exchange after the last preflight check can only be
+		// detected after native rename. Do not claim success or remove the
+		// visible object; leave it for read-only reconciliation.
+		return fmt.Errorf("%w: published staging identity: %w", ErrPublicationUncertain, err)
 	}
 	if err := syncPublishedParent(parent); err != nil {
 		return fmt.Errorf("%w: sync published directory: %w", ErrPublicationUncertain, err)
 	}
 	return nil
+}
+
+// atomicPublishDirectory preserves the old path-based helper for package
+// tests and callers inside this module. The public Create/Restore paths use
+// the already-open stage through atomicPublishDirectoryBound.
+func atomicPublishDirectory(staging, destination, parent string) error {
+	stage, err := openStagingDirectory(staging)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = stage.close() }()
+	return atomicPublishDirectoryBound(stage, destination, parent)
 }
 
 var syncPublishedParent = syncDirectory
@@ -1284,49 +1438,66 @@ func readManifest(directory string) (Manifest, error) {
 }
 
 func readManifestContext(ctx context.Context, directory string) (Manifest, error) {
+	manifest, _, err := readManifestSnapshotContext(ctx, directory)
+	return manifest, err
+}
+
+func readManifestSnapshotContext(ctx context.Context, directory string) (Manifest, []byte, error) {
 	if err := contextCheckpoint(ctx); err != nil {
-		return Manifest{}, err
+		return Manifest{}, nil, err
 	}
 	path := filepath.Join(directory, manifestName)
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
-		return Manifest{}, fmt.Errorf("%w: manifest is unavailable", ErrInvalidManifest)
+		return Manifest{}, nil, fmt.Errorf("%w: manifest is unavailable", ErrInvalidManifest)
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return Manifest{}, fmt.Errorf("%w: manifest is unavailable", ErrInvalidManifest)
+		return Manifest{}, nil, fmt.Errorf("%w: manifest is unavailable", ErrInvalidManifest)
 	}
 	defer file.Close()
 	data, err := readBoundedContext(ctx, file, maxManifestBytes)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return Manifest{}, ctxErr
+			return Manifest{}, nil, ctxErr
 		}
-		return Manifest{}, ErrInvalidManifest
+		return Manifest{}, nil, ErrInvalidManifest
 	}
 	if len(data) > maxManifestBytes || !utf8.Valid(data) {
-		return Manifest{}, ErrInvalidManifest
+		return Manifest{}, nil, ErrInvalidManifest
 	}
 	if err := contextCheckpoint(ctx); err != nil {
-		return Manifest{}, err
+		return Manifest{}, nil, err
 	}
 	if err := rejectDuplicateJSONKeys(data); err != nil {
-		return Manifest{}, fmt.Errorf("%w: duplicate manifest field", ErrInvalidManifest)
+		return Manifest{}, nil, fmt.Errorf("%w: duplicate manifest field", ErrInvalidManifest)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var manifest Manifest
 	if err := decoder.Decode(&manifest); err != nil {
-		return Manifest{}, ErrInvalidManifest
+		return Manifest{}, nil, ErrInvalidManifest
 	}
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return Manifest{}, ErrInvalidManifest
+		return Manifest{}, nil, ErrInvalidManifest
 	}
 	if err := validateManifest(manifest); err != nil {
-		return Manifest{}, err
+		return Manifest{}, nil, err
 	}
-	return manifest, nil
+	return manifest, append([]byte(nil), data...), nil
+}
+
+func manifestSnapshotMatches(ctx context.Context, directory string, expected []byte, expectedDigest [sha256.Size]byte) error {
+	_, current, err := readManifestSnapshotContext(ctx, directory)
+	if err != nil {
+		return incompleteError("manifest changed during restore", err)
+	}
+	currentDigest := sha256.Sum256(current)
+	if currentDigest != expectedDigest || !bytes.Equal(current, expected) {
+		return fmt.Errorf("%w: manifest changed during restore", ErrIncomplete)
+	}
+	return nil
 }
 
 func readBoundedContext(ctx context.Context, source io.Reader, maximum int64) ([]byte, error) {
@@ -1345,6 +1516,7 @@ func readBoundedContext(ctx context.Context, source io.Reader, maximum int64) ([
 		}
 		if read > 0 {
 			_, _ = data.Write(buffer[:read])
+			observeCopyChunk(ctx)
 		}
 		if readErr != nil {
 			if errors.Is(readErr, io.EOF) {
@@ -1653,6 +1825,14 @@ func copyManifestTree(archive, destination string, manifest Manifest) error {
 }
 
 func copyManifestTreeContext(ctx context.Context, archive, destination string, manifest Manifest, budget *copyBudget) error {
+	_, manifestBytes, err := readManifestSnapshotContext(ctx, archive)
+	if err != nil {
+		return err
+	}
+	return copyManifestTreeSnapshotContext(ctx, archive, destination, manifest, manifestBytes, budget)
+}
+
+func copyManifestTreeSnapshotContext(ctx context.Context, archive, destination string, manifest Manifest, manifestBytes []byte, budget *copyBudget) error {
 	if err := contextCheckpoint(ctx); err != nil {
 		return err
 	}
@@ -1666,20 +1846,15 @@ func copyManifestTreeContext(ctx context.Context, archive, destination string, m
 			}
 		}
 	}
-	manifestPath := filepath.Join(archive, manifestName)
-	manifestInfo, err := os.Stat(manifestPath)
-	if err != nil || manifestInfo.Size() > maxManifestBytes {
+	if len(manifestBytes) == 0 || len(manifestBytes) > maxManifestBytes {
 		return fmt.Errorf("%w: manifest restore", ErrIncomplete)
 	}
-	manifestArtifact, err := copyStableFileContext(
-		ctx,
-		manifestPath,
-		filepath.Join(destination, manifestName),
-		manifestName,
-		false,
-		budget,
-	)
-	if err != nil || manifestArtifact.Kind != "file" {
+	if budget != nil {
+		if err := budget.addEntry(int64(len(manifestBytes))); err != nil {
+			return incompleteError("manifest restore", err)
+		}
+	}
+	if err := writeManifestBytesContext(ctx, destination, manifestBytes, maxManifestBytes); err != nil {
 		return incompleteError("manifest restore", err)
 	}
 	if err := makeRestoreDirectoriesContext(ctx, destination, manifest, budget); err != nil {

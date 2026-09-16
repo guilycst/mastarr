@@ -76,8 +76,9 @@ If any precondition, snapshot, copy, digest, limit, verification, sync, or
 publication step fails, `Create` returns an incomplete result and does not
 publish the destination. A wrong key or a retained descriptor/trash reference
 that is absent from the captured tree is discovered before publication. The
-caller must retain the prior backup and investigate the failure; a partial
-directory is not a restore point.
+operation-owned private stage is retained for a janitor rather than removed by
+an unchecked pathname cleanup. The caller must retain the prior backup and
+investigate the failure; a partial directory is not a restore point.
 
 The source, archive, destination parent, and every overlap check must use
 canonical paths without application-controlled symlink ancestors or lexical
@@ -101,7 +102,9 @@ report, err := backup.Restore(ctx,
 `Restore` rejects an existing target, parses the strict versioned manifest,
 rejects duplicate/unknown fields and unsafe paths, rejects archive/target
 overlap, verifies every artifact, copies into a private staging directory, and
-runs the read-only `backup.Verify` check before publishing the target. It
+runs the read-only `backup.Verify` check before publishing the target. Restore
+copies the exact preflight manifest bytes, checks their digest again after all
+artifact work, and returns the manifest proven by the staged verification. It
 never starts workers, contacts an upstream service, or runs a migration
 downgrade. The database and manifest schema versions must not exceed the
 embedded migration ceiling; supported older versions remain eligible for the
@@ -152,8 +155,9 @@ the failing archive for diagnosis and use a known-good backup after correcting
 the source or restore environment.
 
 File work is performed in bounded chunks with context checks and aggregate
-entry/tree/byte limits. Cancellation removes only private staging and never
-publishes a destination. Publication uses a reviewed no-replace primitive on
+entry/tree/byte limits. Cancellation leaves private staging for safe janitor
+inspection and never publishes a destination. Publication uses a reviewed
+no-replace primitive on
 Linux and macOS. Other platforms return `ErrPublicationUnsupported` rather
 than falling back to a replace-capable rename. If the containing-parent sync
 fails after the atomic rename, the operation returns `ErrPublicationUncertain`;
