@@ -3365,7 +3365,8 @@
         "Independent W-04 round-one receipt 1b22197ff8fa81ec4d836c6ad113315ffabf4c9d integrated as a1f542a: R1 workflow deadline not bound to action_runs deadline_at, R2 rejection projection split across transactions, R3 AddStep trusts caller At; focused/race/vet and full offline guardrails pass, independent probes reproduce all three.",
         "Correction round 1 dispatched from state checkpoint f4ebcea to /root/x05_implementer: fix review R1/R2/R3 in internal/workflows/ and internal/reviews/, add deadline-claim, rejection-recovery/crash-boundary, and trusted-clock AddStep regressions; product and handoff commits required, no state edits.",
         "Correction round one product 4a43bd68c281559c0cd80386415b05db4df9e19d and handoff c0b3824aa52c3e0001614417c71bf96002a6e2c3 complete from dispatch checkpoint e0b82fae28ee4419188562befa382d1917567ea6; R1/R2/R3 regressions and full offline guardrails pass, ready for independent correction review.",
-        "Independent W-04 correction round-one receipt 78ccbb8b234b4265280c3383dfad2ac782804b48 integrated as 1edd9d3: R1/R3 and atomic R2 crash boundary closed; R2a rejected current step projects running instead of needs_review, R2b fresh-key replay rewrites decisionReason against immutable review row. Focused/race/vet/full offline guardrails pass; two P2 findings remain."
+        "Independent W-04 correction round-one receipt 78ccbb8b234b4265280c3383dfad2ac782804b48 integrated as 1edd9d3: R1/R3 and atomic R2 crash boundary closed; R2a rejected current step projects running instead of needs_review, R2b fresh-key replay rewrites decisionReason against immutable review row. Focused/race/vet/full offline guardrails pass; two P2 findings remain.",
+        "Correction round two dispatched from c1f0fee400eda67e6440f82c3f472a56e111a1b0 to /root/x05_implementer for R2a/R2b only: rejected current step must project WorkflowNeedsReview, and same-decision fresh-key replay must preserve immutable actor/caller/reason evidence. Product remains scoped to internal/reviews/ and internal/workflows/."
       ],
       "review": {
         "status": "changes_requested",
@@ -3409,7 +3410,7 @@
         "reviewPath": "docs/execution/handoffs/W-04-review-round2.md",
         "handoffPath": "docs/execution/handoffs/W-04.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "changes_requested",
+        "status": "correction_dispatched",
         "dependencyCommits": {
           "W-03-approved": "a4ad5a0fcfee724491513224f6b082a25be82e0a",
           "W-03-state-closure": "4e5c46d503949a493067ae57d3395545a36021f8"
@@ -3490,21 +3491,24 @@
           "reason": "two bounded implementer attempts produced no workflow files; preserve the completed review slice and implement the minimum ordered composition directly",
           "status": "complete"
         },
-        "correctionStatus": "changes_requested",
-        "correctionRound": 1,
+        "correctionStatus": "in_progress",
+        "correctionRound": 2,
         "correctionOwner": "/root/x05_implementer",
-        "correctionBaseSha": "e0b82fae28ee4419188562befa382d1917567ea6",
-        "correctionDispatchCheckpoint": "e0b82fae28ee4419188562befa382d1917567ea6",
-        "correctionReviewPath": "docs/execution/handoffs/W-04-review-round2.md",
-        "correctionHandoffPath": "docs/execution/handoffs/W-04-correction-round1.md",
+        "correctionBaseSha": "c1f0fee400eda67e6440f82c3f472a56e111a1b0",
+        "correctionDispatchCheckpoint": "c1f0fee400eda67e6440f82c3f472a56e111a1b0",
+        "correctionReviewPath": "docs/execution/handoffs/W-04-review-round3.md",
+        "correctionHandoffPath": "docs/execution/handoffs/W-04-correction-round2.md",
         "correctionReviewer": "/root/x05_reviewer",
-        "priorReviewCommit": "1b22197ff8fa81ec4d836c6ad113315ffabf4c9d",
-        "priorReviewIntegrationCommit": "a1f542a",
-        "waitingOn": null,
-        "waitingReason": null,
-        "correctionImplementationCommit": "4a43bd68c281559c0cd80386415b05db4df9e19d",
-        "correctionHandoffCommit": "c0b3824aa52c3e0001614417c71bf96002a6e2c3",
-        "correctionReviewSourceCommit": "4a43bd68c281559c0cd80386415b05db4df9e19d"
+        "priorReviewCommit": "78ccbb8b234b4265280c3383dfad2ac782804b48",
+        "priorReviewIntegrationCommit": "c1f0fee400eda67e6440f82c3f472a56e111a1b0",
+        "waitingOn": "/root/x05_implementer",
+        "waitingReason": "bounded correction implementation for R2a/R2b",
+        "correctionImplementationCommit": null,
+        "correctionHandoffCommit": null,
+        "correctionReviewSourceCommit": null,
+        "priorCorrectionRound": 1,
+        "priorCorrectionImplementationCommit": "4a43bd68c281559c0cd80386415b05db4df9e19d",
+        "priorCorrectionHandoffCommit": "c0b3824aa52c3e0001614417c71bf96002a6e2c3"
       },
       "reviewHistory": [
         {
@@ -5470,7 +5474,7 @@
       ]
     }
   },
-  "nextAction": "W-04 correction review round 2 is changes_requested from source 4a43bd68c281559c0cd80386415b05db4df9e19d. Correct R2a rejected-step aggregate projection and R2b immutable rejection replay metadata, then rerun independent review. Keep F-05 capability-blocked and G-01 Arr native writes blocked.",
+  "nextAction": "W-04 correction round 2 is dispatched from c1f0fee400eda67e6440f82c3f472a56e111a1b0 to /root/x05_implementer. Fix R2a rejected-step aggregate state and R2b immutable replay metadata, add regressions, then submit product and handoff SHAs for independent review. Keep F-05 capability-blocked and G-01 Arr native writes blocked.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
