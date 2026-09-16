@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/guilycst/mastarr/internal/domain"
 	"github.com/guilycst/mastarr/internal/storage/sqlc"
@@ -3056,7 +3057,7 @@ func decodeExecutionMarkers(raw json.RawMessage) ([]string, bool) {
 	}
 	markers := make([]string, 0, len(encoded))
 	for _, value := range encoded {
-		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+		if !losslessJSONString(value) {
 			return nil, false
 		}
 		var marker string
@@ -3066,6 +3067,78 @@ func decodeExecutionMarkers(raw json.RawMessage) ([]string, bool) {
 		markers = append(markers, marker)
 	}
 	return markers, true
+}
+
+// losslessJSONString rejects JSON strings whose Go decoder would rewrite the
+// source bytes. encoding/json accepts invalid UTF-8 and unpaired UTF-16
+// surrogates by replacing them with U+FFFD; opaque evidence must instead take
+// appendEvidence's raw prior-value envelope.
+func losslessJSONString(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) < 2 || trimmed[0] != '"' || trimmed[len(trimmed)-1] != '"' || !utf8.Valid(trimmed) {
+		return false
+	}
+	var decoded string
+	if err := json.Unmarshal(trimmed, &decoded); err != nil {
+		return false
+	}
+	for index := 1; index < len(trimmed)-1; {
+		if trimmed[index] != '\\' {
+			index++
+			continue
+		}
+		if index+1 >= len(trimmed)-1 {
+			return false
+		}
+		if trimmed[index+1] != 'u' {
+			index += 2
+			continue
+		}
+		if index+6 > len(trimmed)-1 {
+			return false
+		}
+		code, ok := jsonHexUint16(trimmed[index+2 : index+6])
+		if !ok {
+			return false
+		}
+		switch {
+		case code >= 0xDC00 && code <= 0xDFFF:
+			return false
+		case code >= 0xD800 && code <= 0xDBFF:
+			if index+12 > len(trimmed)-1 || trimmed[index+6] != '\\' || trimmed[index+7] != 'u' {
+				return false
+			}
+			low, ok := jsonHexUint16(trimmed[index+8 : index+12])
+			if !ok || low < 0xDC00 || low > 0xDFFF {
+				return false
+			}
+			index += 12
+		default:
+			index += 6
+		}
+	}
+	return true
+}
+
+func jsonHexUint16(raw []byte) (uint16, bool) {
+	if len(raw) != 4 {
+		return 0, false
+	}
+	var value uint16
+	for _, digit := range raw {
+		value <<= 4
+		switch {
+		case digit >= '0' && digit <= '9':
+			value += uint16(digit - '0')
+		case digit >= 'a' && digit <= 'f':
+			value += uint16(digit-'a') + 10
+		case digit >= 'A' && digit <= 'F':
+			value += uint16(digit-'A') + 10
+		default:
+			return 0, false
+		}
+	}
+	return value, true
 }
 
 func (executor *Executor) recordEffectsFor(ctx context.Context, action Action, attempt Attempt, reported []Effect, defaultState EffectState, claimed bool) error {

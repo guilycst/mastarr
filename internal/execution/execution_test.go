@@ -1787,6 +1787,8 @@ func TestLatestDispatchExternalIDUsesCurrentDispatchAttempt(t *testing.T) {
 }
 
 func TestAppendEvidencePreservesOpaqueJSONKeys(t *testing.T) {
+	rawInvalidUTF8 := append([]byte(`{"_mastarr_execution_markers":["`), 0xff)
+	rawInvalidUTF8 = append(rawInvalidUTF8, []byte(`"],"approved_scope":"two.bin"}`)...)
 	tests := []struct {
 		name       string
 		input      json.RawMessage
@@ -1815,6 +1817,18 @@ func TestAppendEvidencePreservesOpaqueJSONKeys(t *testing.T) {
 			name:  "non-array marker",
 			input: json.RawMessage(`{"_mastarr_execution_markers":{"source":"marker"},"approved_scope":"two.bin"}`),
 		},
+		{
+			name:  "non-string marker member",
+			input: json.RawMessage(`{"_mastarr_execution_markers":[1],"approved_scope":"two.bin"}`),
+		},
+		{
+			name:  "escaped unpaired surrogate marker member",
+			input: json.RawMessage(`{"_mastarr_execution_markers":["\ud800"],"approved_scope":"two.bin"}`),
+		},
+		{
+			name:  "raw invalid UTF-8 marker member",
+			input: rawInvalidUTF8,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -1829,14 +1843,13 @@ func TestAppendEvidencePreservesOpaqueJSONKeys(t *testing.T) {
 			if err := json.Unmarshal(got, &object); err != nil {
 				t.Fatalf("annotated evidence object decode: %v", err)
 			}
+			expectedMarkers := []string{"dispatch_result_unreported"}
+			if test.merge {
+				expectedMarkers = test.wantMarker
+			}
 			markers, ok := decodeExecutionMarkers(object["_mastarr_execution_markers"])
-			if !ok || !equalStrings(markers, func() []string {
-				if test.merge {
-					return test.wantMarker
-				}
-				return []string{"dispatch_result_unreported"}
-			}()) {
-				t.Fatalf("execution markers = %v, want %v", markers, test.wantMarker)
+			if !ok || !equalStrings(markers, expectedMarkers) {
+				t.Fatalf("execution markers = %v, want %v", markers, expectedMarkers)
 			}
 			prior, hasPrior := object["_mastarr_prior"]
 			if test.merge {
@@ -1850,6 +1863,82 @@ func TestAppendEvidencePreservesOpaqueJSONKeys(t *testing.T) {
 			}
 			if !bytes.Equal(bytes.TrimSpace(prior), bytes.TrimSpace(test.input)) {
 				t.Fatalf("raw prior changed: got %s, want %s", prior, test.input)
+			}
+		})
+	}
+}
+
+func TestPartialDispatchPreservesIllFormedMarkerEvidence(t *testing.T) {
+	rawInvalidUTF8 := append([]byte(`{"_mastarr_execution_markers":["`), 0xff)
+	rawInvalidUTF8 = append(rawInvalidUTF8, []byte(`"],"approved_scope":"two.bin"}`)...)
+	tests := []struct {
+		name     string
+		evidence json.RawMessage
+	}{
+		{
+			name:     "escaped unpaired surrogate",
+			evidence: json.RawMessage(`{"_mastarr_execution_markers":["\ud800"],"approved_scope":"two.bin"}`),
+		},
+		{
+			name:     "raw invalid UTF-8",
+			evidence: rawInvalidUTF8,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			actionID := "partial-ill-formed-" + strings.ReplaceAll(test.name, " ", "-")
+			journal, action := newMemoryAction(actionID, domain.ActionFSCopy, domain.ActionQueued)
+			first := executionEffect("copy", "one.bin")
+			second := executionEffect("copy", "two.bin")
+			second.Ordinal = 1
+			second.Evidence = test.evidence
+			returned := first
+			returned.State = EffectApplied
+			returned.Evidence = json.RawMessage(`[` + `"handler_applied"` + `]`)
+			reconciledFirst := returned
+			reconciledSecond := second
+			reconciledSecond.State = EffectApplied
+			reconciledSecond.Evidence = json.RawMessage(`[` + `"read_back_applied"` + `]`)
+			handler := &scriptedHandler{
+				kind: domain.ActionFSCopy,
+				observeFn: func(_ context.Context, _ Action, _ int) (Observation, error) {
+					return Observation{State: ObserveNeedsAction, Effects: []Effect{first, second}}, nil
+				},
+				dispatchFn: func(_ context.Context, _ Action, _ Attempt) (DispatchResult, error) {
+					return DispatchResult{ExternalID: "ill-formed-command", Effects: []Effect{returned}}, NewDispatchedFailure(FailureUncertain, errors.New("response lost after partial dispatch"))
+				},
+				reconcileFn: func(_ context.Context, _ Action, _ Attempt) (ReconcileResult, error) {
+					return ReconcileResult{Outcome: domain.OutcomeApplied, Effects: []Effect{reconciledFirst, reconciledSecond}}, nil
+				},
+			}
+
+			firstRun := mustRunOnce(t, newTestExecutor(t, journal, handler, executionClock()))
+			if len(firstRun.Results) != 1 || firstRun.Results[0].State != domain.ActionReconciling || !firstRun.Results[0].Dispatched {
+				t.Fatalf("ill-formed partial result = %+v, want dispatched reconciliation", firstRun.Results)
+			}
+			effects := mustEffects(t, journal, action.ID)
+			if len(effects) != 2 || effects[1].State != EffectUnknown {
+				t.Fatalf("ill-formed partial effects = %+v, want unknown omitted effect", effects)
+			}
+			var envelope map[string]json.RawMessage
+			if err := json.Unmarshal(effects[1].Evidence, &envelope); err != nil {
+				t.Fatalf("ill-formed partial evidence is invalid: %v", err)
+			}
+			prior, ok := envelope["_mastarr_prior"]
+			if !ok || !bytes.Equal(bytes.TrimSpace(prior), bytes.TrimSpace(test.evidence)) {
+				t.Fatalf("ill-formed partial raw prior = %s, want %s", prior, test.evidence)
+			}
+			markers, ok := decodeExecutionMarkers(envelope["_mastarr_execution_markers"])
+			if !ok || !equalStrings(markers, []string{"dispatch_result_unreported"}) {
+				t.Fatalf("ill-formed partial markers = %v, want unreported marker", markers)
+			}
+
+			secondRun := mustRunOnce(t, newTestExecutor(t, journal, handler, func() time.Time { return executionTime().Add(10 * time.Second) }))
+			if len(secondRun.Results) != 1 || secondRun.Results[0].State != domain.ActionSucceeded || secondRun.Results[0].Outcome != domain.OutcomeApplied {
+				t.Fatalf("ill-formed partial reconciliation = %+v, want applied success", secondRun.Results)
+			}
+			if handler.dispatchCalls() != 1 || handler.reconcileCalls() != 1 {
+				t.Fatalf("ill-formed partial calls = dispatch %d reconcile %d, want one dispatch and one reconciliation", handler.dispatchCalls(), handler.reconcileCalls())
 			}
 		})
 	}
