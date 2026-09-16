@@ -4485,7 +4485,7 @@
       ]
     }
   },
-  "nextAction": "X-06 product d131422a7319be22ccc6fba17a54a047c89e25d8 and handoff e7047e143fae06d2871afc56337709fca339a311 are ready. Queue independent review; keep G-01 blocked.",
+  "nextAction": "X-06 correction 8e811aa460d12eb374a623e87fb1d7531e015b3d and handoff da6b0aedfe27fe3a113974bd2744964b5e6c2214 are ready. Independent round-two review is pending; keep G-01 blocked.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
