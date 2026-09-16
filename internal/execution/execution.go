@@ -1705,16 +1705,16 @@ func (executor *Executor) processObserved(ctx context.Context, action Action, ha
 	dispatchResult, dispatchErr := handler.Dispatch(dispatchCtx, action, dispatchAttempt)
 	result.Dispatched = true
 	if dispatchErr != nil {
-		return executor.finishDispatchError(ctx, result, dispatchAttempt, dispatchErr)
+		return executor.finishDispatchError(ctx, result, dispatchAttempt, dispatchResult, dispatchErr)
 	}
 	if err := dispatchResult.validate(action.ID); err != nil {
-		return executor.finishDispatchError(ctx, result, dispatchAttempt, NewDispatchedFailure(FailureUncertain, err))
+		return executor.finishDispatchError(ctx, result, dispatchAttempt, DispatchResult{}, NewDispatchedFailure(FailureUncertain, err))
 	}
 	// A returned success is only an input to the final read-back. The handler
 	// must prove the desired state through its read-only Observe implementation.
 	readBack, readErr := handler.Observe(dispatchCtx, action)
 	if readErr != nil {
-		return executor.finishDispatchError(ctx, result, dispatchAttempt, NewDispatchedFailure(FailureUncertain, readErr))
+		return executor.finishDispatchError(ctx, result, dispatchAttempt, DispatchResult{}, NewDispatchedFailure(FailureUncertain, readErr))
 	}
 	if err := readBack.validate(action.ID); err != nil || readBack.State != ObserveSatisfied || effectSetMismatch(observation.Effects, readBack.Effects, action.ID) {
 		if err == nil {
@@ -1724,10 +1724,10 @@ func (executor *Executor) processObserved(ctx context.Context, action Action, ha
 				err = errors.New("dispatch read-back did not prove desired state")
 			}
 		}
-		return executor.finishDispatchError(ctx, result, dispatchAttempt, NewDispatchedFailure(FailureUncertain, err))
+		return executor.finishDispatchError(ctx, result, dispatchAttempt, DispatchResult{}, NewDispatchedFailure(FailureUncertain, err))
 	}
 	if len(dispatchResult.Effects) > 0 && effectSetMismatch(observation.Effects, dispatchResult.Effects, action.ID) {
-		return executor.finishDispatchError(ctx, result, dispatchAttempt, NewDispatchedFailure(FailureUncertain, errors.New("dispatch effects did not match the approved target set")))
+		return executor.finishDispatchError(ctx, result, dispatchAttempt, DispatchResult{}, NewDispatchedFailure(FailureUncertain, errors.New("dispatch effects did not match the approved target set")))
 	}
 	finished := finishAttempt(dispatchAttempt, domain.AttemptSucceeded, CertaintyKnown, nil, executor.options)
 	finished.ExternalID = dispatchResult.ExternalID
@@ -2331,23 +2331,38 @@ func (executor *Executor) processReconciliation(ctx context.Context, action Acti
 	return result
 }
 
-func (executor *Executor) finishDispatchError(ctx context.Context, result Result, attempt Attempt, dispatchErr error) Result {
+func (executor *Executor) finishDispatchError(ctx context.Context, result Result, attempt Attempt, dispatchResult DispatchResult, dispatchErr error) Result {
 	kind := failureKind(dispatchErr)
-	uncertain := failureWasDispatched(dispatchErr) || kind == FailureUncertain
+	uncertain := failureWasDispatched(dispatchErr) || kind == FailureUncertain || dispatchResultHasEvidence(dispatchResult)
 	if uncertain {
 		finished := attempt
 		finished.State = domain.AttemptReconciling
 		finished.OutcomeCertainty = CertaintyUncertain
 		finished.ErrorCode = string(FailureUncertain)
 		finished.ErrorDetail = safeDetail(dispatchErr)
-		finished.Evidence = evidenceJSON([]string{"dispatch_result_uncertain"})
+		finished.Evidence = evidenceJSON(dispatchErrorEvidence(dispatchResult))
 		if _, err := executor.updateAttemptOwned(ctx, result.Action, finished); err != nil {
 			result.Err = err
 			return result
 		}
-		if err := executor.recordUnknownEffectsOwned(ctx, result.Action, finished, EffectUnknown); err != nil {
-			result.Err = err
-			return result
+		var recordErr error
+		if len(dispatchResult.Effects) > 0 {
+			recordErr = executor.recordDispatchErrorEffectsOwned(ctx, result.Action, finished, dispatchResult.Effects)
+		} else {
+			recordErr = executor.recordUnknownEffectsOwned(ctx, result.Action, finished, EffectUnknown)
+		}
+		if recordErr != nil {
+			// A malformed partial report is untrusted. Preserve the durable
+			// uncertainty by falling back to the existing all-unknown path; a
+			// journal/lease failure still surfaces and prevents a transition.
+			if len(dispatchResult.Effects) == 0 {
+				result.Err = recordErr
+				return result
+			}
+			if fallbackErr := executor.recordUnknownEffectsOwned(ctx, result.Action, finished, EffectUnknown); fallbackErr != nil {
+				result.Err = fallbackErr
+				return result
+			}
 		}
 		updated, _, err := executor.transitionUncertainOwned(ctx, result.Action, finished, "dispatch_uncertain", executor.retryAt(attempt.AttemptNumber))
 		result.Action = updated
@@ -2370,6 +2385,25 @@ func (executor *Executor) finishDispatchError(ctx context.Context, result Result
 	result.State = updated.State
 	result.Err = err
 	return result
+}
+
+func dispatchResultHasEvidence(result DispatchResult) bool {
+	return result.Accepted || result.Outcome.Valid() || len(result.Evidence) > 0 || len(result.Effects) > 0
+}
+
+func dispatchErrorEvidence(result DispatchResult) []string {
+	evidence := []string{"dispatch_result_uncertain"}
+	evidence = append(evidence, result.Evidence...)
+	if result.Accepted {
+		evidence = append(evidence, "dispatch_result_accepted")
+	}
+	if result.Outcome.Valid() {
+		evidence = append(evidence, "dispatch_result_outcome="+string(result.Outcome))
+	}
+	if len(result.Effects) > 0 {
+		evidence = append(evidence, fmt.Sprintf("dispatch_effect_count=%d", len(result.Effects)))
+	}
+	return evidence
 }
 
 func (executor *Executor) finishReconciliationError(ctx context.Context, result Result, attempt Attempt, reconcileErr error, claimed bool) Result {
@@ -2749,6 +2783,90 @@ func (executor *Executor) recordUnknownEffectsOwned(ctx context.Context, action 
 	return executor.withClaimedTransaction(ctx, action, func(transactionCtx context.Context, journal Journal) error {
 		return executor.recordEffectsInJournal(transactionCtx, journal, action, attempt, nil, defaultState, false)
 	})
+}
+
+// recordDispatchErrorEffectsOwned persists the subset an errored Dispatch
+// returned before the executor publishes the uncertain transition. Returned
+// effects are matched to the already-planned identities; every omitted target
+// becomes unknown in the same fenced transaction. This keeps partial material
+// and handler evidence durable without ever treating an errored report as a
+// safe retry.
+func (executor *Executor) recordDispatchErrorEffectsOwned(ctx context.Context, action Action, attempt Attempt, reported []Effect) error {
+	return executor.withClaimedTransaction(ctx, action, func(transactionCtx context.Context, journal Journal) error {
+		return executor.recordDispatchErrorEffectsInJournal(transactionCtx, journal, action, attempt, reported)
+	})
+}
+
+func (executor *Executor) recordDispatchErrorEffectsInJournal(ctx context.Context, journal Journal, action Action, attempt Attempt, reported []Effect) error {
+	existing, err := journal.ListEffects(ctx, action.ID)
+	if err != nil {
+		return err
+	}
+	if len(existing) == 0 {
+		return fmt.Errorf("%w: errored dispatch has no planned effects", ErrInvalidJournal)
+	}
+
+	normalized := make([]Effect, len(reported))
+	copy(normalized, reported)
+	normalizeReportedEffects(normalized, action.ID)
+	if err := validateEffects(normalized, action.ID); err != nil {
+		return fmt.Errorf("errored dispatch effects: %w", err)
+	}
+	byIdentity := make(map[string]Effect, len(existing))
+	for _, candidate := range existing {
+		byIdentity[effectIdentity(candidate)] = candidate
+	}
+	byIdentityReported := make(map[string]Effect, len(normalized))
+	for _, effect := range normalized {
+		identity := effectIdentity(effect)
+		if _, duplicate := byIdentityReported[identity]; duplicate {
+			return fmt.Errorf("%w: duplicate errored dispatch effect %s", ErrInvalidJournal, identity)
+		}
+		approved, ok := byIdentity[identity]
+		if !ok {
+			return fmt.Errorf("%w: unapproved errored dispatch effect %s", ErrInvalidJournal, identity)
+		}
+		if approved.Ordinal != effect.Ordinal {
+			return fmt.Errorf("%w: errored dispatch effect %s changed ordinal", ErrInvalidJournal, identity)
+		}
+		byIdentityReported[identity] = effect
+	}
+
+	for _, existingEffect := range existing {
+		effect := existingEffect
+		if returned, ok := byIdentityReported[effectIdentity(existingEffect)]; ok {
+			effect = returned
+			effect.ID = existingEffect.ID
+			effect.ActionRunID = action.ID
+			effect.AttemptID = attempt.ID
+			if len(effect.Evidence) == 0 || string(effect.Evidence) == `{}` {
+				effect.Evidence = append(json.RawMessage(nil), existingEffect.Evidence...)
+			}
+			if effect.ObservedAt == "" {
+				effect.ObservedAt = formatTime(nowUTC(executor.options))
+			}
+		} else {
+			effect.AttemptID = attempt.ID
+			effect.State = EffectUnknown
+			effect.ObservedAt = formatTime(nowUTC(executor.options))
+			effect.Evidence = appendEvidence(effect.Evidence, "dispatch_result_unreported")
+		}
+		if _, err := journal.UpdateEffect(ctx, effect); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func appendEvidence(raw json.RawMessage, values ...string) json.RawMessage {
+	if len(values) == 0 {
+		return append(json.RawMessage(nil), raw...)
+	}
+	var existing []string
+	if len(raw) > 0 && json.Unmarshal(raw, &existing) == nil {
+		return evidenceJSON(append(existing, values...))
+	}
+	return evidenceJSON(values)
 }
 
 func (executor *Executor) recordEffectsFor(ctx context.Context, action Action, attempt Attempt, reported []Effect, defaultState EffectState, claimed bool) error {

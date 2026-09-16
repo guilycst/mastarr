@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1597,6 +1598,71 @@ func TestUncertainDispatchMarksEveryPlannedEffectUnknown(t *testing.T) {
 	}
 	if current := mustAction(t, journal, action.ID); current.UnresolvedCount != 2 {
 		t.Fatalf("uncertain action unresolved count = %d, want two", current.UnresolvedCount)
+	}
+}
+
+func TestErroredDispatchPersistsReturnedPartialEffectsAndReconciles(t *testing.T) {
+	journal, action := newMemoryAction("errored-partial-dispatch", domain.ActionFSCopy, domain.ActionQueued)
+	first := executionEffect("copy", "one.bin")
+	second := executionEffect("copy", "two.bin")
+	second.Ordinal = 1
+	returned := first
+	returned.State = EffectApplied
+	returned.Evidence = json.RawMessage(`[` + `"handler_applied"` + `]`)
+	returned.ObservedAt = executionFixtureTime
+	reconciledFirst := returned
+	reconciledSecond := second
+	reconciledSecond.State = EffectApplied
+	reconciledSecond.Evidence = json.RawMessage(`[` + `"read_back_applied"` + `]`)
+	handler := &scriptedHandler{
+		kind: domain.ActionFSCopy,
+		observeFn: func(_ context.Context, _ Action, _ int) (Observation, error) {
+			return Observation{State: ObserveNeedsAction, Effects: []Effect{first, second}}, nil
+		},
+		dispatchFn: func(_ context.Context, _ Action, _ Attempt) (DispatchResult, error) {
+			return DispatchResult{
+				Evidence: []string{"one_file_published", "response_lost"},
+				Effects:  []Effect{returned},
+			}, NewDispatchedFailure(FailureUncertain, errors.New("response lost after partial dispatch"))
+		},
+		reconcileFn: func(_ context.Context, _ Action, _ Attempt) (ReconcileResult, error) {
+			return ReconcileResult{Outcome: domain.OutcomeApplied, Evidence: []string{"read_back_complete"}, Effects: []Effect{reconciledFirst, reconciledSecond}}, nil
+		},
+	}
+
+	firstRun := mustRunOnce(t, newTestExecutor(t, journal, handler, executionClock()))
+	if len(firstRun.Results) != 1 || firstRun.Results[0].State != domain.ActionReconciling || !firstRun.Results[0].Dispatched {
+		t.Fatalf("errored partial dispatch result = %+v, want dispatched reconciliation", firstRun.Results)
+	}
+	current := mustAction(t, journal, action.ID)
+	if current.State != domain.ActionReconciling || current.UnresolvedCount != 1 {
+		t.Fatalf("errored partial action = %+v, want one unresolved effect", current)
+	}
+	effects := mustEffects(t, journal, action.ID)
+	if len(effects) != 2 || effects[0].State != EffectApplied || effects[1].State != EffectUnknown {
+		t.Fatalf("errored partial effects = %+v, want applied plus unknown", effects)
+	}
+	if !strings.Contains(string(effects[0].Evidence), "handler_applied") || !strings.Contains(string(effects[1].Evidence), "dispatch_result_unreported") {
+		t.Fatalf("handler effect evidence was not persisted: %+v", effects)
+	}
+	attempts := mustAttempts(t, journal, action.ID)
+	if len(attempts) != 2 || attempts[1].State != domain.AttemptReconciling || attempts[1].OutcomeCertainty != CertaintyUncertain {
+		t.Fatalf("errored partial attempts = %+v, want uncertain dispatch attempt", attempts)
+	}
+	if !strings.Contains(string(attempts[1].Evidence), "one_file_published") || !strings.Contains(string(attempts[1].Evidence), "dispatch_effect_count=1") {
+		t.Fatalf("dispatch result evidence was not persisted: %s", attempts[1].Evidence)
+	}
+
+	secondRun := mustRunOnce(t, newTestExecutor(t, journal, handler, func() time.Time { return executionTime().Add(10 * time.Second) }))
+	if len(secondRun.Results) != 1 || secondRun.Results[0].State != domain.ActionSucceeded || secondRun.Results[0].Outcome != domain.OutcomeApplied {
+		t.Fatalf("reconciled errored partial result = %+v, want success", secondRun.Results)
+	}
+	if handler.dispatchCalls() != 1 || handler.reconcileCalls() != 1 {
+		t.Fatalf("errored partial calls = dispatch %d reconcile %d, want one each", handler.dispatchCalls(), handler.reconcileCalls())
+	}
+	effects = mustEffects(t, journal, action.ID)
+	if len(effects) != 2 || effects[0].State != EffectApplied || effects[1].State != EffectApplied {
+		t.Fatalf("reconciled partial effects = %+v, want applied effects", effects)
 	}
 }
 
