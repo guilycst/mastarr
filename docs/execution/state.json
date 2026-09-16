@@ -16,7 +16,7 @@
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
   "activeImplementationTasks": [
-    "X-22"
+    "X-06"
   ],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
@@ -2169,12 +2169,48 @@
       ]
     },
     "X-06": {
-      "status": "planned",
-      "owner": null,
-      "baseSha": null,
+      "status": "in_progress",
+      "owner": "/root/x05_implementer",
+      "baseSha": "208165fed313698053a91f97f929c6af02bfadf7",
       "integratedSha": null,
-      "evidence": [],
-      "review": null
+      "evidence": [
+        "dispatched after X-05 approval; owns the Arr registration and manual-import adapter plus synthetic fixtures and handoff.",
+        "Keep root validation, explicit command/read-back evidence and capability gates intact. G-01 remains unresolved, so no live upstream writes are permitted and any unsupported capability must remain blocked rather than silently enabled.",
+        "This lane is the legacy/root write capability slice. Standalone Sonarr/Radarr transport migration remains X-20 and must not be pulled into this change."
+      ],
+      "review": null,
+      "dispatch": {
+        "assignedAt": "2026-09-15",
+        "model": "gpt-5.6-luna",
+        "reasoning": "max",
+        "role": "implementer",
+        "baseSha": "208165fed313698053a91f97f929c6af02bfadf7",
+        "ownedPaths": [
+          "internal/adapters/arr/write/",
+          "tests/fixtures/arr/write/",
+          "docs/execution/handoffs/X-06.md"
+        ],
+        "expectedChecks": [
+          "A-12",
+          "A-13",
+          "A-16",
+          "A-17",
+          "A-33",
+          "explicit registration fields and unmonitored/no-search behavior",
+          "validated manual-import command with exact preview binding and read-back evidence",
+          "synthetic upstream fixtures with lost-response, collision and malformed-result coverage",
+          "capability gate keeps native writes blocked while G-01 is unresolved",
+          "GOWORK=off root tests/race/vet/mod verify, generation, Vacuum, lint and architecture",
+          "Linux amd64/arm64 CGO-free compile"
+        ],
+        "reviewPath": "docs/execution/handoffs/X-06-review-round1.md",
+        "handoffPath": "docs/execution/handoffs/X-06.md",
+        "nextReviewer": "/root/x05_reviewer",
+        "dependencyCommits": {
+          "X-05": "165f22c2d81c4123d2ab31cf00d7613cdba87054",
+          "X-22": "ea41f1f49569a079696f091a6113ee4d97641df4"
+        }
+      }
     },
     "X-07": {
       "status": "done",
@@ -4162,28 +4198,27 @@
       "review": null
     },
     "X-22": {
-      "status": "in_progress",
+      "status": "done",
       "owner": "/root/x05_implementer",
       "baseSha": "40441e8910e69f77904983db4c4014f6c73864df",
-      "integratedSha": null,
-      "implementationCommit": "f998ae5d68fbcc8853c8b5180835a9008c60a68b",
-      "handoffCommit": "4fd1f38c76c00abf59e89edd79a5d2d9a7cb2da6",
-      "reviewSourceCommit": "f998ae5d68fbcc8853c8b5180835a9008c60a68b",
+      "integratedSha": "ea41f1f49569a079696f091a6113ee4d97641df4",
+      "implementationCommit": "ea41f1f49569a079696f091a6113ee4d97641df4",
+      "handoffCommit": "fcb414cb5fcdae978489cb03ba321062adeae163",
+      "reviewSourceCommit": "ea41f1f49569a079696f091a6113ee4d97641df4",
       "evidence": [
         "dispatched after X-04 and X-18 approvals; owns the Seerr root adapter, synthetic fixtures, root module dependency metadata if required, and its handoff.",
         "The standalone Seerr module is public and read-only. Preserve the root adapter port boundary, pagination coverage and unknown availability semantics; do not add Seerr writes or generated DTO leakage.",
         "G-01 remains open. This lane must not mutate a live service and must record any unpublished-module bootstrap blocker instead of adding a local replace.",
-        "ea41f1f49569a079696f091a6113ee4d97641df4 X-22 correction round one restores fresh read-time ObservedAt while retaining Seerr lifecycle timestamps and adds stale, future, created-only and missing-media regressions; fcb414cb5fcdae978489cb03ba321062adeae163 records the checks."
+        "ea41f1f49569a079696f091a6113ee4d97641df4 X-22 correction round one restores fresh read-time ObservedAt while retaining Seerr lifecycle timestamps and adds stale, future, created-only and missing-media regressions; fcb414cb5fcdae978489cb03ba321062adeae163 records the checks.",
+        "605d2e0f4a039b6f1b228fc2ad175b38f0c6d3e9 independent review round two approves the correction after three-repeat race probes, timestamp table regressions, standalone checks, lint, planning and fast hook."
       ],
       "review": {
-        "status": "changes_requested",
-        "decision": "changes_requested",
+        "status": "approved",
+        "decision": "approved",
         "reviewer": "/root/x05_reviewer",
-        "commit": "792eee9380edd3b48aa85e3cf96fab2cad0bac81",
-        "findings": [
-          "P2: request mapping uses Seerr source updatedAt/createdAt as ports.RequestRecord.ObservedAt; preserve source lifecycle timestamps separately and use the current read time for ObservedAt. Add old, future, created-only and missing-media timestamp regressions."
-        ],
-        "round": 1
+        "commit": "605d2e0f4a039b6f1b228fc2ad175b38f0c6d3e9",
+        "findings": [],
+        "round": 2
       },
       "dispatch": {
         "assignedAt": "2026-09-15",
@@ -4214,22 +4249,24 @@
         "implementationCommit": "f998ae5d68fbcc8853c8b5180835a9008c60a68b",
         "handoffCommit": "4fd1f38c76c00abf59e89edd79a5d2d9a7cb2da6",
         "reviewSourceCommit": "f998ae5d68fbcc8853c8b5180835a9008c60a68b",
-        "status": "in_progress",
-        "reviewCommit": "792eee9380edd3b48aa85e3cf96fab2cad0bac81",
-        "reviewIntegrationCommit": "6419e0ca792132ebc50086618d879c3c12f623bb",
-        "reviewRound": 1,
+        "status": "done",
+        "reviewCommit": "605d2e0f4a039b6f1b228fc2ad175b38f0c6d3e9",
+        "reviewIntegrationCommit": "208165fed313698053a91f97f929c6af02bfadf7",
+        "reviewRound": 2,
         "correctionRound": 1,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "f998ae5d68fbcc8853c8b5180835a9008c60a68b",
         "correctionReviewPath": "docs/execution/handoffs/X-22-review-round2.md",
         "correctionHandoffPath": "docs/execution/handoffs/X-22-correction-round1.md",
         "correctionReviewer": "/root/x05_reviewer",
-        "correctionStatus": "review_pending",
+        "correctionStatus": "approved",
         "correctionDispatchCommit": "1d90ef4699e38b57a7b079eb70366d60a07d33f6",
         "correctionCheckout": "shared main",
         "correctionImplementationCommit": "ea41f1f49569a079696f091a6113ee4d97641df4",
         "correctionHandoffCommit": "fcb414cb5fcdae978489cb03ba321062adeae163",
         "correctionReviewSourceCommit": "ea41f1f49569a079696f091a6113ee4d97641df4",
+        "correctionReviewCommit": "605d2e0f4a039b6f1b228fc2ad175b38f0c6d3e9",
+        "correctionReviewIntegrationCommit": "208165fed313698053a91f97f929c6af02bfadf7",
         "dependencyCommits": {
           "X-04": "b5594b668185245304f70a0f46c1f77ae7b76d7b",
           "X-18": "a0670e0a60b7b4920ff8a672bfa311d9b93a0ce1",
@@ -4245,6 +4282,15 @@
           "sourceCommit": "f998ae5d68fbcc8853c8b5180835a9008c60a68b",
           "receipt": "docs/execution/handoffs/X-22-review-round1.md",
           "integratedCommit": "6419e0ca792132ebc50086618d879c3c12f623bb"
+        },
+        {
+          "round": 2,
+          "reviewer": "/root/x05_reviewer",
+          "commit": "605d2e0f4a039b6f1b228fc2ad175b38f0c6d3e9",
+          "status": "approved",
+          "sourceCommit": "ea41f1f49569a079696f091a6113ee4d97641df4",
+          "receipt": "docs/execution/handoffs/X-22-review-round2.md",
+          "integratedCommit": "208165fed313698053a91f97f929c6af02bfadf7"
         }
       ]
     },
@@ -4391,7 +4437,7 @@
       ]
     }
   },
-  "nextAction": "X-22 correction round one is ready at ea41f1f49569a079696f091a6113ee4d97641df4 with handoff fcb414cb5fcdae978489cb03ba321062adeae163. Queue independent round-two review against the corrected tree.",
+  "nextAction": "X-06 is dispatched for the guarded Arr registration and manual-import adapter. Keep G-01 blocked, record the handoff, then request independent review.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
