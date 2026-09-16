@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/guilycst/mastarr/internal/domain"
@@ -365,6 +367,131 @@ func TestArrNativeMalformedResponsesDoNotUseLegacyLastWinsDecoder(t *testing.T) 
 				t.Fatalf("malformed native preview was promoted: %#v", preview)
 			}
 		})
+	}
+}
+
+func TestArrNativeLegacyPreviewRequiresCompleteRows(t *testing.T) {
+	const requestBody = `[{"id":901,"path":"/downloads/incoming/episode.mkv","relativePath":"episode.mkv","name":"episode.mkv","size":10,"series":{"id":201,"title":"Synthetic Series"},"episodes":[{"id":301,%s"seasonNumber":1,"episodeNumber":1}],"rejections":[]},{"id":902,"path":"/downloads/incoming/other.mkv","relativePath":"other.mkv","name":"other.mkv","size":10,"series":{"id":201,"title":"Synthetic Series"},"episodes":[{"id":302,"seriesId":201,"seasonNumber":1,"episodeNumber":2}],"rejections":[{"code":"EpisodeFileExists","reason":"Legacy synthetic rejection"}]}]`
+	for index, testCase := range []struct {
+		name        string
+		seriesField string
+		wantCalls   int32
+	}{
+		{name: "missing episode series identity", seriesField: "", wantCalls: 1},
+		{name: "null episode series identity", seriesField: `"seriesId":null,`, wantCalls: 1},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			body := []byte(fmt.Sprintf(requestBody, testCase.seriesField))
+			var calls atomic.Int32
+			handler := http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				if request.URL.Path != apiManualImport {
+					response.WriteHeader(http.StatusNotFound)
+					return
+				}
+				calls.Add(1)
+				response.Header().Set("Content-Type", "application/json")
+				_, _ = response.Write(body)
+			})
+			connectionID := domain.ConfigID("sonarr-legacy-incomplete-" + strconv.Itoa(index))
+			client, server := newSyntheticClient(t, domain.ConnectionSonarr, connectionID, handler, 2, 10, 50, 50)
+			defer server.Close()
+			preview, err := client.PreviewImport(context.Background(), connectionID, ports.ImportPreviewRequest{
+				RegisteredExternalID: "201",
+				Transfer:             "copy",
+				Files: []ports.ImportFile{{
+					Source:           domain.FileTarget{RootID: "library", RelativePath: "incoming/episode.mkv"},
+					MovieOrEpisodeID: "301",
+				}},
+			})
+			assertUpstreamCode(t, err, domain.OutcomeUnknown)
+			if len(preview.Files) != 0 || len(preview.Rejections) != 0 {
+				t.Fatalf("incomplete preview was promoted: %#v", preview)
+			}
+			if got := calls.Load(); got != testCase.wantCalls {
+				t.Fatalf("manual-import requests = %d, want %d", got, testCase.wantCalls)
+			}
+		})
+	}
+}
+
+func TestArrNativeLegacyPreviewAllowsCompleteMixedRows(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		body string
+	}{
+		{
+			name: "legacy rejection alias",
+			body: `[ {"id":901,"path":"/downloads/incoming/episode.mkv","relativePath":"episode.mkv","name":"episode.mkv","size":10,"series":{"id":201,"title":"Synthetic Series"},"episodes":[{"id":301,"seriesId":201,"seasonNumber":1,"episodeNumber":1}],"rejections":[]}, {"id":902,"path":"/downloads/incoming/other.mkv","relativePath":"other.mkv","name":"other.mkv","size":10,"series":{"id":201,"title":"Synthetic Series"},"episodes":[{"id":302,"seriesId":201,"seasonNumber":1,"episodeNumber":2}],"rejections":[{"code":"EpisodeFileExists","reason":"Legacy synthetic rejection"}]} ]`,
+		},
+		{
+			name: "native rejection type",
+			body: `[ {"id":901,"path":"/downloads/incoming/episode.mkv","relativePath":"episode.mkv","name":"episode.mkv","size":10,"series":{"id":201,"title":"Synthetic Series"},"episodes":[{"id":301,"seriesId":201,"seasonNumber":1,"episodeNumber":1}],"rejections":[]}, {"id":902,"path":"/downloads/incoming/other.mkv","relativePath":"other.mkv","name":"other.mkv","size":10,"series":{"id":201,"title":"Synthetic Series"},"episodes":[{"id":302,"seriesId":201,"seasonNumber":1,"episodeNumber":2}],"rejections":[{"type":"EpisodeFileExists","reason":"Native synthetic rejection"}]} ]`,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			var calls atomic.Int32
+			handler := http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				if request.URL.Path != apiManualImport {
+					response.WriteHeader(http.StatusNotFound)
+					return
+				}
+				calls.Add(1)
+				response.Header().Set("Content-Type", "application/json")
+				_, _ = response.Write([]byte(testCase.body))
+			})
+			connectionID := domain.ConfigID("sonarr-legacy-preview-complete-" + strings.ReplaceAll(testCase.name, " ", "-"))
+			client, server := newSyntheticClient(t, domain.ConnectionSonarr, connectionID, handler, 2, 10, 50, 50)
+			defer server.Close()
+			preview, err := client.PreviewImport(context.Background(), connectionID, ports.ImportPreviewRequest{
+				RegisteredExternalID: "201",
+				Transfer:             "copy",
+				Files: []ports.ImportFile{{
+					Source:           domain.FileTarget{RootID: "library", RelativePath: "incoming/episode.mkv"},
+					MovieOrEpisodeID: "301",
+				}},
+			})
+			if err != nil || len(preview.Files) != 1 || preview.Files[0].MovieOrEpisodeID != "301" || len(preview.Rejections) != 0 {
+				t.Fatalf("complete mixed preview = %#v, %v", preview, err)
+			}
+			wantCalls := int32(1)
+			if testCase.name == "legacy rejection alias" {
+				wantCalls = 2
+			}
+			if got := calls.Load(); got != wantCalls {
+				t.Fatalf("manual-import requests = %d, want %d", got, wantCalls)
+			}
+		})
+	}
+}
+
+func TestArrNativeLegacyRadarrPreviewRequiresMovieIdentity(t *testing.T) {
+	for index, movieValue := range []string{"{}", "null"} {
+		var calls atomic.Int32
+		body := []byte(fmt.Sprintf(`[{"id":701,"path":"/downloads/incoming/movie.mkv","relativePath":"movie.mkv","name":"movie.mkv","size":10,"movie":%s,"rejections":[]},{"id":702,"path":"/downloads/incoming/other.mkv","relativePath":"other.mkv","name":"other.mkv","size":10,"movie":{"id":101},"rejections":[{"code":"MovieFileExists","reason":"Legacy synthetic rejection"}]}]`, movieValue))
+		handler := http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			if request.URL.Path != apiManualImport {
+				response.WriteHeader(http.StatusNotFound)
+				return
+			}
+			calls.Add(1)
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = response.Write(body)
+		})
+		connectionID := domain.ConfigID("radarr-legacy-incomplete-" + strconv.Itoa(index))
+		client, server := newSyntheticClient(t, domain.ConnectionRadarr, connectionID, handler, 2, 10, 50, 50)
+		defer server.Close()
+		preview, err := client.PreviewImport(context.Background(), connectionID, ports.ImportPreviewRequest{
+			RegisteredExternalID: "101",
+			Transfer:             "copy",
+			Files: []ports.ImportFile{{
+				Source:           domain.FileTarget{RootID: "library", RelativePath: "incoming/movie.mkv"},
+				MovieOrEpisodeID: "101",
+			}},
+		})
+		assertUpstreamCode(t, err, domain.OutcomeUnknown)
+		if len(preview.Files) != 0 || len(preview.Rejections) != 0 || calls.Load() != 1 {
+			t.Fatalf("incomplete Radarr preview was promoted: preview=%#v calls=%d", preview, calls.Load())
+		}
 	}
 }
 

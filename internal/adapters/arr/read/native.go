@@ -111,7 +111,7 @@ func (client *Client) nativeCompatibilityFallback(err error) bool {
 	case upstream.Operation == "arr.inventory.list":
 		return legacyCatalogShape(compatibilityErr.body)
 	case strings.HasPrefix(upstream.Operation, "arr.manual_import.preview"):
-		return legacyPreviewShape(compatibilityErr.body)
+		return legacyPreviewShape(compatibilityErr.body, client.config.Kind)
 	case upstream.Operation == "arr.movie.observe", upstream.Operation == "arr.movie.observe.files", upstream.Operation == "arr.episode.observe":
 		return legacyObserveShape(upstream.Operation, compatibilityErr.body)
 	default:
@@ -159,36 +159,126 @@ func legacyCatalogShape(body []byte) bool {
 	return legacy
 }
 
-func legacyPreviewShape(body []byte) bool {
+func legacyPreviewShape(body []byte, kind domain.ConnectionKind) bool {
 	var items []json.RawMessage
 	if err := decodeJSON(body, &items); err != nil || len(items) == 0 {
 		return false
 	}
 	legacy := false
 	for _, raw := range items {
+		if !legacyPreviewCandidateShape(raw, kind) {
+			return false
+		}
 		var object map[string]json.RawMessage
 		if err := decodeJSON(raw, &object); err != nil {
 			return false
 		}
-		if !legacyIdentityPresent(object["id"]) || !legacyStringPresent(object["path"]) {
-			return false
-		}
-		_, hasName := object["name"]
-		_, hasSize := object["size"]
-		_, hasRelativePath := object["relativePath"]
-		// All three fields are required by the native preview contracts. Their
-		// absence is therefore not enough to prove an older shape; only the
-		// explicitly retained rejection alias can select this compatibility path.
-		if !hasName || !hasSize || !hasRelativePath {
-			return false
-		}
-		// A legacy response can contain ordinary accepted candidates alongside
-		// the old rejection spelling. Scan the complete response before deciding;
-		// a native-shaped accepted row must not hide a later legacy marker, and a
-		// response containing only native fields remains in the strict path.
+		// Accepted legacy rows commonly have an empty rejection list while a
+		// sibling rejected row carries the old code/reason spelling. That marker
+		// can authorize compatibility only after every row independently proves
+		// complete product-specific identity above.
 		legacy = legacy || legacyRejectionAlias(object["rejections"])
 	}
 	return legacy
+}
+
+func legacyPreviewCandidateShape(raw json.RawMessage, kind domain.ConnectionKind) bool {
+	var object map[string]json.RawMessage
+	if err := decodeJSON(raw, &object); err != nil || object == nil {
+		return false
+	}
+	if !legacyPositiveIdentity(object["id"]) || !legacyStringPresent(object["path"]) || !legacyStringPresent(object["relativePath"]) || !legacyStringPresent(object["name"]) || !legacyNonNegativeInteger(object["size"]) {
+		return false
+	}
+	if rejections, present := object["rejections"]; present && !legacyNonNull(rejections) {
+		return false
+	}
+	switch kind {
+	case domain.ConnectionRadarr:
+		movie, present := object["movie"]
+		if !present || !legacyReferenceWithID(movie, false) {
+			return false
+		}
+		if movieFileID, present := object["movieFileId"]; present && legacyNonNull(movieFileID) && !legacyNonNegativeInteger(movieFileID) {
+			return false
+		}
+	case domain.ConnectionSonarr:
+		series, present := object["series"]
+		if !present {
+			return false
+		}
+		seriesObject, ok := legacyReferenceObject(series)
+		if !ok || !legacyPositiveIdentity(seriesObject["id"]) || !legacyStringPresent(seriesObject["title"]) {
+			return false
+		}
+		episodes, present := object["episodes"]
+		if !present || !legacyNonNull(episodes) {
+			return false
+		}
+		var episodeValues []json.RawMessage
+		if err := decodeJSON(episodes, &episodeValues); err != nil || len(episodeValues) == 0 {
+			return false
+		}
+		seenEpisodes := make(map[string]struct{}, len(episodeValues))
+		seriesID := scalarString(seriesObject["id"])
+		for _, episode := range episodeValues {
+			episodeObject, ok := legacyReferenceObject(episode)
+			if !ok || !legacyPositiveIdentity(episodeObject["id"]) || !legacyPositiveIdentity(episodeObject["seriesId"]) || scalarString(episodeObject["seriesId"]) != seriesID || !legacyNonNegativeInteger(episodeObject["seasonNumber"]) || !legacyNonNegativeInteger(episodeObject["episodeNumber"]) {
+				return false
+			}
+			episodeID := scalarString(episodeObject["id"])
+			if _, exists := seenEpisodes[episodeID]; exists {
+				return false
+			}
+			seenEpisodes[episodeID] = struct{}{}
+			if episodeFileID, present := episodeObject["episodeFileId"]; present && legacyNonNull(episodeFileID) && !legacyNonNegativeInteger(episodeFileID) {
+				return false
+			}
+		}
+	default:
+		return false
+	}
+	return true
+}
+
+func legacyReferenceObject(value json.RawMessage) (map[string]json.RawMessage, bool) {
+	var object map[string]json.RawMessage
+	if err := decodeJSON(value, &object); err != nil || object == nil {
+		return nil, false
+	}
+	return object, true
+}
+
+func legacyReferenceWithID(value json.RawMessage, titleRequired bool) bool {
+	object, ok := legacyReferenceObject(value)
+	if !ok || !legacyPositiveIdentity(object["id"]) {
+		return false
+	}
+	return !titleRequired || legacyStringPresent(object["title"])
+}
+
+func legacyPositiveIdentity(value json.RawMessage) bool {
+	if !legacyIdentityPresent(value) {
+		return false
+	}
+	parsed, err := strconv.ParseInt(scalarString(value), 10, 64)
+	return err == nil && parsed > 0
+}
+
+func legacyNonNegativeInteger(value json.RawMessage) bool {
+	if !legacyIdentityPresent(value) {
+		return false
+	}
+	text := scalarString(value)
+	if text == "" || strings.ContainsAny(text, ".eE") {
+		return false
+	}
+	parsed, err := strconv.ParseInt(text, 10, 64)
+	return err == nil && parsed >= 0
+}
+
+func legacyNonNull(value json.RawMessage) bool {
+	return legacyIdentityPresent(value)
 }
 
 func legacyRejectionAlias(value json.RawMessage) bool {
@@ -199,16 +289,19 @@ func legacyRejectionAlias(value json.RawMessage) bool {
 	if err := decodeJSON(value, &rejections); err != nil {
 		return false
 	}
+	if len(rejections) == 0 {
+		return false
+	}
 	for _, raw := range rejections {
 		var object map[string]json.RawMessage
 		if err := decodeJSON(raw, &object); err != nil {
 			return false
 		}
-		if _, hasType := object["type"]; !hasType {
-			return true
+		if _, hasType := object["type"]; hasType || !legacyStringPresent(object["code"]) || (!legacyStringPresent(object["reason"]) && !legacyStringPresent(object["message"])) {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 func legacyObserveShape(operation string, body []byte) bool {
