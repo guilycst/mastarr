@@ -138,7 +138,22 @@ type PurgeRequest struct {
 	ID             string
 	HardDelete     bool
 	Force          bool
+	Approval       *EarlyPurgeApproval
 	IdempotencyKey string
+}
+
+// EarlyPurgeApproval is the immutable review binding required to purge a
+// trashed entry before its recorded retention expiry. Every identity is
+// checked by the storage ClaimApprovedEarlyPurge CAS; a non-empty boolean
+// alone never authorizes an early purge.
+type EarlyPurgeApproval struct {
+	PlanID               string
+	PlanRevision         int64
+	PlanDigest           string
+	DecisionID           string
+	ActionRunID          string
+	ApprovedEntryVersion int64
+	ActionRunVersion     int64
 }
 
 // RetryRequest reopens a held operation only after a fresh read-only
@@ -155,6 +170,7 @@ type Operation string
 const (
 	OperationPurge   Operation = "purge"
 	OperationRestore Operation = "restore"
+	operationTrash   Operation = "trash"
 )
 
 // Item is the public, non-storage representation of one persisted manifest
@@ -195,6 +211,7 @@ type Entry struct {
 	ActiveOperation Operation
 	ClaimedBy       string
 	LeaseUntil      *time.Time
+	clientStateJSON string
 }
 
 // ItemEffect preserves per-item certainty and evidence without exposing
@@ -323,7 +340,7 @@ func (service *Service) Trash(ctx context.Context, request TrashRequest) (Result
 		if result, found, lookupErr := service.lookupIdempotency(ctx, "trash", normalized.IdempotencyKey, digest); lookupErr != nil {
 			return Result{}, lookupErr
 		} else if found {
-			return result, nil
+			return service.replayTrashResult(result)
 		}
 	}
 	entryID := normalized.EntryID
@@ -342,7 +359,7 @@ func (service *Service) Trash(ctx context.Context, request TrashRequest) (Result
 			return Result{}, err
 		}
 		if existing.State != "planned" {
-			return alreadySatisfiedResult(existing, "existing_trash_entry"), nil
+			return service.replayTrashResult(Result{Entry: existing})
 		}
 		// A planned entry has a durable purge record and can be resumed after a
 		// caller crash. Do not create another manifest or idempotency row.
@@ -420,7 +437,7 @@ func (service *Service) Restore(ctx context.Context, request RestoreRequest) (Re
 	if err := service.ensureJanitorRecord(ctx, entryID, OperationRestore); err != nil {
 		return Result{}, err
 	}
-	claim, err := service.claim(ctx, entryID, OperationRestore, false)
+	claim, err := service.claim(ctx, entryID, OperationRestore, false, nil)
 	if err != nil {
 		if errors.Is(err, ErrClaimed) {
 			latest, loadErr := service.loadEntry(ctx, entryID)
@@ -473,13 +490,16 @@ func (service *Service) Purge(ctx context.Context, request PurgeRequest) (Result
 	}
 	now := service.now()
 	hard := request.HardDelete || request.Force
+	if hard && request.Approval == nil {
+		return resultForEntry(entry, "early_purge_approval_required"), fmt.Errorf("%w: early purge requires an exact approval binding", ErrConflict)
+	}
 	if !hard && now.Before(entry.ExpiresAt) {
 		return resultForEntry(entry, "retention_not_expired"), ErrNotDue
 	}
 	if err := service.ensureJanitorRecord(ctx, entryID, OperationPurge); err != nil {
 		return Result{}, err
 	}
-	claim, err := service.claim(ctx, entryID, OperationPurge, hard)
+	claim, err := service.claim(ctx, entryID, OperationPurge, hard, request.Approval)
 	if err != nil {
 		return Result{}, err
 	}
@@ -544,7 +564,7 @@ func (service *Service) Tick(ctx context.Context, limit int) (TickResult, error)
 			tick.Skipped++
 			continue
 		}
-		claim, claimErr := service.claim(ctx, record.TrashEntryID, Operation(record.Operation), false)
+		claim, claimErr := service.claim(ctx, record.TrashEntryID, Operation(record.Operation), false, nil)
 		if claimErr != nil {
 			tick.Skipped++
 			continue
@@ -940,34 +960,21 @@ func (service *Service) finalizeTrash(ctx context.Context, entryID string, effec
 	if err != nil {
 		return Result{}, err
 	}
-	affected := affectedPaths(effect.Affected)
-	matched := make(map[string]bool)
-	for _, item := range entry.Items {
-		if item.State != "selected" {
-			continue
-		}
-		observed, ok := exactAffectedItem(item, affected)
-		if ok && identityMatches(observed, identityForItemAt(item, observed.RelativePath)) == nil {
-			matched[item.ID] = true
-		}
-	}
-	all := true
-	for _, item := range entry.Items {
-		if item.Type == domain.ManifestDirectory {
-			continue
-		}
-		if item.State == "selected" && !matched[item.ID] {
-			all = false
-		}
-	}
-	if actionErr != nil || !effect.Outcome.Valid() || len(affected) == 0 || !all {
+	matched, scopeIssues := validateAffectedSet(entry.Items, effect.Affected, operationTrash)
+	all := len(scopeIssues) == 0 && len(matched) > 0
+	if actionErr != nil || !effect.Outcome.Valid() || len(effect.Affected) == 0 || !all {
 		reason := "filesystem_trash_incomplete"
 		if actionErr != nil {
 			reason = "filesystem_trash: " + safeError(actionErr)
+		} else if len(scopeIssues) > 0 {
+			reason = "filesystem_trash_scope: " + strings.Join(scopeIssues, ",")
 		} else if !effect.Outcome.Valid() {
 			reason = "filesystem_trash_invalid_effect"
-		} else if len(affected) == 0 {
+		} else if len(effect.Affected) == 0 {
 			reason = "filesystem_trash_missing_affected_items"
+		}
+		if len(scopeIssues) > 0 {
+			effect.Evidence = append(effect.Evidence, scopeIssues...)
 		}
 		result, holdErr := service.finishTrashState(ctx, entry, matched, "held", reason, effect)
 		return result, errors.Join(ErrHeld, holdErr)
@@ -1068,7 +1075,16 @@ func (service *Service) persistClientObservation(ctx context.Context, entryID st
 	if err != nil {
 		return err
 	}
-	state := map[string]any{"state": observation.State, "seeding": observation.Seeding, "observedAt": formatTime(observation.ObservedAt), "stop": map[string]any{"outcome": effect.Outcome, "operationId": effect.OperationID, "evidence": effect.Evidence}}
+	state := make(map[string]any)
+	if raw := entryClientState(entry); raw != "{}" {
+		if json.Unmarshal([]byte(raw), &state) != nil || state == nil {
+			state = make(map[string]any)
+		}
+	}
+	state["state"] = observation.State
+	state["seeding"] = observation.Seeding
+	state["observedAt"] = formatTime(observation.ObservedAt)
+	state["stop"] = map[string]any{"outcome": effect.Outcome, "operationId": effect.OperationID, "evidence": append([]string(nil), effect.Evidence...)}
 	if entry.Client != nil {
 		state["connectionId"] = entry.Client.ConnectionID.String()
 		state["externalId"] = entry.Client.ExternalID
@@ -1114,59 +1130,19 @@ func (service *Service) ensureStopped(ctx context.Context, ref ports.DownloadRef
 	return effect, final, nil
 }
 
-func (service *Service) claim(ctx context.Context, entryID string, operation Operation, hard bool) (*sqlc.JanitorRecord, error) {
+func (service *Service) claim(ctx context.Context, entryID string, operation Operation, hard bool, approval *EarlyPurgeApproval) (*sqlc.JanitorRecord, error) {
 	if operation != OperationPurge && operation != OperationRestore {
 		return nil, fmt.Errorf("%w: operation", ErrInvalidRequest)
 	}
 	now := service.now()
+	if now.IsZero() {
+		return nil, ErrClock
+	}
 	leaseUntil := now.Add(service.leaseDuration)
 	lock := service.lockFor("claim:" + entryID)
 	defer lock()
 	if hard && operation == OperationPurge {
-		var claimed *sqlc.JanitorRecord
-		err := service.withTx(ctx, func(tx *sql.Tx, queries *sqlc.Queries) error {
-			janitor, err := queries.GetJanitorRecord(ctx, &sqlc.GetJanitorRecordParams{TrashEntryID: entryID, Operation: string(operation)})
-			if err != nil {
-				return err
-			}
-			if janitor.ApprovalPlanID.Valid || (janitor.State != "queued" && janitor.State != "reconciling") {
-				return ErrClaimed
-			}
-			entry, err := queries.GetTrashEntry(ctx, entryID)
-			if err != nil {
-				return err
-			}
-			if entry.ActiveOperation.Valid || (entry.State != "trashed" && entry.State != "held") {
-				return ErrClaimed
-			}
-			result, err := tx.ExecContext(ctx, `UPDATE trash_entries SET state = 'purging', active_operation = 'purge', operation_claimed_by = ?, operation_lease_until = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ? AND active_operation IS NULL AND state IN ('trashed','held')`, service.workerID, formatTime(leaseUntil), formatTime(now), entryID, entry.Version)
-			if err != nil {
-				return err
-			}
-			if affected, err := result.RowsAffected(); err != nil {
-				return err
-			} else if affected != 1 {
-				return ErrClaimed
-			}
-			result, err = tx.ExecContext(ctx, `UPDATE janitor_records SET state = 'running', claimed_by = ?, lease_until = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ? AND state = 'queued' AND claimed_by IS NULL`, service.workerID, formatTime(leaseUntil), formatTime(now), janitor.ID, janitor.Version)
-			if err != nil {
-				return err
-			}
-			if affected, err := result.RowsAffected(); err != nil {
-				return err
-			} else if affected != 1 {
-				return ErrClaimed
-			}
-			claimed, err = queries.GetJanitorRecord(ctx, &sqlc.GetJanitorRecordParams{TrashEntryID: entryID, Operation: string(operation)})
-			return err
-		})
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return nil, ErrClaimed
-			}
-			return nil, fmt.Errorf("%w: hard claim: %v", ErrStorage, err)
-		}
-		return claimed, nil
+		return service.claimApprovedEarlyPurge(ctx, entryID, approval, now, leaseUntil)
 	}
 	var claimed *sqlc.JanitorRecord
 	err := service.withTx(ctx, func(tx *sql.Tx, queries *sqlc.Queries) error {
@@ -1182,6 +1158,79 @@ func (service *Service) claim(ctx context.Context, entryID string, operation Ope
 			return nil, ErrClaimed
 		}
 		return nil, fmt.Errorf("%w: claim: %v", ErrStorage, err)
+	}
+	return claimed, nil
+}
+
+func validateEarlyPurgeApproval(approval *EarlyPurgeApproval) error {
+	if approval == nil {
+		return fmt.Errorf("%w: early purge approval is required", ErrConflict)
+	}
+	if strings.TrimSpace(approval.PlanID) == "" || approval.PlanRevision <= 0 || strings.TrimSpace(approval.PlanDigest) == "" || strings.TrimSpace(approval.DecisionID) == "" || strings.TrimSpace(approval.ActionRunID) == "" || approval.ApprovedEntryVersion <= 0 || approval.ActionRunVersion <= 0 {
+		return fmt.Errorf("%w: early purge approval binding is incomplete", ErrConflict)
+	}
+	for _, value := range []string{approval.PlanID, approval.PlanDigest, approval.DecisionID, approval.ActionRunID} {
+		if len(value) > 256 || strings.ContainsRune(value, 0) || strings.TrimSpace(value) != value {
+			return fmt.Errorf("%w: early purge approval binding is invalid", ErrConflict)
+		}
+	}
+	return nil
+}
+
+func (service *Service) claimApprovedEarlyPurge(ctx context.Context, entryID string, approval *EarlyPurgeApproval, now, leaseUntil time.Time) (*sqlc.JanitorRecord, error) {
+	if err := validateEarlyPurgeApproval(approval); err != nil {
+		return nil, err
+	}
+	entry, err := service.loadEntry(ctx, entryID)
+	if err != nil {
+		return nil, err
+	}
+	if approval.ApprovedEntryVersion != entry.Version {
+		return nil, fmt.Errorf("%w: approved trash entry version is stale", ErrConflict)
+	}
+	var claimed *sqlc.JanitorRecord
+	err = service.withTx(ctx, func(tx *sql.Tx, queries *sqlc.Queries) error {
+		janitor, getErr := queries.GetJanitorRecord(ctx, &sqlc.GetJanitorRecordParams{TrashEntryID: entryID, Operation: string(OperationPurge)})
+		if getErr != nil {
+			return getErr
+		}
+		if janitor.ApprovalPlanID.Valid || janitor.State != "queued" {
+			return fmt.Errorf("%w: purge record is already bound or claimed", ErrConflict)
+		}
+		claimed, err = queries.ClaimApprovedEarlyPurge(ctx, &sqlc.ClaimApprovedEarlyPurgeParams{
+			WorkerID:                 sql.NullString{String: service.workerID, Valid: true},
+			LeaseUntil:               sql.NullString{String: formatTime(leaseUntil), Valid: true},
+			ApprovalPlanID:           sql.NullString{String: approval.PlanID, Valid: true},
+			ApprovalPlanRevision:     sql.NullInt64{Int64: approval.PlanRevision, Valid: true},
+			ApprovalPlanDigest:       sql.NullString{String: approval.PlanDigest, Valid: true},
+			ApprovalDecisionID:       sql.NullString{String: approval.DecisionID, Valid: true},
+			ApprovalActionRunID:      sql.NullString{String: approval.ActionRunID, Valid: true},
+			ApprovedEntryVersion:     sql.NullInt64{Int64: approval.ApprovedEntryVersion, Valid: true},
+			ApprovalActionRunVersion: sql.NullInt64{Int64: approval.ActionRunVersion, Valid: true},
+			Now:                      formatTime(now),
+			ID:                       janitor.ID,
+			Version:                  janitor.Version,
+			TrashEntryID:             entryID,
+		})
+		return err
+	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("%w: exact early purge approval claim rejected", ErrConflict)
+		}
+		if errors.Is(err, ErrConflict) {
+			return nil, err
+		}
+		// SQLite exposes trigger failures as ordinary constraint errors. The
+		// approval path deliberately treats a failed immutable binding as a
+		// caller conflict, while reserving ErrStorage for an unavailable
+		// journal. Do not let an invalid action/decision identity look like a
+		// transient storage failure that could be retried blindly.
+		message := strings.ToLower(err.Error())
+		if strings.Contains(message, "early purge") || strings.Contains(message, "approval") {
+			return nil, fmt.Errorf("%w: exact early purge approval claim rejected", ErrConflict)
+		}
+		return nil, fmt.Errorf("%w: approved early purge claim: %v", ErrStorage, safeError(err))
 	}
 	return claimed, nil
 }
@@ -1233,20 +1282,23 @@ func (service *Service) runPurge(ctx context.Context, claim *sqlc.JanitorRecord)
 		}
 		expected := manifestFromItem(item, observation.ObservedAt)
 		effect, actionErr := service.action.Delete(ctx, ports.FilesystemDeleteRequest{Files: []domain.FileManifestEntry{expected}})
-		matchedThis := false
-		if reported, ok := exactAffectedItem(item, affectedPaths(effect.Affected)); ok {
-			matchedThis = identityMatches(reported, identityForItemAt(item, reported.RelativePath)) == nil
+		matchedItems, scopeIssues := validateAffectedSet([]Item{item}, effect.Affected, OperationPurge)
+		matchedThis := matchedItems[item.ID]
+		if len(scopeIssues) > 0 {
+			effect.Evidence = append(effect.Evidence, scopeIssues...)
 		}
 		if matchedThis {
 			matched[item.ID] = true
 			effects = append(effects, ItemEffect{ItemID: item.ID, Path: item.TrashRelativePath, Operation: OperationPurge, State: "purged", Outcome: effect.Outcome, ObservedAt: effect.ObservedAt, Evidence: append([]string{"payload_delete"}, effect.Evidence...)})
-		} else if len(effect.Affected) > 0 {
+		} else if len(effect.Affected) > 0 || len(scopeIssues) > 0 {
 			effects = append(effects, ItemEffect{ItemID: item.ID, Path: item.TrashRelativePath, Operation: OperationPurge, State: "unknown", Outcome: effect.Outcome, ObservedAt: effect.ObservedAt, Evidence: append([]string{"payload_delete_unmatched"}, effect.Evidence...)})
 		}
-		if actionErr != nil || !matchedThis || !effect.Outcome.Valid() {
+		if actionErr != nil || !matchedThis || !effect.Outcome.Valid() || len(scopeIssues) > 0 {
 			reason := "payload_delete_incomplete"
 			if actionErr != nil {
 				reason = "payload_delete: " + safeError(actionErr)
+			} else if len(scopeIssues) > 0 {
+				reason = "payload_delete_scope: " + strings.Join(scopeIssues, ",")
 			}
 			return service.finishClaim(ctx, claim, entry, OperationPurge, "held", reason, effects, effect)
 		}
@@ -1308,11 +1360,17 @@ func (service *Service) runRestore(ctx context.Context, claim *sqlc.JanitorRecor
 		}
 		mapping := ports.FileMap{Source: manifestFromItem(item, source.ObservedAt), Destination: domain.FileTarget{RootID: item.RootID, RelativePath: item.OriginalRelativePath}}
 		effect, actionErr := service.action.Restore(ctx, ports.FilesystemRestoreRequest{Files: []ports.FileMap{mapping}})
-		matched := mappingEffectMatches(item, effect.Affected)
-		if actionErr != nil || !matched || !effect.Outcome.Valid() {
+		matchedItems, scopeIssues := validateAffectedSet([]Item{item}, effect.Affected, OperationRestore)
+		matched := matchedItems[item.ID]
+		if len(scopeIssues) > 0 {
+			effect.Evidence = append(effect.Evidence, scopeIssues...)
+		}
+		if actionErr != nil || !matched || !effect.Outcome.Valid() || len(scopeIssues) > 0 {
 			reason := "restore_incomplete"
 			if actionErr != nil {
 				reason = "restore: " + safeError(actionErr)
+			} else if len(scopeIssues) > 0 {
+				reason = "restore_scope: " + strings.Join(scopeIssues, ",")
 			}
 			if len(effect.Affected) > 0 {
 				effects = append(effects, ItemEffect{ItemID: item.ID, Path: item.OriginalRelativePath, Operation: OperationRestore, State: "unknown", Outcome: effect.Outcome, ObservedAt: effect.ObservedAt, Evidence: append([]string{"restore_effect_uncertain"}, effect.Evidence...)})
@@ -1527,7 +1585,7 @@ func decodeEntry(row *sqlc.TrashEntry, manifest []domain.FileManifestEntry, item
 	default:
 		return Entry{}, fmt.Errorf("%w: state", ErrCorrupt)
 	}
-	entry := Entry{ID: row.ID, RootID: domain.ConfigID(row.RootID), State: row.State, OriginalPrefix: row.OriginalPrefix, TrashPrefix: row.TrashPrefix, Manifest: cloneManifest(manifest), Retention: time.Duration(row.RetentionSeconds) * time.Second, Version: row.Version, Items: make([]Item, 0, len(items))}
+	entry := Entry{ID: row.ID, RootID: domain.ConfigID(row.RootID), State: row.State, OriginalPrefix: row.OriginalPrefix, TrashPrefix: row.TrashPrefix, Manifest: cloneManifest(manifest), Retention: time.Duration(row.RetentionSeconds) * time.Second, Version: row.Version, Items: make([]Item, 0, len(items)), clientStateJSON: row.ClientStateJson}
 	var err error
 	entry.ExpiresAt, err = parseTime(row.ExpiresAt)
 	if err != nil {
@@ -1900,6 +1958,66 @@ func exactAffectedItem(item Item, affected map[string]domain.FileManifestEntry) 
 	return domain.FileManifestEntry{}, false
 }
 
+// validateAffectedSet maps an action response back to the immutable item
+// identities. It requires semantic set equality: every eligible item appears
+// exactly once, every reported identity agrees with its manifest, and no
+// foreign or extra object is silently discarded. Trash accepts either the
+// original or mapped trash spelling because upstream filesystem ports may
+// report the source or published path; purge and restore each have one exact
+// path namespace.
+func validateAffectedSet(items []Item, affected []domain.FileManifestEntry, operation Operation) (map[string]bool, []string) {
+	paths := make(map[string][]Item)
+	for _, item := range items {
+		if item.Type == domain.ManifestDirectory || item.State == "purged" || item.State == "restored" {
+			continue
+		}
+		candidates := []string{item.TrashRelativePath}
+		if operation == operationTrash {
+			candidates = append(candidates, item.OriginalRelativePath)
+		} else if operation == OperationRestore {
+			candidates = []string{item.OriginalRelativePath}
+		}
+		for _, relativePath := range candidates {
+			key := string(item.RootID) + "\x00" + relativePath
+			paths[key] = append(paths[key], item)
+		}
+	}
+	matched := make(map[string]bool)
+	issues := make([]string, 0)
+	for _, observed := range affected {
+		key := string(observed.RootID) + "\x00" + observed.RelativePath
+		candidates := paths[key]
+		if len(candidates) == 0 {
+			issues = append(issues, "affected_foreign:"+observed.RelativePath)
+			continue
+		}
+		if len(candidates) != 1 {
+			issues = append(issues, "affected_ambiguous:"+observed.RelativePath)
+			continue
+		}
+		item := candidates[0]
+		if matched[item.ID] {
+			issues = append(issues, "affected_duplicate:"+observed.RelativePath)
+			continue
+		}
+		if identityErr := identityMatches(observed, identityForItemAt(item, observed.RelativePath)); identityErr != nil {
+			issues = append(issues, "affected_identity_changed:"+observed.RelativePath)
+			continue
+		}
+		matched[item.ID] = true
+	}
+	for _, item := range items {
+		if item.Type == domain.ManifestDirectory || item.State == "purged" || item.State == "restored" {
+			continue
+		}
+		if !matched[item.ID] {
+			issues = append(issues, "affected_missing:"+item.ID)
+		}
+	}
+	sort.Strings(issues)
+	return matched, issues
+}
+
 func mappingAffected(item Item, affected []domain.FileManifestEntry) bool {
 	for _, entry := range affected {
 		if entry.RootID == item.RootID && (entry.RelativePath == item.TrashRelativePath || entry.RelativePath == item.OriginalRelativePath) {
@@ -2026,6 +2144,12 @@ func effectState(entry Entry, effect ports.FilesystemEffect) string {
 }
 
 func entryClientState(entry Entry) string {
+	if strings.TrimSpace(entry.clientStateJSON) != "" {
+		var value any
+		if json.Unmarshal([]byte(entry.clientStateJSON), &value) == nil && value != nil {
+			return entry.clientStateJSON
+		}
+	}
 	if entry.Client == nil {
 		return "{}"
 	}
@@ -2041,13 +2165,43 @@ func alreadySatisfiedResult(entry Entry, evidence string) Result {
 	return Result{Entry: entry, Outcome: domain.OutcomeAlreadySatisfied, Evidence: []string{evidence}}
 }
 
+func (service *Service) replayTrashResult(result Result) (Result, error) {
+	switch result.Entry.State {
+	case "trashed":
+		result.Outcome = domain.OutcomeAlreadySatisfied
+		result.Evidence = append(result.Evidence, "trash_materialized")
+		return result, nil
+	case "planned":
+		result.Evidence = append(result.Evidence, "trash_materialization_pending")
+		return result, ErrClaimed
+	case "held":
+		result.Evidence = append(result.Evidence, "trash_replay_held")
+		return result, ErrHeld
+	case "failed":
+		result.Evidence = append(result.Evidence, "trash_replay_failed")
+		return result, fmt.Errorf("%w: previous trash operation failed", ErrConflict)
+	case "purging", "restoring":
+		result.Evidence = append(result.Evidence, "trash_operation_in_progress")
+		return result, ErrClaimed
+	case "restored", "purged":
+		result.Evidence = append(result.Evidence, "trash_materialization_not_present")
+		return result, fmt.Errorf("%w: trash entry is %s", ErrConflict, result.Entry.State)
+	default:
+		return result, fmt.Errorf("%w: unknown trash entry state", ErrCorrupt)
+	}
+}
+
 func resultForEffect(entry Entry, operation Operation, effect ports.FilesystemEffect, matched map[string]bool) Result {
 	effects := make([]ItemEffect, 0, len(matched))
 	for itemID := range matched {
 		effects = append(effects, ItemEffect{ItemID: itemID, Operation: operation, Outcome: effect.Outcome, ObservedAt: effect.ObservedAt, Evidence: append([]string(nil), effect.Evidence...)})
 	}
 	sort.Slice(effects, func(i, j int) bool { return effects[i].ItemID < effects[j].ItemID })
-	return Result{Entry: entry, Outcome: effect.Outcome, Effects: effects, Evidence: append([]string(nil), effect.Evidence...)}
+	outcome := effect.Outcome
+	if entry.State != "trashed" {
+		outcome = ""
+	}
+	return Result{Entry: entry, Outcome: outcome, Effects: effects, Evidence: append([]string(nil), effect.Evidence...)}
 }
 
 func safeError(err error) string {
