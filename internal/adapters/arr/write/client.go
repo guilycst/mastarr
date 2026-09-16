@@ -64,14 +64,26 @@ type Config struct {
 	Endpoint     string
 	APIKey       string
 	HTTPClient   *http.Client
-	RootPaths    map[domain.ConfigID]string
-	Mappings     []domain.PathMapping
+	// PreviewResolver returns the exact current native preview used to bind an
+	// import. A command-capable test or a future root composition must provide
+	// this callback; a non-empty caller token is never accepted as proof.
+	PreviewResolver PreviewResolver
+	RootPaths       map[domain.ConfigID]string
+	Mappings        []domain.PathMapping
 
 	MaxRecords       int
 	MaxFiles         int
 	MaxResponseSize  int64
 	ReconcileTimeout time.Duration
 }
+
+// PreviewResolver supplies server-observed import evidence for one exact
+// request. Implementations should call the read adapter's native preview and
+// return its immutable revision, accepted selections and rejections.
+//
+// The callback is deliberately a root-owned seam rather than a generated Arr
+// type, so upstream DTOs cannot escape this adapter boundary.
+type PreviewResolver func(context.Context, domain.ConfigID, ports.ImportRequest) (ports.ImportPreview, error)
 
 // Client implements the explicit Arr write port. It performs a read-before-
 // write and a bounded read-back after any synthetic native dispatch.
@@ -304,6 +316,13 @@ func (client *Client) Import(ctx context.Context, connectionID domain.ConfigID, 
 	if err := client.writeAllowed(operationImport, client.capabilities.importOp); err != nil {
 		return zero, err
 	}
+	preview, err := client.resolvePreview(ctx, connectionID, request)
+	if err != nil {
+		return zero, err
+	}
+	if err := validatePreviewBinding(request, preview); err != nil {
+		return zero, err
+	}
 	payload, expected, err := client.commandPayload(request)
 	if err != nil {
 		return zero, err
@@ -332,6 +351,88 @@ func (client *Client) Import(ctx context.Context, connectionID domain.ConfigID, 
 		return observed, unknownAfterWrite(operationImport, writeErr, readErr)
 	}
 	return observed, upstreamFailure(domain.OutcomeUnknown, operationImport, "import file associations are incomplete")
+}
+
+func (client *Client) resolvePreview(ctx context.Context, connectionID domain.ConfigID, request ports.ImportRequest) (ports.ImportPreview, error) {
+	if client.config.PreviewResolver == nil {
+		return ports.ImportPreview{}, upstreamFailure(domain.OutcomeUnsupported, operationImport, "exact Arr import preview evidence is unavailable")
+	}
+	preview, err := client.config.PreviewResolver(ctx, connectionID, request)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return ports.ImportPreview{}, sanitizeContextError(err)
+		}
+		return ports.ImportPreview{}, upstreamFailure(domain.OutcomeUnknown, operationImport, "Arr import preview could not be resolved")
+	}
+	return preview, nil
+}
+
+func validatePreviewBinding(request ports.ImportRequest, preview ports.ImportPreview) error {
+	if strings.TrimSpace(request.PreviewRevision) == "" || preview.Revision == "" || preview.Revision != request.PreviewRevision {
+		return upstreamFailure(domain.OutcomeConflict, operationImport, "import preview revision does not match the approved request")
+	}
+	if preview.ObservedAt.IsZero() {
+		return upstreamFailure(domain.OutcomeUnknown, operationImport, "import preview observation time is missing")
+	}
+	if len(preview.Files) != len(request.Files) {
+		return upstreamFailure(domain.OutcomeConflict, operationImport, "import preview selections do not match the approved request")
+	}
+	wanted := make(map[string]struct{}, len(request.Files))
+	for _, file := range request.Files {
+		if err := validateImportFile(file); err != nil {
+			return err
+		}
+		key := importFileKey(file)
+		if _, exists := wanted[key]; exists {
+			return upstreamFailure(domain.OutcomeConflict, operationImport, "import request contains duplicate preview identity")
+		}
+		wanted[key] = struct{}{}
+	}
+	for _, file := range preview.Files {
+		if err := validateImportFile(file); err != nil {
+			return upstreamFailure(domain.OutcomeUnknown, operationImport, "import preview contains malformed file evidence")
+		}
+		key := importFileKey(file)
+		if _, exists := wanted[key]; !exists {
+			return upstreamFailure(domain.OutcomeConflict, operationImport, "import preview contains an unselected file")
+		}
+		delete(wanted, key)
+	}
+	if len(wanted) != 0 {
+		return upstreamFailure(domain.OutcomeConflict, operationImport, "import preview omitted a selected file")
+	}
+	for _, rejection := range preview.Rejections {
+		if err := rejection.Source.Validate(); err != nil || strings.TrimSpace(rejection.Code) == "" || strings.TrimSpace(rejection.Reason) == "" {
+			return upstreamFailure(domain.OutcomeUnknown, operationImport, "import preview contains malformed rejection evidence")
+		}
+		for _, file := range request.Files {
+			if rejection.Source == file.Source {
+				return upstreamFailure(domain.OutcomeConflict, operationImport, "selected import file was rejected by native preview")
+			}
+		}
+	}
+	return nil
+}
+
+func validateImportFile(file ports.ImportFile) error {
+	if err := file.Source.Validate(); err != nil {
+		return invalidInput(operationImport, "import source is invalid")
+	}
+	if _, err := parsePositiveID(file.MovieOrEpisodeID); err != nil {
+		return invalidInput(operationImport, "import media identity is invalid")
+	}
+	if len(file.Language) > maxText || !utf8.ValidString(file.Language) || !validSubtitleRole(file) {
+		return invalidInput(operationImport, "import file role or language is invalid")
+	}
+	return nil
+}
+
+func importFileKey(file ports.ImportFile) string {
+	return strings.Join([]string{
+		file.Source.RootID.String(), file.Source.RelativePath, file.MovieOrEpisodeID,
+		strconv.FormatBool(file.Subtitle), strings.TrimSpace(file.Language),
+		strconv.FormatBool(file.Forced), strconv.FormatBool(file.HearingImpaired),
+	}, "\x00")
 }
 
 func (client *Client) observeImport(ctx context.Context, externalID string) (ports.ImportObservation, importHistory, error) {
@@ -374,11 +475,15 @@ func (client *Client) observeImport(ctx context.Context, externalID string) (por
 			return result, importHistory{}, malformed(operationObserve, "episode read-back is malformed")
 		}
 		byFile := make(map[int64]int)
+		byPath := make(map[domain.FileTarget]int64)
 		for _, episode := range episodes {
 			if episode.ID <= 0 || episode.SeriesID != id {
 				return result, importHistory{}, malformed(operationObserve, "episode identity does not match requested series")
 			}
 			if episode.EpisodeFile == nil {
+				if episode.EpisodeFileID != 0 {
+					return result, importHistory{}, malformed(operationObserve, "episode file identity is incomplete")
+				}
 				continue
 			}
 			if episode.EpisodeFile.ID <= 0 || episode.EpisodeFile.ID != episode.EpisodeFileID || strings.TrimSpace(episode.EpisodeFile.Path) == "" {
@@ -387,20 +492,29 @@ func (client *Client) observeImport(ctx context.Context, externalID string) (por
 			if episode.EpisodeFile.SeriesID != 0 && episode.EpisodeFile.SeriesID != id {
 				return result, importHistory{}, malformed(operationObserve, "episode file identity does not match requested series")
 			}
+			mapped, mapErr := client.mapNativeFile(*episode.EpisodeFile, strconv.FormatInt(id, 10), nil)
+			if mapErr != nil {
+				return result, importHistory{}, mapErr
+			}
 			position, exists := byFile[episode.EpisodeFile.ID]
 			if !exists {
-				file, mapErr := client.mapNativeFile(*episode.EpisodeFile, strconv.FormatInt(id, 10), []string{strconv.FormatInt(episode.ID, 10)})
-				if mapErr != nil {
-					return result, importHistory{}, mapErr
+				if otherID, pathExists := byPath[mapped.Path]; pathExists && otherID != episode.EpisodeFile.ID {
+					return result, importHistory{}, malformed(operationObserve, "distinct episode files claim the same mapped path")
 				}
-				files = append(files, file)
+				mapped.EpisodeIDs = []string{strconv.FormatInt(episode.ID, 10)}
+				files = append(files, mapped)
 				byFile[episode.EpisodeFile.ID] = len(files) - 1
+				byPath[mapped.Path] = episode.EpisodeFile.ID
 				continue
 			}
-			episodeID := strconv.FormatInt(episode.ID, 10)
-			if !containsString(files[position].EpisodeIDs, episodeID) {
-				files[position].EpisodeIDs = append(files[position].EpisodeIDs, episodeID)
+			if files[position].Path != mapped.Path || files[position].Size != mapped.Size {
+				return result, importHistory{}, malformed(operationObserve, "one episode file id has contradictory path or size")
 			}
+			episodeID := strconv.FormatInt(episode.ID, 10)
+			if containsString(files[position].EpisodeIDs, episodeID) {
+				return result, importHistory{}, malformed(operationObserve, "episode file association is duplicated")
+			}
+			files[position].EpisodeIDs = append(files[position].EpisodeIDs, episodeID)
 		}
 	}
 	history, historyErr := client.readHistory(ctx, id)
@@ -541,7 +655,7 @@ func (client *Client) readTitle(ctx context.Context, id int64) (nativeTitle, err
 		return nativeTitle{}, normalizeStatus(operationObserve, status)
 	}
 	var title nativeTitle
-	if err := decodeStrictJSON(body, &title); err != nil || title.ID <= 0 {
+	if err := decodeStrictJSON(body, &title); err != nil || title.ID <= 0 || title.ID != id {
 		return nativeTitle{}, malformed(operationObserve, "title read-back is malformed")
 	}
 	return title, nil
@@ -627,8 +741,10 @@ func registrationPayload(request ports.RegistrationRequest, kind domain.Connecti
 		payload.Seasons = seasons
 	}
 	if existing == nil {
-		monitored := false
-		payload.Monitored = &monitored
+		if payload.Monitored == nil {
+			monitored := false
+			payload.Monitored = &monitored
+		}
 		payload.AddOptions = &addOptions{Monitor: "none", SearchForMissingEpisodes: false, SearchForCutoffUnmet: false, SearchForMovie: false}
 		if payload.RootFolderPath == "" || payload.QualityProfileID == nil {
 			return registrationPayloadDTO{}, invalidInput(operationRegistration, "new registration requires root folder and quality profile")
@@ -813,6 +929,18 @@ func (client *Client) mapNativeFile(file nativeFile, movieID string, episodeIDs 
 	if file.ID <= 0 || strings.TrimSpace(file.Path) == "" || file.Size < 0 {
 		return ports.MediaFile{}, malformed(operationObserve, "native file identity is incomplete")
 	}
+	if client.config.Kind == domain.ConnectionRadarr {
+		id, err := parsePositiveID(movieID)
+		if err != nil || file.MovieID <= 0 || file.MovieID != id {
+			return ports.MediaFile{}, malformed(operationObserve, "native movie file identity is missing or foreign")
+		}
+	}
+	if client.config.Kind == domain.ConnectionSonarr && file.SeriesID != 0 {
+		id, err := parsePositiveID(movieID)
+		if err != nil || file.SeriesID != id {
+			return ports.MediaFile{}, malformed(operationObserve, "native episode file identity is foreign")
+		}
+	}
 	target, ok := client.remoteToTarget(file.Path)
 	if !ok {
 		return ports.MediaFile{}, upstreamFailure(domain.OutcomeUnknown, operationObserve, "native file path is not mapped")
@@ -888,7 +1016,7 @@ func (client *Client) request(ctx context.Context, operation, method, endpoint s
 			return nil, 0, ctxErr
 		}
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil, 0, err
+			return nil, 0, sanitizeContextError(err)
 		}
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			return nil, 0, domain.UpstreamError{Code: domain.OutcomeUnavailable, Retryable: true, Operation: operation, Detail: "upstream request timed out"}
@@ -898,6 +1026,9 @@ func (client *Client) request(ctx context.Context, operation, method, endpoint s
 	defer response.Body.Close()
 	data, readErr := readBounded(response.Body, client.maxResponse)
 	if readErr != nil {
+		if errors.Is(readErr, context.Canceled) || errors.Is(readErr, context.DeadlineExceeded) {
+			return nil, response.StatusCode, sanitizeContextError(readErr)
+		}
 		return nil, response.StatusCode, domain.UpstreamError{Code: domain.OutcomeUnknown, Status: response.StatusCode, Operation: operation, Detail: "upstream response exceeded configured bound"}
 	}
 	return data, response.StatusCode, nil
@@ -1287,12 +1418,23 @@ func readBounded(reader io.Reader, maxBytes int64) ([]byte, error) {
 	}
 	data, err := io.ReadAll(io.LimitReader(reader, maxBytes+1))
 	if err != nil {
-		return nil, errors.New("response could not be read")
+		return nil, err
 	}
 	if int64(len(data)) > maxBytes {
 		return nil, errors.New("response exceeds configured bound")
 	}
 	return data, nil
+}
+
+func sanitizeContextError(err error) error {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return fmt.Errorf("Arr request canceled: %w", context.Canceled)
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Errorf("Arr request deadline exceeded: %w", context.DeadlineExceeded)
+	default:
+		return errors.New("Arr request context failed")
+	}
 }
 
 func normalizeStatus(operation string, status int) error {
