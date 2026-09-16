@@ -2420,7 +2420,8 @@
         "No Seerr writes, live services, credentials, local replace directives or go.work dependencies. Root adapters translate client DTOs and typed errors without leaking generated upstream types.",
         "38f4999910b01097b55ee1f09dd463bc9add981b X-09 product commit adds the Jellyfin refresh adapter and synthetic tests; 4ca6fbed07cc1766cc620f180e9a58ad80927de5 records its handoff.",
         "f2bf30f97068f98606251b668528afd18e479e3f coordinator commit wires clients/jellyfin v0.0.0-20260915195508-4eee8e84eff5 into the root module without replace or go.work.",
-        "4f611b5a988c89b73143a05ff792763de091edbb independent review requests one P1 capability-gate correction; 2535a1200392337eae1735acd200cd4ff47b9d6d integrates the review receipt."
+        "4f611b5a988c89b73143a05ff792763de091edbb independent review requests one P1 capability-gate correction; 2535a1200392337eae1735acd200cd4ff47b9d6d integrates the review receipt.",
+        "ff3d7d55490435c9b99d38ad97edd3b2f27f9df5 correction requires fresh System/Info/Public runtime evidence, fails closed with zero refresh POSTs for missing/unknown/unavailable/mismatched versions, and adds synthetic regressions; c2065ab1ce2cb0cfb6e5dbac61b6768028acf257 records the handoff."
       ],
       "review": {
         "status": "changes_requested",
@@ -2471,7 +2472,13 @@
         "correctionReviewPath": "docs/execution/handoffs/X-09-review-round2.md",
         "correctionHandoffPath": "docs/execution/handoffs/X-09-correction-round1.md",
         "correctionReviewer": "/root/x05_reviewer",
-        "correctionStatus": "implementation"
+        "correctionStatus": "review_pending",
+        "correctionImplementationCommit": "ff3d7d55490435c9b99d38ad97edd3b2f27f9df5",
+        "correctionProductCommits": [
+          "ff3d7d55490435c9b99d38ad97edd3b2f27f9df5"
+        ],
+        "correctionHandoffCommit": "c2065ab1ce2cb0cfb6e5dbac61b6768028acf257",
+        "correctionReviewSourceCommit": "ff3d7d55490435c9b99d38ad97edd3b2f27f9df5"
       },
       "reviewHistory": [
         {
@@ -4696,7 +4703,7 @@
       ]
     }
   },
-  "nextAction": "X-09 correction round one is dispatched after review receipt 4f611b5a988c89b73143a05ff792763de091edbb: make Jellyfin refresh capability unknown and zero-dispatch until a version-bound observation matches. X-20 transport and G-01 remain open.",
+  "nextAction": "X-09 correction ff3d7d55490435c9b99d38ad97edd3b2f27f9df5 with handoff c2065ab1ce2cb0cfb6e5dbac61b6768028acf257 is ready for independent review; verify the version gate and zero-POST regressions. X-20 transport and G-01 remain open.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
