@@ -1,0 +1,20 @@
+{
+  "upstream": "Radarr/Sonarr v3 registration",
+  "new": {
+    "providerId": "4242",
+    "kind": "movie",
+    "rootFolder": "/synthetic/library",
+    "qualityProfileId": "7",
+    "monitored": false,
+    "searchForMovie": false,
+    "searchForMissingEpisodes": false
+  },
+  "existing": {
+    "externalId": "101",
+    "providerId": "4242",
+    "rootFolder": "/synthetic/library",
+    "qualityProfileId": "7",
+    "monitored": true
+  },
+  "expected": "field-level upsert preserves unspecified fields and never searches"
+}

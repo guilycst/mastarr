@@ -1,0 +1,19 @@
+{
+  "upstream": "Radarr/Sonarr v3 ManualImport command",
+  "registeredExternalId": "201",
+  "previewRevision": "synthetic-preview-revision",
+  "transfer": "copy",
+  "files": [
+    {
+      "path": "/synthetic/downloads/Synthetic Show/S01E01.mkv",
+      "episodeId": "301",
+      "subtitle": false
+    },
+    {
+      "path": "/synthetic/downloads/Synthetic Show/S01E02.mkv",
+      "episodeId": "302",
+      "subtitle": false
+    }
+  ],
+  "expected": "command, history and exact episode file read-back reconcile independently"
+}
