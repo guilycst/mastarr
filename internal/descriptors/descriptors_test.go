@@ -560,6 +560,116 @@ func TestCaptureIntentRecoversStageBeforeFinalPublication(t *testing.T) {
 	}
 }
 
+func TestCaptureRecoveryFencePreventsDeleteAbortDuringPublication(t *testing.T) {
+	fixture := newDescriptorFixture(t)
+	ctx := context.Background()
+	request := captureRequest(fixture, "capture-delete-fence")
+	data := []byte("capture publication is fenced against delete")
+	unavailable, err := fixture.service.RecordUnavailable(ctx, request, "qbittorrent.export", "pending")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := unavailable.ID
+	stageFile, stagePath, stageInfo, err := createPrivateStage(fixture.service.objectsRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stageFile.Write(data); err != nil {
+		_ = stageFile.Close()
+		t.Fatal(err)
+	}
+	if err := stageFile.Sync(); err != nil {
+		_ = stageFile.Close()
+		t.Fatal(err)
+	}
+	if err := stageFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := fixture.service.getStored(ctx, unavailable.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err := fixture.service.ensureCaptureIntent(ctx, id, &stored, request, digestBytes(data), int64(len(data)), "qbittorrent.export", filepath.Base(stagePath), stageInfo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if intent.ResourceID != unavailable.ID {
+		t.Fatalf("capture intent resource = %q, want %q", intent.ResourceID, unavailable.ID)
+	}
+
+	publicationEntered := make(chan struct{})
+	releasePublication := make(chan struct{})
+	originalPublicationHook := beforeCaptureStagePublication
+	beforeCaptureStagePublication = func(resourceID string) {
+		if resourceID != unavailable.ID {
+			t.Errorf("publication hook resource = %q, want %q", resourceID, unavailable.ID)
+		}
+		select {
+		case <-publicationEntered:
+		default:
+			close(publicationEntered)
+		}
+		<-releasePublication
+	}
+	t.Cleanup(func() {
+		beforeCaptureStagePublication = originalPublicationHook
+		select {
+		case <-releasePublication:
+		default:
+			close(releasePublication)
+		}
+	})
+	captureService, err := New(fixture.store.DB(), Options{StorageRoot: fixture.root, MountedRoot: fixture.mounted, Clock: fixture.service.clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleteService, err := New(fixture.store.DB(), Options{StorageRoot: fixture.root, MountedRoot: fixture.mounted, Clock: fixture.service.clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	captureResult := make(chan error, 1)
+	go func() {
+		_, captureErr := captureService.CaptureExport(ctx, request, syntheticExport(data))
+		captureResult <- captureErr
+	}()
+	select {
+	case <-publicationEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("capture recovery did not reach the publication fence")
+	}
+
+	deleteResult := make(chan error, 1)
+	go func() {
+		_, deleteErr := deleteService.Delete(ctx, DeleteRequest{DescriptorID: unavailable.ID, IrreversibleAcknowledged: true})
+		deleteResult <- deleteErr
+	}()
+	select {
+	case deleteErr := <-deleteResult:
+		if !errors.Is(deleteErr, ErrCaptureUncertain) {
+			t.Fatalf("delete during fenced publication = %v, want capture uncertainty", deleteErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("delete did not observe the publication fence")
+	}
+	close(releasePublication)
+	if captureErr := <-captureResult; captureErr != nil {
+		t.Fatalf("capture after fenced delete attempt = %v", captureErr)
+	}
+	if err := captureService.finishCaptureIntent(ctx, intent, "aborted"); !errors.Is(err, ErrCaptureUncertain) {
+		t.Fatalf("conflicting capture terminal outcome = %v, want uncertainty", err)
+	}
+	recovered, err := captureService.Get(ctx, unavailable.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !recovered.Available || recovered.Retention == RetentionDeleted {
+		t.Fatalf("capture was lost after fenced delete attempt = %#v", recovered)
+	}
+	if _, err := os.Stat(filepath.Join(fixture.root, objectPath(unavailable.ID))); err != nil {
+		t.Fatalf("published descriptor after fenced race = %v", err)
+	}
+}
+
 func TestDeleteRequiresAcknowledgementRetainsAuditMetadataAndIsIdempotent(t *testing.T) {
 	fixture := newDescriptorFixture(t)
 	ctx := context.Background()
