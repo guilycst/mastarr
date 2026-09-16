@@ -683,6 +683,68 @@ func TestSonarrReadbackRejectsEpisodeClaimingMultipleFiles(t *testing.T) {
 	}
 }
 
+func TestSonarrReadbackRejectsDuplicateEpisodeAcrossFilelessRows(t *testing.T) {
+	cases := []struct {
+		name string
+		rows []nativeEpisode
+	}{
+		{
+			name: "fileless then complete",
+			rows: []nativeEpisode{
+				{ID: 301, SeriesID: 201},
+				{ID: 301, SeriesID: 201, EpisodeFileID: 801, EpisodeFile: &nativeFile{ID: 801, SeriesID: 201, Path: "/synthetic/downloads/one.mkv", Size: 10}},
+			},
+		},
+		{
+			name: "complete then fileless",
+			rows: []nativeEpisode{
+				{ID: 301, SeriesID: 201, EpisodeFileID: 801, EpisodeFile: &nativeFile{ID: 801, SeriesID: 201, Path: "/synthetic/downloads/one.mkv", Size: 10}},
+				{ID: 301, SeriesID: 201},
+			},
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			var writes atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if request.Method != http.MethodGet {
+					writes.Add(1)
+					http.Error(writer, "duplicate episode evidence must prevent mutation", http.StatusTeapot)
+					return
+				}
+				switch request.URL.Path {
+				case "/api/v3/episode":
+					writeFixtureJSON(t, writer, testCase.rows)
+				case "/api/v3/history":
+					writeFixtureJSON(t, writer, []nativeHistory{})
+				default:
+					http.Error(writer, "unexpected synthetic read", http.StatusNotFound)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			client, err := New(Config{
+				ConnectionID: testConnection, Kind: domain.ConnectionSonarr, Endpoint: server.URL,
+				APIKey: "synthetic-key", HTTPClient: server.Client(),
+				RootPaths: map[domain.ConfigID]string{"downloads": "/synthetic/downloads"},
+			})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			result, err := client.Import(context.Background(), testConnection, ports.ImportRequest{
+				RegisteredExternalID: "201", PreviewRevision: testPreview, Transfer: "copy",
+				Files: []ports.ImportFile{{Source: domain.FileTarget{RootID: "downloads", RelativePath: "one.mkv"}, MovieOrEpisodeID: "301"}},
+			})
+			if err == nil || !hasCode(err, domain.OutcomeUnknown) {
+				t.Fatalf("Import error = %v result=%#v, want unknown duplicate observation", err, result)
+			}
+			if result.Effect != nil || writes.Load() != 0 {
+				t.Fatalf("result=%#v writes=%d, want no effect and no writes", result, writes.Load())
+			}
+		})
+	}
+}
+
 func TestSonarrMultiEpisodeFileReadbackRemainsOneAssociation(t *testing.T) {
 	var imported atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

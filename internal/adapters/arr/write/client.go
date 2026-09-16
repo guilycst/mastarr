@@ -476,15 +476,15 @@ func (client *Client) observeImport(ctx context.Context, externalID string) (por
 		}
 		byFile := make(map[int64]int)
 		byPath := make(map[domain.FileTarget]int64)
-		type episodeAssociation struct {
-			fileID int64
-			path   domain.FileTarget
-		}
-		byEpisode := make(map[int64]episodeAssociation)
+		seenEpisodes := make(map[int64]struct{})
 		for _, episode := range episodes {
 			if episode.ID <= 0 || episode.SeriesID != id {
 				return result, importHistory{}, malformed(operationObserve, "episode identity does not match requested series")
 			}
+			if _, exists := seenEpisodes[episode.ID]; exists {
+				return result, importHistory{}, malformed(operationObserve, "episode identity is duplicated")
+			}
+			seenEpisodes[episode.ID] = struct{}{}
 			if episode.EpisodeFile == nil {
 				if episode.EpisodeFileID != 0 {
 					return result, importHistory{}, malformed(operationObserve, "episode file identity is incomplete")
@@ -501,11 +501,6 @@ func (client *Client) observeImport(ctx context.Context, externalID string) (por
 			if mapErr != nil {
 				return result, importHistory{}, mapErr
 			}
-			if previous, episodeExists := byEpisode[episode.ID]; episodeExists {
-				if previous.fileID != episode.EpisodeFile.ID || previous.path != mapped.Path {
-					return result, importHistory{}, malformed(operationObserve, "episode identity claims multiple files")
-				}
-			}
 			position, exists := byFile[episode.EpisodeFile.ID]
 			if !exists {
 				if otherID, pathExists := byPath[mapped.Path]; pathExists && otherID != episode.EpisodeFile.ID {
@@ -515,7 +510,6 @@ func (client *Client) observeImport(ctx context.Context, externalID string) (por
 				files = append(files, mapped)
 				byFile[episode.EpisodeFile.ID] = len(files) - 1
 				byPath[mapped.Path] = episode.EpisodeFile.ID
-				byEpisode[episode.ID] = episodeAssociation{fileID: episode.EpisodeFile.ID, path: mapped.Path}
 				continue
 			}
 			if files[position].Path != mapped.Path || files[position].Size != mapped.Size {
@@ -526,7 +520,6 @@ func (client *Client) observeImport(ctx context.Context, externalID string) (por
 				return result, importHistory{}, malformed(operationObserve, "episode file association is duplicated")
 			}
 			files[position].EpisodeIDs = append(files[position].EpisodeIDs, episodeID)
-			byEpisode[episode.ID] = episodeAssociation{fileID: episode.EpisodeFile.ID, path: mapped.Path}
 		}
 	}
 	history, historyErr := client.readHistory(ctx, id)
