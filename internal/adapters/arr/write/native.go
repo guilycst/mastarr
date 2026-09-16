@@ -8,6 +8,7 @@ package write
 // below and remain private to this adapter.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -212,8 +213,8 @@ type nativeRegistrationMetadata struct {
 
 // UnmarshalJSON keeps field-presence information so an intentionally narrow
 // metadata projection cannot erase values already validated by the typed
-// standalone client merely because an optional member was omitted. Explicit
-// JSON null remains present and therefore clears the corresponding value.
+// standalone client merely because an optional member was omitted or null.
+// Non-null contradictory shared settings are rejected by the merge below.
 func (metadata *nativeRegistrationMetadata) UnmarshalJSON(data []byte) error {
 	type plain nativeRegistrationMetadata
 	var value plain
@@ -225,13 +226,18 @@ func (metadata *nativeRegistrationMetadata) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*metadata = nativeRegistrationMetadata(value)
-	_, metadata.rootFolderPathPresent = fields["rootFolderPath"]
-	_, metadata.qualityProfilePresent = fields["qualityProfileId"]
-	_, metadata.monitoredPresent = fields["monitored"]
-	_, metadata.seriesTypePresent = fields["seriesType"]
-	_, metadata.seasonFolderPresent = fields["seasonFolder"]
-	_, metadata.seasonsPresent = fields["seasons"]
+	metadata.rootFolderPathPresent = nonNullJSONField(fields, "rootFolderPath")
+	metadata.qualityProfilePresent = nonNullJSONField(fields, "qualityProfileId")
+	metadata.monitoredPresent = nonNullJSONField(fields, "monitored")
+	metadata.seriesTypePresent = nonNullJSONField(fields, "seriesType")
+	metadata.seasonFolderPresent = nonNullJSONField(fields, "seasonFolder")
+	metadata.seasonsPresent = nonNullJSONField(fields, "seasons")
 	return nil
+}
+
+func nonNullJSONField(fields map[string]json.RawMessage, name string) bool {
+	value, present := fields[name]
+	return present && !bytes.Equal(bytes.TrimSpace(value), []byte("null"))
 }
 
 func (client *Client) mergeRegistrationMetadata(ctx context.Context, titles []nativeTitle) ([]nativeTitle, error) {
@@ -305,6 +311,12 @@ func mergeRegistrationMetadata(title *nativeTitle, metadata nativeRegistrationMe
 	}
 	if metadata.Monitored != nil && title.Monitored != nil && *metadata.Monitored != *title.Monitored {
 		return malformed(operationRegistration, "native title monitored identity is contradictory")
+	}
+	if metadata.seriesTypePresent && title.SeriesType != "" && metadata.SeriesType != title.SeriesType {
+		return malformed(operationRegistration, "native title series type evidence is contradictory")
+	}
+	if metadata.seasonFolderPresent && metadata.SeasonFolder != nil && title.SeasonFolder != nil && *metadata.SeasonFolder != *title.SeasonFolder {
+		return malformed(operationRegistration, "native title season folder evidence is contradictory")
 	}
 	if metadata.rootFolderPathPresent || metadata.RootFolderPath != "" {
 		title.RootFolderPath = metadata.RootFolderPath

@@ -408,6 +408,36 @@ func TestSonarrMetadataProjectionPreservesTypedFieldsWhenOmitted(t *testing.T) {
 	}
 }
 
+func TestSonarrMetadataProjectionNullPreservesAndChangeRejects(t *testing.T) {
+	t.Run("null preserves typed fields", func(t *testing.T) {
+		var metadata nativeRegistrationMetadata
+		if err := decodeStrictJSON([]byte(`{"id":201,"seriesType":null,"seasonFolder":null}`), &metadata); err != nil {
+			t.Fatalf("decode metadata: %v", err)
+		}
+		title := nativeTitle{ID: 201, SeriesType: "anime", SeasonFolder: boolPtr(true)}
+		if err := mergeRegistrationMetadata(&title, metadata); err != nil {
+			t.Fatalf("merge metadata: %v", err)
+		}
+		if title.SeriesType != "anime" || title.SeasonFolder == nil || !*title.SeasonFolder {
+			t.Fatalf("title = %#v, want null metadata to preserve typed fields", title)
+		}
+	})
+
+	t.Run("changed shared settings reject", func(t *testing.T) {
+		var metadata nativeRegistrationMetadata
+		if err := decodeStrictJSON([]byte(`{"id":201,"seriesType":"standard","seasonFolder":false}`), &metadata); err != nil {
+			t.Fatalf("decode metadata: %v", err)
+		}
+		title := nativeTitle{ID: 201, SeriesType: "anime", SeasonFolder: boolPtr(true)}
+		if err := mergeRegistrationMetadata(&title, metadata); err == nil || !hasCode(err, domain.OutcomeUnknown) {
+			t.Fatalf("merge error = %v, want contradictory shared settings rejection", err)
+		}
+		if title.SeriesType != "anime" || title.SeasonFolder == nil || !*title.SeasonFolder {
+			t.Fatalf("title = %#v, want failed merge to leave typed fields unchanged", title)
+		}
+	})
+}
+
 func TestSonarrImportReconcilesLostCommandPerEpisode(t *testing.T) {
 	var mu sync.Mutex
 	imported := false
