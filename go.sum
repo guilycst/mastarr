@@ -26,6 +26,8 @@ github.com/google/pprof v0.0.0-20260802141513-ef3492d7dac3 h1:LMLX+LgTNWpfvCBdFe
 github.com/google/pprof v0.0.0-20260802141513-ef3492d7dac3/go.mod h1:jl5iWTm0/hd5PjEYEOuwAJ57L/CibdZfrqZ5XA5GrCk=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
 github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
+github.com/guilycst/mastarr/clients/jellyfin v0.0.0-20260915195508-4eee8e84eff5 h1:7AuJM57lqrwowFAjpzmXM58ngdu5N+lpbGlo24oFYpw=
+github.com/guilycst/mastarr/clients/jellyfin v0.0.0-20260915195508-4eee8e84eff5/go.mod h1:NHSj/AoZRVhkodi8/udMuYErDVfR4TAiYtPyJZxr2Sg=
 github.com/guilycst/mastarr/clients/nzbget v0.0.0-20260911223922-1b9b3f9c425e h1:WT/60UNd1nRkOStNkcx3j/QvK0TMvCd3c56ltsZGm1c=
 github.com/guilycst/mastarr/clients/nzbget v0.0.0-20260911223922-1b9b3f9c425e/go.mod h1:ZBP0L8KCpF9MA0xDNvIy3INGDAY2a3sJpRFl0SCDECk=
 github.com/guilycst/mastarr/clients/qbittorrent v0.0.0-20260912004727-a9c847ff562f h1:weYkxnmS19XXW/SIV1RAwSYET4oY491SOfIB1XXXAko=
