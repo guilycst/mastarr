@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/guilycst/mastarr/internal/domain"
 	"github.com/guilycst/mastarr/internal/ports"
@@ -329,6 +330,83 @@ func TestRequestPaginationPreservesStatusRelationshipsAndServiceErrors(t *testin
 	defer handler.mu.Unlock()
 	if len(handler.requestPageCalls) != 2 || handler.requestPageCalls[1].Get("skip") != "2" {
 		t.Fatalf("request pagination calls = %+v", handler.requestPageCalls)
+	}
+}
+
+func TestRequestRecordObservedAtUsesReadTime(t *testing.T) {
+	tests := []struct {
+		name           string
+		body           string
+		wantCreated    string
+		wantUpdated    string
+		wantMediaKnown bool
+	}{
+		{
+			name:           "old source timestamps",
+			body:           `{"pageInfo":{"pages":1,"pageSize":1,"results":1,"page":1},"results":[{"id":9101,"status":5,"type":"movie","createdAt":"2020-01-02T03:04:05Z","updatedAt":"2020-01-03T03:04:05Z","media":{"id":101,"mediaType":"movie","status":5}}],"serviceErrors":{}}`,
+			wantCreated:    "2020-01-02T03:04:05Z",
+			wantUpdated:    "2020-01-03T03:04:05Z",
+			wantMediaKnown: true,
+		},
+		{
+			name:           "future source timestamp",
+			body:           `{"pageInfo":{"pages":1,"pageSize":1,"results":1,"page":1},"results":[{"id":9102,"status":2,"type":"tv","createdAt":"2020-01-02T03:04:05Z","updatedAt":"2099-01-03T03:04:05Z","media":{"id":102,"mediaType":"tv","status":4}}],"serviceErrors":{}}`,
+			wantCreated:    "2020-01-02T03:04:05Z",
+			wantUpdated:    "2099-01-03T03:04:05Z",
+			wantMediaKnown: true,
+		},
+		{
+			name:           "created only",
+			body:           `{"pageInfo":{"pages":1,"pageSize":1,"results":1,"page":1},"results":[{"id":9103,"status":1,"type":"movie","createdAt":"2020-02-03T04:05:06Z","media":{"id":103,"mediaType":"movie","status":2}}],"serviceErrors":{}}`,
+			wantCreated:    "2020-02-03T04:05:06Z",
+			wantMediaKnown: true,
+		},
+		{
+			name:           "missing media and timestamps",
+			body:           `{"pageInfo":{"pages":1,"pageSize":1,"results":1,"page":1},"results":[{"id":9104,"status":1,"type":"movie"}],"serviceErrors":{}}`,
+			wantMediaKnown: false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			handler := &seerrFixtureHandler{fixture: seerrFixture{RequestPages: []json.RawMessage{json.RawMessage(test.body)}}}
+			client, server := newSeerrFixtureClient(t, handler, "seerr-observed-at")
+			defer server.Close()
+
+			before := time.Now().UTC()
+			page, err := client.ListRequestsDetailed(context.Background(), "seerr-observed-at", "", 1)
+			after := time.Now().UTC()
+			if err != nil {
+				t.Fatalf("ListRequestsDetailed: %v", err)
+			}
+			if len(page.Items) != 1 {
+				t.Fatalf("items = %d, want 1", len(page.Items))
+			}
+			request := page.Items[0]
+			if request.Record.ObservedAt.Before(before) || request.Record.ObservedAt.After(after) {
+				t.Fatalf("record observed at %s, want read interval [%s, %s]", request.Record.ObservedAt, before, after)
+			}
+			if !request.Record.ObservedAt.Equal(page.Coverage.ObservedAt) {
+				t.Fatalf("record observed at %s differs from page read at %s", request.Record.ObservedAt, page.Coverage.ObservedAt)
+			}
+			if (request.Media.ID != "") != test.wantMediaKnown {
+				t.Fatalf("media identity = %q, want known %t", request.Media.ID, test.wantMediaKnown)
+			}
+			if test.wantCreated != "" {
+				if request.SourceCreatedAt == nil || request.SourceCreatedAt.UTC().Format(time.RFC3339) != test.wantCreated {
+					t.Fatalf("source created at = %v, want %s", request.SourceCreatedAt, test.wantCreated)
+				}
+			} else if request.SourceCreatedAt != nil {
+				t.Fatalf("source created at = %v, want nil", request.SourceCreatedAt)
+			}
+			if test.wantUpdated != "" {
+				if request.SourceUpdatedAt == nil || request.SourceUpdatedAt.UTC().Format(time.RFC3339) != test.wantUpdated {
+					t.Fatalf("source updated at = %v, want %s", request.SourceUpdatedAt, test.wantUpdated)
+				}
+			} else if request.SourceUpdatedAt != nil {
+				t.Fatalf("source updated at = %v, want nil", request.SourceUpdatedAt)
+			}
+		})
 	}
 }
 

@@ -472,6 +472,10 @@ func (client *Client) mapMediaPage(page upstream.MediaPage) MediaPage {
 }
 
 func (client *Client) mapRequestPage(page upstream.RequestPage) RequestPage {
+	observedAt := page.Coverage.ObservedAt
+	if observedAt.IsZero() {
+		observedAt = time.Now().UTC()
+	}
 	result := RequestPage{
 		Items:         make([]RequestObservation, 0, len(page.Items)),
 		NextCursor:    page.NextCursor,
@@ -480,7 +484,7 @@ func (client *Client) mapRequestPage(page upstream.RequestPage) RequestPage {
 		ServiceErrors: make([]ServiceError, 0, len(page.ServiceErrors)),
 	}
 	for _, item := range page.Items {
-		result.Items = append(result.Items, client.mapRequest(item))
+		result.Items = append(result.Items, client.mapRequest(item, observedAt))
 	}
 	for _, item := range page.ServiceErrors {
 		result.ServiceErrors = append(result.ServiceErrors, ServiceError{Kind: item.Kind, ID: formatOptionalID(item.ID, item.IDKnown), Name: item.Name})
@@ -553,7 +557,7 @@ func (client *Client) mapMedia(value upstream.MediaObservation) MediaObservation
 	return media
 }
 
-func (client *Client) mapRequest(value upstream.RequestObservation) RequestObservation {
+func (client *Client) mapRequest(value upstream.RequestObservation, observedAt time.Time) RequestObservation {
 	id := strconv.FormatInt(value.ID, 10)
 	request := RequestObservation{
 		ID:                   id,
@@ -586,21 +590,7 @@ func (client *Client) mapRequest(value upstream.RequestObservation) RequestObser
 		mediaID = strconv.FormatInt(value.Media.ID, 10)
 		providerID = firstProviderID(value.Media.MediaType, value.Media.ProviderIDs)
 	}
-	observedAt := value.SourceUpdatedAt
-	if observedAt == nil {
-		observedAt = value.SourceCreatedAt
-	}
-	if observedAt == nil && value.MediaKnown {
-		observed := value.Media.Availability.ObservedAt
-		if !observed.IsZero() {
-			observedAt = &observed
-		}
-	}
-	if observedAt == nil {
-		now := time.Now().UTC()
-		observedAt = &now
-	}
-	request.Record = ports.RequestRecord{ExternalID: id, ProviderID: providerID, Status: value.NativeStatusName, MediaID: mediaID, ObservedAt: *observedAt}
+	request.Record = ports.RequestRecord{ExternalID: id, ProviderID: providerID, Status: value.NativeStatusName, MediaID: mediaID, ObservedAt: observedAt}
 	return request
 }
 
