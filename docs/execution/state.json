@@ -3354,7 +3354,8 @@
         "dispatched from 4e5c46d503949a493067ae57d3395545a36021f8 after W-03 approval product a4ad5a0fcfee724491513224f6b082a25be82e0a and state closure 4e5c46d503949a493067ae57d3395545a36021f8.",
         "Own only internal/workflows/, internal/reviews/ and docs/execution/handoffs/W-04.md. Implement ordered workflows and review decisions on existing planning, execution and storage ports; do not edit state.json, API/UI contracts, adapters, clients, storage schemas or workers.",
         "Keep W-03 gates intact: F-05 filesystem organize operations remain explicit fail-closed where unsupported; G-01 Arr native registration/import writes remain blocked; Seerr remains read-only.",
-        "The first W-04 implementation attempt was interrupted after a bounded window with no files or handoff; no product changes were made and the checkout remains at the recorded base."
+        "The first W-04 implementation attempt was interrupted after a bounded window with no files or handoff; no product changes were made and the checkout remains at the recorded base.",
+        "retry dispatch checkpoint fee702c4d35afc7e3f333877c75e3e6fbac71073: first slice is review decision validation and durable approval binding in internal/reviews/ only; ordered workflow composition remains a follow-up in internal/workflows/."
       ],
       "review": null,
       "dispatch": {
@@ -3362,7 +3363,7 @@
         "model": "gpt-5.6-luna",
         "reasoning": "max",
         "role": "implementer",
-        "baseSha": "4e5c46d503949a493067ae57d3395545a36021f8",
+        "baseSha": "fee702c4d35afc7e3f333877c75e3e6fbac71073",
         "ownedPaths": [
           "internal/workflows/",
           "internal/reviews/"
@@ -3387,7 +3388,7 @@
         "reviewPath": "docs/execution/handoffs/W-04-review-round1.md",
         "handoffPath": "docs/execution/handoffs/W-04.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "interrupted",
+        "status": "implementation",
         "dependencyCommits": {
           "W-03-approved": "a4ad5a0fcfee724491513224f6b082a25be82e0a",
           "W-03-state-closure": "4e5c46d503949a493067ae57d3395545a36021f8"
@@ -3405,6 +3406,25 @@
           "owner": "/root/x05_implementer",
           "status": "interrupted",
           "reason": "bounded implementation window exceeded without files or handoff; coordinator is narrowing the first retry slice while preserving the same owned paths"
+        },
+        "retryAttempt": {
+          "owner": "/root/x05_implementer",
+          "assignedAt": "2026-09-16",
+          "baseSha": "fee702c4d35afc7e3f333877c75e3e6fbac71073",
+          "scope": "review decision validation and durable approval binding in internal/reviews/ only; workflow composition follows as a separate product slice",
+          "ownedPaths": [
+            "internal/reviews/",
+            "docs/execution/handoffs/W-04-review-slice.md"
+          ],
+          "status": "dispatched",
+          "handoffPath": "docs/execution/handoffs/W-04-review-slice.md",
+          "expectedChecks": [
+            "focused internal/reviews tests and race",
+            "go vet ./internal/reviews",
+            "GOWORK=off go mod verify",
+            "full offline guardrails before slice handoff"
+          ],
+          "nextFollowup": "compose ordered recipes and queue integration in internal/workflows/ after the review slice is committed"
         }
       },
       "reviewHistory": []
@@ -5352,7 +5372,7 @@
       ]
     }
   },
-  "nextAction": "W-04 first implementation attempt was interrupted without product changes. Record this checkpoint, then dispatch a narrower review-decision slice within internal/reviews/ before composing ordered recipes in internal/workflows/; keep the same independent reviewer and capability gates.",
+  "nextAction": "W-04 retry slice is dispatched from fee702c4d35afc7e3f333877c75e3e6fbac71073. The worker first owns internal/reviews/ and its slice handoff, then will continue in internal/workflows/; keep the independent final review pending until both slices are complete.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
