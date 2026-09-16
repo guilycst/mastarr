@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"sync"
@@ -2961,15 +2962,20 @@ func appendEvidence(raw json.RawMessage, values ...string) json.RawMessage {
 }
 
 func mergeObjectEvidenceMarkers(raw json.RawMessage, values []string) (json.RawMessage, bool) {
+	if !jsonObjectHasUniqueKeys(raw) {
+		return nil, false
+	}
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
 		return nil, false
 	}
 	markers := make([]string, 0, len(values))
 	if existing, ok := object["_mastarr_execution_markers"]; ok {
-		if err := json.Unmarshal(existing, &markers); err != nil {
+		decoded, ok := decodeExecutionMarkers(existing)
+		if !ok {
 			return nil, false
 		}
+		markers = decoded
 	}
 	for _, value := range values {
 		if value == "" {
@@ -2996,6 +3002,70 @@ func mergeObjectEvidenceMarkers(raw json.RawMessage, values []string) (json.RawM
 		return nil, false
 	}
 	return json.RawMessage(encoded), true
+}
+
+// jsonObjectHasUniqueKeys checks the object syntax without decoding it into a
+// map. Evidence is opaque: map decoding would silently discard the first of
+// two keys with the same name. Such an object must use appendEvidence's raw
+// prior-value envelope instead of the field-merging path.
+func jsonObjectHasUniqueKeys(raw json.RawMessage) bool {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	token, err := decoder.Token()
+	if err != nil {
+		return false
+	}
+	opening, ok := token.(json.Delim)
+	if !ok || opening != '{' {
+		return false
+	}
+	seen := make(map[string]struct{})
+	for decoder.More() {
+		token, err := decoder.Token()
+		key, ok := token.(string)
+		if err != nil || !ok {
+			return false
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return false
+		}
+		seen[key] = struct{}{}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return false
+		}
+	}
+	closing, err := decoder.Token()
+	if err != nil {
+		return false
+	}
+	if delimiter, ok := closing.(json.Delim); !ok || delimiter != '}' {
+		return false
+	}
+	var trailing json.RawMessage
+	return decoder.Decode(&trailing) == io.EOF
+}
+
+func decodeExecutionMarkers(raw json.RawMessage) ([]string, bool) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '[' {
+		return nil, false
+	}
+	var encoded []json.RawMessage
+	if err := json.Unmarshal(trimmed, &encoded); err != nil {
+		return nil, false
+	}
+	markers := make([]string, 0, len(encoded))
+	for _, value := range encoded {
+		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return nil, false
+		}
+		var marker string
+		if err := json.Unmarshal(value, &marker); err != nil {
+			return nil, false
+		}
+		markers = append(markers, marker)
+	}
+	return markers, true
 }
 
 func (executor *Executor) recordEffectsFor(ctx context.Context, action Action, attempt Attempt, reported []Effect, defaultState EffectState, claimed bool) error {

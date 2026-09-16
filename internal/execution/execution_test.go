@@ -1,6 +1,7 @@
 package execution
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -1782,6 +1783,75 @@ func TestLatestDispatchExternalIDUsesCurrentDispatchAttempt(t *testing.T) {
 		{AttemptNumber: 3, Phase: AttemptDispatch, ExternalID: "current-command"},
 	}); got != "current-command" {
 		t.Fatalf("latest dispatch external ID = %q, want current-command", got)
+	}
+}
+
+func TestAppendEvidencePreservesOpaqueJSONKeys(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      json.RawMessage
+		merge      bool
+		wantMarker []string
+	}{
+		{
+			name:       "compatible marker array",
+			input:      json.RawMessage(`{"_mastarr_execution_markers":["source_marker"],"approved_scope":"two.bin"}`),
+			merge:      true,
+			wantMarker: []string{"source_marker", "dispatch_result_unreported"},
+		},
+		{
+			name:  "null marker",
+			input: json.RawMessage(`{"_mastarr_execution_markers":null,"approved_scope":"two.bin"}`),
+		},
+		{
+			name:  "duplicate marker keys",
+			input: json.RawMessage(`{"_mastarr_execution_markers":["first"],"_mastarr_execution_markers":["second"],"approved_scope":"two.bin"}`),
+		},
+		{
+			name:  "duplicate ordinary keys",
+			input: json.RawMessage(`{"approved_scope":"first","approved_scope":"second"}`),
+		},
+		{
+			name:  "non-array marker",
+			input: json.RawMessage(`{"_mastarr_execution_markers":{"source":"marker"},"approved_scope":"two.bin"}`),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := appendEvidence(test.input, "dispatch_result_unreported")
+			if !json.Valid(got) {
+				t.Fatalf("annotated evidence is invalid JSON: %s", got)
+			}
+			if !jsonObjectHasUniqueKeys(got) {
+				t.Fatalf("annotated evidence has duplicate top-level keys: %s", got)
+			}
+			var object map[string]json.RawMessage
+			if err := json.Unmarshal(got, &object); err != nil {
+				t.Fatalf("annotated evidence object decode: %v", err)
+			}
+			markers, ok := decodeExecutionMarkers(object["_mastarr_execution_markers"])
+			if !ok || !equalStrings(markers, func() []string {
+				if test.merge {
+					return test.wantMarker
+				}
+				return []string{"dispatch_result_unreported"}
+			}()) {
+				t.Fatalf("execution markers = %v, want %v", markers, test.wantMarker)
+			}
+			prior, hasPrior := object["_mastarr_prior"]
+			if test.merge {
+				if hasPrior {
+					t.Fatalf("compatible marker array unexpectedly wrapped prior evidence: %s", got)
+				}
+				return
+			}
+			if !hasPrior {
+				t.Fatalf("incompatible opaque evidence lost raw prior: %s", got)
+			}
+			if !bytes.Equal(bytes.TrimSpace(prior), bytes.TrimSpace(test.input)) {
+				t.Fatalf("raw prior changed: got %s, want %s", prior, test.input)
+			}
+		})
 	}
 }
 
