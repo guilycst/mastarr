@@ -15,7 +15,9 @@
   "resumeDocument": "docs/execution/RESUME.md",
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
-  "activeImplementationTasks": [],
+  "activeImplementationTasks": [
+    "X-20"
+  ],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
   "guardrailBaseline": {
@@ -4257,12 +4259,50 @@
       ]
     },
     "X-20": {
-      "status": "planned",
-      "owner": null,
-      "baseSha": null,
+      "status": "in_progress",
+      "owner": "/root/x05_implementer",
+      "baseSha": "52d22eead7e6c934352fa70483e433697197eb1e",
       "integratedSha": null,
-      "evidence": [],
-      "review": null
+      "evidence": [
+        "dispatched after X-06, X-15 and X-16 approvals; owns only the root Arr write-adapter migration and synthetic fixtures.",
+        "Keep registration/manual-import validation, exact preview binding, strict read-back and G-01 fail-closed behavior unchanged while translating through standalone Sonarr and Radarr clients.",
+        "No local replace or go.work dependency is allowed. If the public nested module versions cannot bootstrap root integration, preserve the current adapter and document the release/bootstrap blocker.",
+        "Dependency commits: X-06 0bbf8405859ac604d9d05237badef45dd0ee7fbc, X-15 828e0084f2d88f86050db5912412352c1a363bc1, X-16 1ef0c07af604e7e63d88bc68955c8097479f7e82."
+      ],
+      "review": null,
+      "dispatch": {
+        "assignedAt": "2026-09-15",
+        "model": "gpt-5.6-luna",
+        "reasoning": "max",
+        "role": "implementer",
+        "baseSha": "52d22eead7e6c934352fa70483e433697197eb1e",
+        "ownedPaths": [
+          "internal/adapters/arr/write/",
+          "tests/fixtures/arr/write/",
+          "docs/execution/handoffs/X-20.md"
+        ],
+        "expectedChecks": [
+          "A-12",
+          "A-13",
+          "A-16",
+          "A-17",
+          "A-33",
+          "standalone Sonarr/Radarr client DTO and typed-error translation without generated leakage",
+          "exact preview binding, strict read-back and G-01 fail-closed native write behavior",
+          "synthetic migration fixtures and no local replace/go.work",
+          "GOWORK=off root and nested tests/race/vet/mod verify, generation, Vacuum, lint and architecture",
+          "Linux amd64/arm64 CGO-free compile"
+        ],
+        "reviewPath": "docs/execution/handoffs/X-20-review-round1.md",
+        "handoffPath": "docs/execution/handoffs/X-20.md",
+        "nextReviewer": "/root/x05_reviewer",
+        "status": "in_progress",
+        "dependencyCommits": {
+          "X-06": "0bbf8405859ac604d9d05237badef45dd0ee7fbc",
+          "X-15": "828e0084f2d88f86050db5912412352c1a363bc1",
+          "X-16": "1ef0c07af604e7e63d88bc68955c8097479f7e82"
+        }
+      }
     },
     "X-21": {
       "status": "planned",
@@ -4512,7 +4552,7 @@
       ]
     }
   },
-  "nextAction": "X-06 is approved and closed at 0bbf8405859ac604d9d05237badef45dd0ee7fbc. Dispatch the next dependency-ready lane while keeping G-01 blocked.",
+  "nextAction": "X-20 is dispatched from 52d22eead7e6c934352fa70483e433697197eb1e to migrate the Arr write adapter through standalone Sonarr and Radarr clients; keep G-01 blocked.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
