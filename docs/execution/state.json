@@ -2972,7 +2972,8 @@
         "8ab9eee2a50c195dda9fadf5160358d2fb535b11 state checkpoint dispatched W-02 correction round eleven to /root/x05_implementer from e46ab80265c6bfbcde7c51f29cfa04c0df421f19; owned paths remain internal/execution/ and docs/execution/handoffs/W-02-correction-round11.md, shared main, with GOWORK=off focused/race/vet/offline guardrail/module/cross-build checks.",
         "6b85c3afde31cf2772f9dc5e84a7982de504635b W-02 correction round eleven validates unique object keys, strictly handles marker arrays, and uses lossless _mastarr_prior fallback for null/non-array/invalid-member/duplicate-key evidence. Focused normal/race regressions and full offline guardrails passed.",
         "a9609d0affcc2ec811ca860f22576771acf9a88a records the W-02 correction round eleven handoff and exact checks.",
-        "5c7b7933f9d694e4ad768d4211a119dda06b511a W-02 correction round eleven review closed all listed marker cases, ExternalID and prior regressions, but found P2 raw invalid UTF-8 and escaped unpaired surrogate marker strings are re-encoded as U+FFFD, losing opaque evidence. Full offline guardrails and 18 cross-builds passed."
+        "5c7b7933f9d694e4ad768d4211a119dda06b511a W-02 correction round eleven review closed all listed marker cases, ExternalID and prior regressions, but found P2 raw invalid UTF-8 and escaped unpaired surrogate marker strings are re-encoded as U+FFFD, losing opaque evidence. Full offline guardrails and 18 cross-builds passed.",
+        "de65cae07d376024ba44c01bf9426d9de8e51da3 state checkpoint dispatched W-02 correction round twelve to /root/x05_implementer from 6b85c3afde31cf2772f9dc5e84a7982de504635b; owned paths remain internal/execution/ and docs/execution/handoffs/W-02-correction-round12.md, shared main, with GOWORK=off focused/race/vet/offline guardrail/module/cross-build checks."
       ],
       "review": {
         "status": "approved",
@@ -3053,7 +3054,7 @@
         "correctionHandoffCommit": null,
         "correctionProductCommits": [],
         "correctionReviewSourceCommit": null,
-        "correctionDispatchCheckpoint": "8ab9eee2a50c195dda9fadf5160358d2fb535b11"
+        "correctionDispatchCheckpoint": "de65cae07d376024ba44c01bf9426d9de8e51da3"
       },
       "reviewHistory": [
         {
