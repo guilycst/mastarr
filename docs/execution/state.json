@@ -962,7 +962,8 @@
         "8c4b223c1e211571c9c2db127f81b1ef6a1919d6 correction product addresses all six independent-review findings; d8299c9fc8e9dd7b1d4e5dd3f7fe0257468b323e records the correction handoff.",
         "ec768b048cb46121c8bd09ea87d79dc79de2308e independent correction review round two requests two P1 fixes; 04eac468167386f4810bb327941785a7c90ea4d5 integrates the receipt. Publication identity/cleanup binding and immutable restore manifest binding remain blockers; all prior findings and guardrails pass.",
         "6adb5a5cf2ce7d9effd5d4ba6c2a8737d9e28b3a correction round two binds verified staging identity through publication/cleanup and snapshots exact restore manifest bytes; fe0b2b3e7299e5ea7dac8be6bec9d819d81fa115 records the handoff and checks.",
-        "e5e51d9d7476c88b54732a0f4a5b42ccd8e8754d independent correction review round three requests one P1: a held staging root does not bind child contents after final verification; 7980ac79d30179d0f6165957b272db7675932ad8 integrates the receipt. Prior substitution/cleanup and source-manifest findings are accepted; exact child-set/report binding remains a blocker."
+        "e5e51d9d7476c88b54732a0f4a5b42ccd8e8754d independent correction review round three requests one P1: a held staging root does not bind child contents after final verification; 7980ac79d30179d0f6165957b272db7675932ad8 integrates the receipt. Prior substitution/cleanup and source-manifest findings are accepted; exact child-set/report binding remains a blocker.",
+        "91e63363c9a2c15bce8964d19508a1888a97ba51 correction round three verifies the complete staged child set and destination read-back across publication, returning the report proven by the published destination; dc743ca02c9925985294db26c0c5c5ff42805d40 records the handoff and full checks."
       ],
       "review": {
         "status": "changes_requested",
@@ -1001,7 +1002,7 @@
         "reviewPath": "docs/execution/handoffs/D-04-review-round1.md",
         "handoffPath": "docs/execution/handoffs/D-04.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "implementation",
+        "status": "review_pending",
         "implementationCommit": "9b682b56306d450d582e4ec23f6f8e5e1df37243",
         "handoffCommit": "0d8bccedf51cc25490167cb5692374807f2fc90c",
         "reviewSourceCommit": "9b682b56306d450d582e4ec23f6f8e5e1df37243",
@@ -1014,12 +1015,18 @@
         "correctionReviewPath": "docs/execution/handoffs/D-04-review-round4.md",
         "correctionHandoffPath": "docs/execution/handoffs/D-04-correction-round3.md",
         "correctionReviewer": "/root/x05_reviewer",
-        "correctionStatus": "implementation",
+        "correctionStatus": "review_pending",
         "priorCorrectionRound": 2,
         "priorCorrectionImplementationCommit": "6adb5a5cf2ce7d9effd5d4ba6c2a8737d9e28b3a",
         "priorCorrectionHandoffCommit": "fe0b2b3e7299e5ea7dac8be6bec9d819d81fa115",
         "priorCorrectionReviewCommit": "e5e51d9d7476c88b54732a0f4a5b42ccd8e8754d",
-        "priorCorrectionReviewIntegrationCommit": "7980ac79d30179d0f6165957b272db7675932ad8"
+        "priorCorrectionReviewIntegrationCommit": "7980ac79d30179d0f6165957b272db7675932ad8",
+        "correctionImplementationCommit": "91e63363c9a2c15bce8964d19508a1888a97ba51",
+        "correctionHandoffCommit": "dc743ca02c9925985294db26c0c5c5ff42805d40",
+        "correctionProductCommits": [
+          "91e63363c9a2c15bce8964d19508a1888a97ba51"
+        ],
+        "correctionReviewSourceCommit": "91e63363c9a2c15bce8964d19508a1888a97ba51"
       },
       "reviewHistory": [
         {
@@ -4811,7 +4818,7 @@
       ]
     }
   },
-  "nextAction": "D-04 correction round three is dispatched for exact staged child-set and report binding after review receipt e5e51d9d7476c88b54732a0f4a5b42ccd8e8754d. X-08 remains queued; X-20 transport and G-01 remain open.",
+  "nextAction": "D-04 correction round three is ready for independent review at 91e63363c9a2c15bce8964d19508a1888a97ba51; handoff dc743ca02c9925985294db26c0c5c5ff42805d40. X-08 remains queued; X-20 transport and G-01 remain open.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
