@@ -957,9 +957,24 @@
         "dispatched after D-03 and X-09 approvals; owns only internal/backup/, docs/operations/backup-restore.md and its handoff.",
         "Create consistent SQLite, encryption-key, retained-descriptor and trash backup/restore instructions plus an isolated restore check. Do not perform live migration or downgrade, and fail closed on incomplete backups.",
         "Use synthetic temporary instances and fixture bytes only. Preserve encrypted-key requirements, descriptor/trash retention, startup validation and uncertainty/idempotency evidence; no credentials, private coordinates or live media.",
-        "9b682b56306d450d582e4ec23f6f8e5e1df37243 D-04 product adds versioned SQLite/key/descriptor/trash backup, strict manifest verification and isolated restore checks; 0d8bccedf51cc25490167cb5692374807f2fc90c records the handoff."
+        "9b682b56306d450d582e4ec23f6f8e5e1df37243 D-04 product adds versioned SQLite/key/descriptor/trash backup, strict manifest verification and isolated restore checks; 0d8bccedf51cc25490167cb5692374807f2fc90c records the handoff.",
+        "ca64d535cb891889553e62ae516a917ef72fc962 independent review requests six release-blocking findings; bfc411a663a430a009d8d7b97864fb502179b9f0 integrates the receipt. P1s cover pre-publication verification, future schema, archive overlap, atomic no-replace publication, symlink ancestors and post-publication uncertainty; P2 covers cancellation and aggregate bounds."
       ],
-      "review": null,
+      "review": {
+        "status": "changes_requested",
+        "decision": "changes_requested",
+        "reviewer": "/root/x05_reviewer",
+        "commit": "ca64d535cb891889553e62ae516a917ef72fc962",
+        "findings": [
+          "P1: Create publishes before coupled Verify, so wrong-key or missing-reference backups can be published.",
+          "P1: equal future database/manifest schema versions are accepted without a supported migration ceiling.",
+          "P1: Restore permits destination overlap inside or over the source archive and can invalidate it.",
+          "P1: publication is check-then-rename with overwrite and post-rename fsync certainty gaps.",
+          "P1: final-component validation and lexical overlap checks accept symlink ancestors and aliases.",
+          "P2: filesystem copy/hash/walk/sync ignore cancellation and have no aggregate entry/byte bounds."
+        ],
+        "round": 1
+      },
       "dispatch": {
         "assignedAt": "2026-09-16",
         "model": "gpt-5.6-luna",
@@ -986,10 +1001,20 @@
         "reviewPath": "docs/execution/handoffs/D-04-review-round1.md",
         "handoffPath": "docs/execution/handoffs/D-04.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "review_pending",
+        "status": "correction_pending",
         "implementationCommit": "9b682b56306d450d582e4ec23f6f8e5e1df37243",
         "handoffCommit": "0d8bccedf51cc25490167cb5692374807f2fc90c",
-        "reviewSourceCommit": "9b682b56306d450d582e4ec23f6f8e5e1df37243"
+        "reviewSourceCommit": "9b682b56306d450d582e4ec23f6f8e5e1df37243",
+        "reviewCommit": "ca64d535cb891889553e62ae516a917ef72fc962",
+        "reviewIntegrationCommit": "bfc411a663a430a009d8d7b97864fb502179b9f0",
+        "reviewRound": 1,
+        "correctionRound": 1,
+        "correctionOwner": "/root/x05_implementer",
+        "correctionBaseSha": "9b682b56306d450d582e4ec23f6f8e5e1df37243",
+        "correctionReviewPath": "docs/execution/handoffs/D-04-review-round2.md",
+        "correctionHandoffPath": "docs/execution/handoffs/D-04-correction-round1.md",
+        "correctionReviewer": "/root/x05_reviewer",
+        "correctionStatus": "implementation"
       }
     },
     "F-01": {
@@ -4753,7 +4778,7 @@
       ]
     }
   },
-  "nextAction": "D-04 product 9b682b56306d450d582e4ec23f6f8e5e1df37243 and handoff 0d8bccedf51cc25490167cb5692374807f2fc90c are ready for independent review. X-08 is queued for a later implementer. X-20 transport and G-01 remain open.",
+  "nextAction": "D-04 correction round one is dispatched after review receipt ca64d535cb891889553e62ae516a917ef72fc962: close pre-publication verification, schema ceiling, archive overlap, atomic publication, symlink ancestors, cancellation and aggregate bounds. X-08 is queued. X-20 transport and G-01 remain open.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
