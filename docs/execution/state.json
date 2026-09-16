@@ -4225,6 +4225,8 @@
         "correctionHandoffPath": "docs/execution/handoffs/X-22-correction-round1.md",
         "correctionReviewer": "/root/x05_reviewer",
         "correctionStatus": "review_pending",
+        "correctionDispatchCommit": "1d90ef4699e38b57a7b079eb70366d60a07d33f6",
+        "correctionCheckout": "shared main",
         "correctionImplementationCommit": "ea41f1f49569a079696f091a6113ee4d97641df4",
         "correctionHandoffCommit": "fcb414cb5fcdae978489cb03ba321062adeae163",
         "correctionReviewSourceCommit": "ea41f1f49569a079696f091a6113ee4d97641df4",
