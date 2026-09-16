@@ -3208,7 +3208,8 @@
         "533313c5d1f91e4573078bf5fa1d2939e21c17b0 W-03 correction round two maps manifest-based trash/delete effects, rejects foreign/duplicate identities, and preserves nested/partial mappings.",
         "4871bc4999f18f2d6aa119e366ca949b6886ac45 W-03 correction round two adds a real SQLite execution.Executor integration regression for durable partial filesystem effects; focused/race/vet/module/full offline guardrails/generation/Vacuum/lint/architecture/cross-build checks passed.",
         "344b9be5010d9bec7666602dc5d67049ba727850 records the W-03 correction round two handoff and exact checks.",
-        "5c3068edccd8e6b22f6fd5a107f939468c9f2375 W-03 correction round two review closed manifest mapping, duplicate/foreign fail-closed behavior, and W-02 durable partial-effect integration, but found P2 mixed delete state loss: mapFilesystemAffected overwrites read-proven EffectAlreadySatisfied with aggregate OutcomeApplied. Direct and real SQLite executor probes failed 10/10 under race; full offline guardrails/cross-builds passed."
+        "5c3068edccd8e6b22f6fd5a107f939468c9f2375 W-03 correction round two review closed manifest mapping, duplicate/foreign fail-closed behavior, and W-02 durable partial-effect integration, but found P2 mixed delete state loss: mapFilesystemAffected overwrites read-proven EffectAlreadySatisfied with aggregate OutcomeApplied. Direct and real SQLite executor probes failed 10/10 under race; full offline guardrails/cross-builds passed.",
+        "db3317674c592bc49761b0d653153d8bb5bc72e6 state checkpoint dispatched W-03 correction round three to /root/x05_implementer from 4871bc4999f18f2d6aa119e366ca949b6886ac45; owned paths remain internal/actions/ and docs/execution/handoffs/W-03-correction-round3.md, shared main, with GOWORK=off focused/race/vet/offline guardrail/module/cross-build checks."
       ],
       "review": {
         "status": "changes_requested",
@@ -3298,7 +3299,7 @@
         "priorCorrectionHandoffCommit": "344b9be5010d9bec7666602dc5d67049ba727850",
         "priorCorrectionReviewCommit": "5c3068edccd8e6b22f6fd5a107f939468c9f2375",
         "priorCorrectionReviewIntegrationCommit": "3e2ea41ef8fd40be19bedf24b652718c22cc7beb",
-        "correctionDispatchCheckpoint": "aa29e186692c122dba8a6414296cfe5ffa7b2cfb"
+        "correctionDispatchCheckpoint": "db3317674c592bc49761b0d653153d8bb5bc72e6"
       },
       "reviewHistory": [
         {
