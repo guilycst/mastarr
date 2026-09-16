@@ -2526,7 +2526,8 @@
       "evidence": [
         "dispatched after D-03, X-01 and X-02 approvals; owns only internal/descriptors/ and its handoff.",
         "Capture exact original descriptor bytes only from a verified upstream export or configured mounted descriptor directory. Keep storage restricted and root-confined, persist digest/provenance/availability metadata, and keep raw bytes out of ordinary responses and logs.",
-        "Prove unavailable and malformed sources explicitly, make reviewed deletion separate and idempotent, and use synthetic fixtures only. No live descriptor, credential, tracker URL, private coordinate or runtime mount."
+        "Prove unavailable and malformed sources explicitly, make reviewed deletion separate and idempotent, and use synthetic fixtures only. No live descriptor, credential, tracker URL, private coordinate or runtime mount.",
+        "2e1169c3cf1a2763227ac28ac8e7d96a82fe047b product plus d07779afd4a9b052b8f91159debb0c7af6df3632 hardening implement verified bounded descriptor capture, root confinement, metadata/content separation, unavailable states and exact acknowledged deletion; caabffc946cedec237e89f688abfe7ab2d2c58da records the completed handoff and full guardrail checks."
       ],
       "review": null,
       "dispatch": {
@@ -2555,8 +2556,19 @@
         "reviewPath": "docs/execution/handoffs/X-08-review-round1.md",
         "handoffPath": "docs/execution/handoffs/X-08.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "implementation"
-      }
+        "status": "review_pending",
+        "implementationCommit": "2e1169c3cf1a2763227ac28ac8e7d96a82fe047b",
+        "productCommits": [
+          "2e1169c3cf1a2763227ac28ac8e7d96a82fe047b",
+          "d07779afd4a9b052b8f91159debb0c7af6df3632"
+        ],
+        "handoffCommit": "caabffc946cedec237e89f688abfe7ab2d2c58da",
+        "reviewSourceCommit": "d07779afd4a9b052b8f91159debb0c7af6df3632",
+        "correctionStatus": null
+      },
+      "implementationCommit": "d07779afd4a9b052b8f91159debb0c7af6df3632",
+      "handoffCommit": "caabffc946cedec237e89f688abfe7ab2d2c58da",
+      "reviewSourceCommit": "d07779afd4a9b052b8f91159debb0c7af6df3632"
     },
     "X-09": {
       "status": "done",
@@ -4865,7 +4877,7 @@
       ]
     }
   },
-  "nextAction": "X-08 retained descriptor service is dispatched from ddeab139e6ca2de6ef762c77c1855cd9b413702e to /root/x05_implementer. qBittorrent/NZBGet client and adapter lanes are complete; X-20 remains capability-blocked and G-01 remains open.",
+  "nextAction": "X-08 retained descriptor service is ready for independent review at d07779afd4a9b052b8f91159debb0c7af6df3632; handoff caabffc946cedec237e89f688abfe7ab2d2c58da. X-20 remains capability-blocked and G-01 remains open.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
