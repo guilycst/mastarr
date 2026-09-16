@@ -548,6 +548,167 @@ func TestDeleteUnavailableRetainsRecordAndAudit(t *testing.T) {
 	}
 }
 
+func TestDeleteCaptureAcrossServiceValuesUsesDurableDescriptorFence(t *testing.T) {
+	t.Run("delete intent fences capture", func(t *testing.T) {
+		fixture := newDescriptorFixture(t)
+		ctx := context.Background()
+		request := captureRequest(fixture, "intent-first")
+		record, err := fixture.service.RecordUnavailable(ctx, request, "nzbget.history", "not_exported")
+		if err != nil {
+			t.Fatal(err)
+		}
+		captureService, err := New(fixture.store.DB(), Options{
+			StorageRoot: fixture.root,
+			MountedRoot: fixture.mounted,
+			Clock:       fixture.service.clock,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		intentCommitted := make(chan struct{})
+		releaseDelete := make(chan struct{})
+		var releaseOnce sync.Once
+		release := func() { releaseOnce.Do(func() { close(releaseDelete) }) }
+		originalAfterIntent := afterDeleteIntent
+		afterDeleteIntent = func(id string) {
+			if id != record.ID {
+				t.Errorf("delete intent hook id = %q, want %q", id, record.ID)
+			}
+			close(intentCommitted)
+			<-releaseDelete
+		}
+		t.Cleanup(func() {
+			afterDeleteIntent = originalAfterIntent
+			release()
+		})
+
+		deleteResult := make(chan error, 1)
+		go func() {
+			_, deleteErr := fixture.service.Delete(ctx, DeleteRequest{DescriptorID: record.ID, IrreversibleAcknowledged: true})
+			deleteResult <- deleteErr
+		}()
+		select {
+		case <-intentCommitted:
+		case <-time.After(2 * time.Second):
+			t.Fatal("delete did not commit its durable intent")
+		}
+
+		captureResult := make(chan error, 1)
+		go func() {
+			_, captureErr := captureService.CaptureExport(ctx, request, syntheticExport([]byte("must not materialize")))
+			captureResult <- captureErr
+		}()
+		select {
+		case captureErr := <-captureResult:
+			if !errors.Is(captureErr, ErrDescriptorDeletePending) {
+				t.Fatalf("capture during pending delete error = %v, want pending", captureErr)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("capture did not observe the pending delete fence")
+		}
+		release()
+		if deleteErr := <-deleteResult; deleteErr != nil {
+			t.Fatalf("delete error = %v", deleteErr)
+		}
+
+		deleted, err := fixture.service.Get(ctx, record.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if deleted.Retention != RetentionDeleted || deleted.Available {
+			t.Fatalf("deleted record = %#v", deleted)
+		}
+		if _, err := os.Stat(filepath.Join(fixture.root, objectPath(record.ID))); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("capture created an orphaned object: stat error = %v", err)
+		}
+	})
+
+	t.Run("stale delete cannot terminalize capture", func(t *testing.T) {
+		fixture := newDescriptorFixture(t)
+		ctx := context.Background()
+		request := captureRequest(fixture, "capture-first")
+		record, err := fixture.service.RecordUnavailable(ctx, request, "nzbget.history", "not_exported")
+		if err != nil {
+			t.Fatal(err)
+		}
+		captureService, err := New(fixture.store.DB(), Options{
+			StorageRoot: fixture.root,
+			MountedRoot: fixture.mounted,
+			Clock:       fixture.service.clock,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		deleteRead := make(chan struct{})
+		releaseDelete := make(chan struct{})
+		var releaseOnce sync.Once
+		release := func() { releaseOnce.Do(func() { close(releaseDelete) }) }
+		originalBeforeIntent := beforeDeleteIntent
+		beforeDeleteIntent = func(id string) {
+			if id != record.ID {
+				t.Errorf("delete read hook id = %q, want %q", id, record.ID)
+			}
+			close(deleteRead)
+			<-releaseDelete
+		}
+		t.Cleanup(func() {
+			beforeDeleteIntent = originalBeforeIntent
+			release()
+		})
+
+		deleteResult := make(chan error, 1)
+		go func() {
+			_, deleteErr := fixture.service.Delete(ctx, DeleteRequest{DescriptorID: record.ID, IrreversibleAcknowledged: true})
+			deleteResult <- deleteErr
+		}()
+		select {
+		case <-deleteRead:
+		case <-time.After(2 * time.Second):
+			t.Fatal("delete did not reach its pre-intent boundary")
+		}
+
+		captured, err := captureService.CaptureExport(ctx, request, syntheticExport([]byte("capture wins")))
+		if err != nil {
+			t.Fatalf("capture before delete intent = %v", err)
+		}
+		if !captured.Available || captured.ID != record.ID {
+			t.Fatalf("capture record = %#v", captured)
+		}
+		release()
+		deleteErr := <-deleteResult
+		if !errors.Is(deleteErr, ErrDescriptorConflict) {
+			t.Fatalf("stale delete error = %v, want conflict", deleteErr)
+		}
+
+		kept, err := fixture.service.Get(ctx, record.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !kept.Available || kept.Retention != RetentionRetain || kept.Digest != captured.Digest {
+			t.Fatalf("captured record after stale delete = %#v", kept)
+		}
+		content, err := fixture.service.Content(ctx, record.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(content) != "capture wins" {
+			t.Fatalf("retained content = %q", content)
+		}
+		var terminalCount, pendingCount int
+		if err := fixture.store.DB().QueryRow(`SELECT count(*) FROM audit_events WHERE action = 'descriptor.delete' AND resource_id = ?`, record.ID).Scan(&terminalCount); err != nil {
+			t.Fatal(err)
+		}
+		if err := fixture.store.DB().QueryRow(`SELECT count(*) FROM audit_events WHERE action = ? AND resource_id = ? AND outcome = 'pending'`, deleteIntentAction, record.ID).Scan(&pendingCount); err != nil {
+			t.Fatal(err)
+		}
+		if terminalCount != 0 || pendingCount != 0 {
+			t.Fatalf("stale delete audit events = terminal %d pending %d, want both zero", terminalCount, pendingCount)
+		}
+	})
+}
+
 func TestConcurrentSameCaptureIsIdempotent(t *testing.T) {
 	fixture := newDescriptorFixture(t)
 	data := []byte("concurrent synthetic descriptor")

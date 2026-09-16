@@ -37,22 +37,23 @@ const (
 )
 
 var (
-	ErrInvalidConfig         = errors.New("descriptor service configuration is invalid")
-	ErrInvalidRequest        = errors.New("descriptor request is invalid")
-	ErrSourceUnverified      = errors.New("descriptor source is not verified")
-	ErrSourceUnavailable     = errors.New("descriptor source is unavailable")
-	ErrDescriptorNotFound    = errors.New("descriptor was not found")
-	ErrDescriptorConflict    = errors.New("descriptor capture conflicts with retained bytes")
-	ErrDescriptorDeleted     = errors.New("descriptor has been deleted")
-	ErrDescriptorUnavailable = errors.New("descriptor content is unavailable")
-	ErrDescriptorChanged     = errors.New("descriptor content changed")
-	ErrDescriptorTooLarge    = errors.New("descriptor exceeds configured size limit")
-	ErrPathEscape            = errors.New("descriptor path escapes configured root")
-	ErrSymlink               = errors.New("descriptor symlink is not allowed")
-	ErrSpecialFile           = errors.New("descriptor special file is not allowed")
-	ErrDeleteAcknowledgement = errors.New("descriptor deletion requires explicit acknowledgement")
-	ErrDeleteUncertain       = errors.New("descriptor deletion result is uncertain")
-	ErrStorage               = errors.New("descriptor metadata storage failed")
+	ErrInvalidConfig           = errors.New("descriptor service configuration is invalid")
+	ErrInvalidRequest          = errors.New("descriptor request is invalid")
+	ErrSourceUnverified        = errors.New("descriptor source is not verified")
+	ErrSourceUnavailable       = errors.New("descriptor source is unavailable")
+	ErrDescriptorNotFound      = errors.New("descriptor was not found")
+	ErrDescriptorConflict      = errors.New("descriptor capture conflicts with retained bytes")
+	ErrDescriptorDeleted       = errors.New("descriptor has been deleted")
+	ErrDescriptorUnavailable   = errors.New("descriptor content is unavailable")
+	ErrDescriptorChanged       = errors.New("descriptor content changed")
+	ErrDescriptorTooLarge      = errors.New("descriptor exceeds configured size limit")
+	ErrPathEscape              = errors.New("descriptor path escapes configured root")
+	ErrSymlink                 = errors.New("descriptor symlink is not allowed")
+	ErrSpecialFile             = errors.New("descriptor special file is not allowed")
+	ErrDeleteAcknowledgement   = errors.New("descriptor deletion requires explicit acknowledgement")
+	ErrDeleteUncertain         = errors.New("descriptor deletion result is uncertain")
+	ErrDescriptorDeletePending = errors.New("descriptor deletion is pending")
+	ErrStorage                 = errors.New("descriptor metadata storage failed")
 )
 
 // Retention describes the lifecycle of retained bytes. A deleted record stays
@@ -277,7 +278,7 @@ func (service *Service) RecordUnavailable(ctx context.Context, request CaptureRe
 	if err := validateToken(reason, maxReasonBytes); err != nil {
 		return Record{}, fmt.Errorf("%w: unavailable reason", ErrInvalidRequest)
 	}
-	unlock := service.lockFor(request.DownloadID + "\x00" + request.DescriptorType)
+	unlock := service.lockFor(descriptorLockKey(request.DownloadID, request.DescriptorType))
 	defer unlock()
 	existing, found, err := service.findByKey(ctx, request)
 	if err != nil {
@@ -290,6 +291,11 @@ func (service *Service) RecordUnavailable(ctx context.Context, request CaptureRe
 		}
 		if record.DeletedAt != nil {
 			return record, ErrDescriptorDeleted
+		}
+		if _, pending, err := service.pendingDeleteIntent(ctx, existing); err != nil {
+			return Record{}, err
+		} else if pending {
+			return Record{}, ErrDescriptorDeletePending
 		}
 		if record.Available {
 			return record, nil
@@ -395,9 +401,16 @@ func (service *Service) Delete(ctx context.Context, request DeleteRequest) (Reco
 	if err := validateID(request.DescriptorID); err != nil {
 		return Record{}, err
 	}
-	unlock := service.lockFor(request.DescriptorID)
-	defer unlock()
 	row, err := service.getStored(ctx, request.DescriptorID)
+	if err != nil {
+		return Record{}, err
+	}
+	unlock := service.lockFor(descriptorLockKey(row.DownloadID.String, row.DescriptorType))
+	defer unlock()
+	// Reload after acquiring the shared descriptor identity lock. The durable
+	// CAS below remains authoritative for separate Service values, but this
+	// keeps ordinary same-process capture/delete calls ordered as well.
+	row, err = service.getStored(ctx, request.DescriptorID)
 	if err != nil {
 		return Record{}, err
 	}
@@ -408,6 +421,7 @@ func (service *Service) Delete(ctx context.Context, request DeleteRequest) (Reco
 	if err != nil {
 		return Record{}, err
 	}
+	beforeDeleteIntent(request.DescriptorID)
 	if row.OriginalDigest.Valid {
 		if err := validateStoragePath(row.StoragePath, row.ID); err != nil {
 			return Record{}, err
@@ -445,6 +459,7 @@ func (service *Service) Delete(ctx context.Context, request DeleteRequest) (Reco
 				_ = file.Close()
 				return Record{}, err
 			}
+			afterDeleteIntent(request.DescriptorID)
 			beforeDeleteDescriptor(request.DescriptorID)
 			// Re-read after the review seam and immediately before unlink. This
 			// catches an in-place rewrite that preserves the selected inode; the
@@ -476,10 +491,12 @@ func (service *Service) Delete(ctx context.Context, request DeleteRequest) (Reco
 		// receive the same durable intent/terminal audit sequence so a retry
 		// cannot lose the exact reviewed deletion scope.
 		return Record{}, err
+	} else {
+		afterDeleteIntent(request.DescriptorID)
 	}
 	deletedAt := service.now()
-	if err := service.markDeleted(ctx, row.ID, deletedAt, row.DescriptorType, row.OriginalDigest); err != nil {
-		return Record{}, fmt.Errorf("%w: journal deleted descriptor", ErrDeleteUncertain)
+	if err := service.markDeleted(ctx, row, deletedAt); err != nil {
+		return Record{}, fmt.Errorf("%w: journal deleted descriptor: %w", ErrDeleteUncertain, err)
 	}
 	return service.get(ctx, row.ID)
 }
@@ -500,7 +517,7 @@ func (service *Service) capture(ctx context.Context, request CaptureRequest, dat
 		return Record{}, ErrDescriptorTooLarge
 	}
 	digest := digestBytes(data)
-	unlock := service.lockFor(request.DownloadID + "\x00" + request.DescriptorType)
+	unlock := service.lockFor(descriptorLockKey(request.DownloadID, request.DescriptorType))
 	defer unlock()
 	existing, found, err := service.findByKey(ctx, request)
 	if err != nil {
@@ -514,13 +531,29 @@ func (service *Service) capture(ctx context.Context, request CaptureRequest, dat
 		if existingRecord.DeletedAt != nil {
 			return existingRecord, ErrDescriptorDeleted
 		}
+		if _, pending, err := service.pendingDeleteIntent(ctx, existing); err != nil {
+			return Record{}, err
+		} else if pending {
+			return Record{}, ErrDescriptorDeletePending
+		}
 		if existing.OriginalDigest.Valid && existing.OriginalDigest.String != digest {
 			return Record{}, ErrDescriptorConflict
 		}
 		if existing.OriginalDigest.Valid {
 			if _, contentErr := service.contentForRow(ctx, existing); contentErr == nil {
+				if _, pending, err := service.pendingDeleteIntent(ctx, existing); err != nil {
+					return Record{}, err
+				} else if pending {
+					return Record{}, ErrDescriptorDeletePending
+				}
 				return service.recordForRow(ctx, existing)
 			}
+		}
+		beforeCaptureMaterialize(existing.ID)
+		if _, pending, err := service.pendingDeleteIntent(ctx, existing); err != nil {
+			return Record{}, err
+		} else if pending {
+			return Record{}, ErrDescriptorDeletePending
 		}
 		object, err := service.writeObject(ctx, existing.ID, data)
 		if err != nil {
@@ -710,6 +743,13 @@ type deleteIntentMetadata struct {
 	FileIdentity   string `json:"file_identity,omitempty"`
 }
 
+func nullableString(value sql.NullString) any {
+	if value.Valid {
+		return value.String
+	}
+	return nil
+}
+
 // pendingDeleteIntent returns whether an append-only, redacted deletion
 // intent exists for the exact descriptor identity. Audit rows cannot be
 // updated by design, so the later descriptor.delete event is the terminal
@@ -773,11 +813,57 @@ func (service *Service) ensureDeleteIntent(ctx context.Context, row storedRecord
 		if idErr != nil {
 			return idErr
 		}
-		if _, insertErr := tx.ExecContext(ctx, `INSERT INTO audit_events (event_id, occurred_at, actor, action, resource_kind, resource_id, outcome, metadata_json, redacted) VALUES (?, ?, 'unauthenticated', ?, 'descriptor', ?, 'pending', ?, 1)`, eventID, service.now().Format(time.RFC3339Nano), deleteIntentAction, row.ID, string(metadata)); insertErr != nil {
+		result, insertErr := tx.ExecContext(ctx, `
+			INSERT INTO audit_events (event_id, occurred_at, actor, action, resource_kind, resource_id, outcome, metadata_json, redacted)
+			SELECT ?, ?, 'unauthenticated', ?, 'descriptor', ?, 'pending', ?, 1
+			FROM descriptors
+			WHERE id = ?
+			  AND download_id = ?
+			  AND descriptor_type = ?
+			  AND storage_path = ?
+			  AND original_digest IS ?
+			  AND capture_source = ?
+			  AND captured_at = ?
+			  AND retention = ?
+			  AND unavailable_reason IS ?
+			  AND deleted_at IS NULL
+			  AND NOT EXISTS (
+				  SELECT 1
+				  FROM audit_events
+				  WHERE action = ?
+				    AND resource_kind = 'descriptor'
+				    AND resource_id = ?
+				    AND outcome = 'pending'
+			  )`,
+			eventID,
+			service.now().Format(time.RFC3339Nano),
+			deleteIntentAction,
+			row.ID,
+			string(metadata),
+			row.ID,
+			row.DownloadID.String,
+			row.DescriptorType,
+			row.StoragePath,
+			nullableString(row.OriginalDigest),
+			row.CaptureSource,
+			row.CapturedAt,
+			row.Retention,
+			nullableString(row.UnavailableReason),
+			deleteIntentAction,
+			row.ID,
+		)
+		if insertErr != nil {
 			if contextErr := contextCheckpoint(ctx); contextErr != nil {
 				return contextErr
 			}
 			return fmt.Errorf("%w: persist deletion intent", ErrStorage)
+		}
+		count, rowsErr := result.RowsAffected()
+		if rowsErr != nil {
+			return fmt.Errorf("%w: inspect deletion intent transition", ErrStorage)
+		}
+		if count != 1 {
+			return fmt.Errorf("%w: descriptor changed before deletion intent", ErrDescriptorConflict)
 		}
 	default:
 		if contextErr := contextCheckpoint(ctx); contextErr != nil {
@@ -835,12 +921,12 @@ func ensureJSONEOF(decoder *json.Decoder) error {
 	return nil
 }
 
-func (service *Service) markDeleted(ctx context.Context, id string, deletedAt time.Time, descriptorType string, digest sql.NullString) error {
+func (service *Service) markDeleted(ctx context.Context, row storedRecord, deletedAt time.Time) error {
 	eventID, err := newID()
 	if err != nil {
 		return err
 	}
-	metadata, err := json.Marshal(map[string]string{"scope": "descriptor", "descriptor_type": descriptorType, "digest": digest.String})
+	metadata, err := json.Marshal(map[string]string{"scope": "descriptor", "descriptor_type": row.DescriptorType, "digest": row.OriginalDigest.String})
 	if err != nil {
 		return err
 	}
@@ -849,15 +935,48 @@ func (service *Service) markDeleted(ctx context.Context, id string, deletedAt ti
 		return fmt.Errorf("%w: begin deletion", ErrStorage)
 	}
 	defer func() { _ = tx.Rollback() }()
-	result, err := tx.ExecContext(ctx, `UPDATE descriptors SET retention = 'deleted', deleted_at = ? WHERE id = ? AND deleted_at IS NULL`, deletedAt.UTC().Format(time.RFC3339Nano), id)
+	result, err := tx.ExecContext(ctx, `
+		UPDATE descriptors
+		SET retention = 'deleted', deleted_at = ?
+		WHERE id = ?
+		  AND download_id = ?
+		  AND descriptor_type = ?
+		  AND storage_path = ?
+		  AND original_digest IS ?
+		  AND capture_source = ?
+		  AND captured_at = ?
+		  AND retention = ?
+		  AND unavailable_reason IS ?
+		  AND deleted_at IS NULL
+		  AND EXISTS (
+			  SELECT 1
+			  FROM audit_events
+			  WHERE action = ?
+			    AND resource_kind = 'descriptor'
+			    AND resource_id = ?
+			    AND outcome = 'pending'
+		  )`,
+		deletedAt.UTC().Format(time.RFC3339Nano),
+		row.ID,
+		row.DownloadID.String,
+		row.DescriptorType,
+		row.StoragePath,
+		nullableString(row.OriginalDigest),
+		row.CaptureSource,
+		row.CapturedAt,
+		row.Retention,
+		nullableString(row.UnavailableReason),
+		deleteIntentAction,
+		row.ID,
+	)
 	if err != nil {
 		return fmt.Errorf("%w: mark deletion", ErrStorage)
 	}
 	count, err := result.RowsAffected()
 	if err != nil || count == 0 {
-		return fmt.Errorf("%w: descriptor deletion lost race", ErrStorage)
+		return fmt.Errorf("%w: descriptor deletion lost race", ErrDescriptorConflict)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events (event_id, occurred_at, actor, action, resource_kind, resource_id, outcome, metadata_json, redacted) VALUES (?, ?, 'unauthenticated', 'descriptor.delete', 'descriptor', ?, 'deleted', ?, 1)`, eventID, deletedAt.UTC().Format(time.RFC3339Nano), id, string(metadata)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events (event_id, occurred_at, actor, action, resource_kind, resource_id, outcome, metadata_json, redacted) VALUES (?, ?, 'unauthenticated', 'descriptor.delete', 'descriptor', ?, 'deleted', ?, 1)`, eventID, deletedAt.UTC().Format(time.RFC3339Nano), row.ID, string(metadata)); err != nil {
 		return fmt.Errorf("%w: record deletion audit", ErrStorage)
 	}
 	if err := tx.Commit(); err != nil {
@@ -878,7 +997,19 @@ func (service *Service) insert(ctx context.Context, row storedRecord) error {
 }
 
 func (service *Service) updateCaptured(ctx context.Context, id, storagePath, digest, source string, capturedAt time.Time) error {
-	result, err := service.db.ExecContext(ctx, `UPDATE descriptors SET storage_path = ?, original_digest = ?, capture_source = ?, captured_at = ?, retention = 'retain', unavailable_reason = NULL, deleted_at = NULL WHERE id = ? AND deleted_at IS NULL`, storagePath, digest, source, capturedAt.UTC().Format(time.RFC3339Nano), id)
+	result, err := service.db.ExecContext(ctx, `
+		UPDATE descriptors
+		SET storage_path = ?, original_digest = ?, capture_source = ?, captured_at = ?, retention = 'retain', unavailable_reason = NULL, deleted_at = NULL
+		WHERE id = ?
+		  AND deleted_at IS NULL
+		  AND NOT EXISTS (
+			  SELECT 1
+			  FROM audit_events
+			  WHERE action = ?
+			    AND resource_kind = 'descriptor'
+			    AND resource_id = descriptors.id
+			    AND outcome = 'pending'
+		  )`, storagePath, digest, source, capturedAt.UTC().Format(time.RFC3339Nano), id, deleteIntentAction)
 	if err != nil {
 		if contextErr := contextCheckpoint(ctx); contextErr != nil {
 			return contextErr
@@ -893,7 +1024,20 @@ func (service *Service) updateCaptured(ctx context.Context, id, storagePath, dig
 }
 
 func (service *Service) updateUnavailable(ctx context.Context, id, storagePath, source, reason string) error {
-	result, err := service.db.ExecContext(ctx, `UPDATE descriptors SET storage_path = ?, original_digest = NULL, capture_source = ?, unavailable_reason = ?, retention = 'retain', deleted_at = NULL WHERE id = ? AND deleted_at IS NULL AND original_digest IS NULL`, storagePath, source, reason, id)
+	result, err := service.db.ExecContext(ctx, `
+		UPDATE descriptors
+		SET storage_path = ?, original_digest = NULL, capture_source = ?, unavailable_reason = ?, retention = 'retain', deleted_at = NULL
+		WHERE id = ?
+		  AND deleted_at IS NULL
+		  AND original_digest IS NULL
+		  AND NOT EXISTS (
+			  SELECT 1
+			  FROM audit_events
+			  WHERE action = ?
+			    AND resource_kind = 'descriptor'
+			    AND resource_id = descriptors.id
+			    AND outcome = 'pending'
+		  )`, storagePath, source, reason, id, deleteIntentAction)
 	if err != nil {
 		if contextErr := contextCheckpoint(ctx); contextErr != nil {
 			return contextErr
@@ -981,6 +1125,16 @@ func (service *Service) lockFor(key string) func() {
 	mutex := value.(*sync.Mutex)
 	mutex.Lock()
 	return mutex.Unlock
+}
+
+// descriptorLockKey is shared by every local transition for one durable
+// descriptor identity. A descriptor ID alone is insufficient for capture
+// because capture initially addresses the download/type pair; using the
+// same composite key keeps those transitions ordered when they share a
+// Service. The SQL compare-and-swap guards remain authoritative across
+// separate Service values or processes.
+func descriptorLockKey(downloadID, descriptorType string) string {
+	return "descriptor\x00" + downloadID + "\x00" + descriptorType
 }
 
 func (service *Service) now() time.Time {
@@ -1397,5 +1551,8 @@ func removeFileIfSame(name string, expected fs.FileInfo) error {
 // These seams are package-local and therefore unavailable to production
 // callers. They let synthetic tests inject a mutation at each safety boundary.
 var afterSourceRead = func(*os.File) {}
+var beforeCaptureMaterialize = func(string) {}
+var beforeDeleteIntent = func(string) {}
+var afterDeleteIntent = func(string) {}
 var beforeDeleteDescriptor = func(string) {}
 var afterDeleteUnlink = func(string) {}
