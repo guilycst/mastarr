@@ -3346,7 +3346,7 @@
       "implementationCommit": "a4ad5a0fcfee724491513224f6b082a25be82e0a"
     },
     "W-04": {
-      "status": "in_review",
+      "status": "changes_requested",
       "owner": "/root",
       "baseSha": "4e5c46d503949a493067ae57d3395545a36021f8",
       "integratedSha": null,
@@ -3361,16 +3361,21 @@
         "Workflow-composition retry was interrupted after a bounded window with no files; coordinator takeover starts from 3579ced and owns only internal/workflows/ plus its handoff.",
         "Workflow-composition product 2821b5bf8926849423c93fa7e862fd38b83035bc and slice handoff a435e9cc7f1559cf88ad2d88a027955d1fb5af38 are complete after coordinator takeover; ordered recipe creation, step approval/sync/cancel/deadline, recipe append idempotency and synthetic A-12/A-32/A-35/A-37 regressions pass.",
         "Final W-04 handoff 704ec47524cef4108a3e947c0c0166f6894ed610 records review-decision and workflow slices, A-12/A-15/A-32/A-35/A-37/A-56 evidence, full offline guardrails and remaining F-05/G-01 gates.",
-        "W-04 is in independent review from state checkpoint 704ec47524cef4108a3e947c0c0166f6894ed610; no integration decision is recorded until the reviewer clears both product paths."
+        "W-04 is in independent review from state checkpoint 704ec47524cef4108a3e947c0c0166f6894ed610; no integration decision is recorded until the reviewer clears both product paths.",
+        "Independent W-04 round-one receipt 1b22197ff8fa81ec4d836c6ad113315ffabf4c9d integrated as a1f542a: R1 workflow deadline not bound to action_runs deadline_at, R2 rejection projection split across transactions, R3 AddStep trusts caller At; focused/race/vet and full offline guardrails pass, independent probes reproduce all three."
       ],
       "review": {
-        "status": "pending",
-        "decision": "pending",
+        "status": "changes_requested",
+        "decision": "changes_requested",
         "reviewer": "/root/x05_reviewer",
-        "commit": null,
-        "findings": [],
+        "commit": "1b22197ff8fa81ec4d836c6ad113315ffabf4c9d",
+        "findings": [
+          "R1 P1: linked workflow action_run has NULL deadline_at and remains due after workflow deadline without Sync.",
+          "R2 P1: rejection decision and blocked-step projection commit separately, leaving a crash window with workflow running and step queued.",
+          "R3 P2: AddStep trusts caller-supplied At and permits backdated append after actual deadline."
+        ],
         "round": 1,
-        "integratedCommit": null
+        "integratedCommit": "a1f542a"
       },
       "dispatch": {
         "assignedAt": "2026-09-16",
@@ -3402,7 +3407,7 @@
         "reviewPath": "docs/execution/handoffs/W-04-review-round1.md",
         "handoffPath": "docs/execution/handoffs/W-04.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "review_pending",
+        "status": "changes_requested",
         "dependencyCommits": {
           "W-03-approved": "a4ad5a0fcfee724491513224f6b082a25be82e0a",
           "W-03-state-closure": "4e5c46d503949a493067ae57d3395545a36021f8"
@@ -3414,8 +3419,8 @@
         "implementationCommit": "2821b5bf8926849423c93fa7e862fd38b83035bc",
         "handoffCommit": "704ec47524cef4108a3e947c0c0166f6894ed610",
         "reviewSourceCommit": "2821b5bf8926849423c93fa7e862fd38b83035bc",
-        "reviewCommit": null,
-        "reviewIntegrationCommit": null,
+        "reviewCommit": "1b22197ff8fa81ec4d836c6ad113315ffabf4c9d",
+        "reviewIntegrationCommit": "a1f542a",
         "previousAttempt": {
           "owner": "/root/x05_implementer",
           "status": "interrupted",
@@ -3488,10 +3493,11 @@
         {
           "round": 1,
           "reviewer": "/root/x05_reviewer",
-          "commit": null,
-          "status": "review_pending",
+          "commit": "1b22197ff8fa81ec4d836c6ad113315ffabf4c9d",
+          "status": "changes_requested",
           "sourceCommit": "2821b5bf8926849423c93fa7e862fd38b83035bc",
-          "receipt": "docs/execution/handoffs/W-04-review-round1.md"
+          "receipt": "docs/execution/handoffs/W-04-review-round1.md",
+          "integratedCommit": "a1f542a"
         }
       ]
     },
@@ -5438,7 +5444,7 @@
       ]
     }
   },
-  "nextAction": "W-04 product is ready for independent review. Review internal/reviews and internal/workflows against docs/execution/handoffs/W-04.md from source 2821b5bf8926849423c93fa7e862fd38b83035bc; then integrate an approval receipt or record exact corrections. Keep F-05 capability-blocked and G-01 Arr native writes blocked.",
+  "nextAction": "W-04 round-one review is changes_requested. Correct R1 action deadline fencing, R2 atomic rejection projection, and R3 trusted AddStep lifecycle time from product 2821b5bf8926849423c93fa7e862fd38b83035bc; then rerun independent review. Keep F-05 capability-blocked and G-01 Arr native writes blocked.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
