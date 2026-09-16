@@ -15,9 +15,7 @@
   "resumeDocument": "docs/execution/RESUME.md",
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
-  "activeImplementationTasks": [
-    "X-21"
-  ],
+  "activeImplementationTasks": [],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
   "guardrailBaseline": {
@@ -4738,23 +4736,24 @@
       ]
     },
     "X-21": {
-      "status": "in_review",
+      "status": "done",
       "owner": "/root/x05_implementer",
       "baseSha": "85913e078e4e69839efa750601b581333b4a998b",
-      "integratedSha": null,
+      "integratedSha": "d54f9b5937f5dc42829b3f56ee1e392a61bccf8a",
       "evidence": [
         "dispatched from 85913e078e4e69839efa750601b581333b4a998b after X-09 (ff3d7d55490435c9b99d38ad97edd3b2f27f9df5), X-17 (4eee8e84eff5a81b24c128444fa6531fec83f5ec) and X-04 (b5594b668185245304f70a0f46c1f77ae7b76d7b) approvals.",
         "Own only internal/adapters/jellyfin/read/, internal/adapters/jellyfin/write/ and tests/fixtures/jellyfin/. Translate standalone Jellyfin DTOs and typed errors into Mastarr ports without leaking generated types or making direct upstream calls outside the adapter boundary.",
         "Preserve provider IDs, provider relationships, mapped playable-media evidence, accepted refresh responses, separate eventual availability, compatibility gates and read-only discovery. Synthetic fixtures only; no credentials, private coordinates or live media data.",
         "d54f9b5937f5dc42829b3f56ee1e392a61bccf8a X-21 Jellyfin adapter product migrated read translation to clients/jellyfin and added synthetic fixture tests; c418d57db3ae0ca04e3f96e8d0228909db10402a records the handoff and full checks.",
-        "Root adapter owns Mastarr translation, cursors, coverage, mapping and port behavior; generated Jellyfin DTOs do not leak. Existing standalone refresh adapter was revalidated. Root/client tests, race, vet, module verification, generation, API/Vacuum, lint, architecture, planning, full offline CI and Linux amd64/arm64 CGO-free builds passed."
+        "Root adapter owns Mastarr translation, cursors, coverage, mapping and port behavior; generated Jellyfin DTOs do not leak. Existing standalone refresh adapter was revalidated. Root/client tests, race, vet, module verification, generation, API/Vacuum, lint, architecture, planning, full offline CI and Linux amd64/arm64 CGO-free builds passed.",
+        "323449d70d5b4b815d82eff688e335f08144c015 independent review approves d54f9b5937f5dc42829b3f56ee1e392a61bccf8a; 7d7597bdb6bf017ee1db7a73671bcd3120b37d9a integrates the receipt. Ten deterministic probes and focused/root/client race suites passed for instance scoping, provider relationships, mapping, path-only unavailability and zero-dispatch refresh. Boundary inspection, vet, module verification, generation, API/Vacuum, lint, architecture, planning, full offline CI and Linux amd64/arm64 builds passed."
       ],
       "review": {
-        "status": "pending",
-        "decision": "pending",
+        "status": "approved",
+        "decision": "approved",
         "reviewer": "/root/x05_reviewer",
-        "commit": null,
-        "integratedCommit": null,
+        "commit": "323449d70d5b4b815d82eff688e335f08144c015",
+        "integratedCommit": "7d7597bdb6bf017ee1db7a73671bcd3120b37d9a",
         "findings": [],
         "round": 1
       },
@@ -4786,8 +4785,8 @@
         ],
         "reviewPath": "docs/execution/handoffs/X-21-review-round1.md",
         "handoffPath": "docs/execution/handoffs/X-21.md",
-        "nextReviewer": "/root/x05_reviewer",
-        "status": "review_pending",
+        "nextReviewer": null,
+        "status": "done",
         "dependencyCommits": {
           "X-04": "b5594b668185245304f70a0f46c1f77ae7b76d7b",
           "X-09": "ff3d7d55490435c9b99d38ad97edd3b2f27f9df5",
@@ -4797,9 +4796,23 @@
         "handoffCommit": "c418d57db3ae0ca04e3f96e8d0228909db10402a",
         "reviewSourceCommit": "d54f9b5937f5dc42829b3f56ee1e392a61bccf8a",
         "correctionStatus": null,
-        "reviewCommit": null,
-        "reviewIntegrationCommit": null
-      }
+        "reviewCommit": "323449d70d5b4b815d82eff688e335f08144c015",
+        "reviewIntegrationCommit": "7d7597bdb6bf017ee1db7a73671bcd3120b37d9a"
+      },
+      "implementationCommit": "d54f9b5937f5dc42829b3f56ee1e392a61bccf8a",
+      "handoffCommit": "c418d57db3ae0ca04e3f96e8d0228909db10402a",
+      "reviewSourceCommit": "d54f9b5937f5dc42829b3f56ee1e392a61bccf8a",
+      "reviewHistory": [
+        {
+          "round": 1,
+          "reviewer": "/root/x05_reviewer",
+          "commit": "323449d70d5b4b815d82eff688e335f08144c015",
+          "status": "approved",
+          "sourceCommit": "d54f9b5937f5dc42829b3f56ee1e392a61bccf8a",
+          "receipt": "docs/execution/handoffs/X-21-review-round1.md",
+          "integratedCommit": "7d7597bdb6bf017ee1db7a73671bcd3120b37d9a"
+        }
+      ]
     },
     "X-22": {
       "status": "done",
@@ -5041,7 +5054,7 @@
       ]
     }
   },
-  "nextAction": "X-21 is ready for independent review at d54f9b5937f5dc42829b3f56ee1e392a61bccf8a; handoff c418d57db3ae0ca04e3f96e8d0228909db10402a. F-05 remains capability-blocked, X-20 remains blocked by G-01, and X-22 is next after X-21 review.",
+  "nextAction": "X-21 Jellyfin adapter migration is approved and complete at d54f9b5937f5dc42829b3f56ee1e392a61bccf8a; X-22 Seerr adapter migration is next eligible. F-05 remains capability-blocked, X-20 remains blocked by G-01, and W-03 waits on F-05.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
