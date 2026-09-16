@@ -2180,9 +2180,22 @@
         "dispatched after X-05 approval; owns the Arr registration and manual-import adapter plus synthetic fixtures and handoff.",
         "Keep root validation, explicit command/read-back evidence and capability gates intact. G-01 remains unresolved, so no live upstream writes are permitted and any unsupported capability must remain blocked rather than silently enabled.",
         "This lane is the legacy/root write capability slice. Standalone Sonarr/Radarr transport migration remains X-20 and must not be pulled into this change.",
-        "d131422a7319be22ccc6fba17a54a047c89e25d8 product and e7047e143fae06d2871afc56337709fca339a311 handoff add guarded registration/manual-import commands, read-before-write idempotency, exact read-back and synthetic lost-response coverage; G-01 keeps public native writes fail-closed."
+        "d131422a7319be22ccc6fba17a54a047c89e25d8 product and e7047e143fae06d2871afc56337709fca339a311 handoff add guarded registration/manual-import commands, read-before-write idempotency, exact read-back and synthetic lost-response coverage; G-01 keeps public native writes fail-closed.",
+        "fbf2ecd106e50d89bf20c93cd926a52cd8e86f42 independent review round one requests two P1 and two P2 corrections: exact preview binding, contradictory file identity rejection, sanitized context errors and explicit monitoring opt-in preservation."
       ],
-      "review": null,
+      "review": {
+        "status": "changes_requested",
+        "decision": "changes_requested",
+        "reviewer": "/root/x05_reviewer",
+        "commit": "fbf2ecd106e50d89bf20c93cd926a52cd8e86f42",
+        "findings": [
+          "P1: arbitrary non-empty PreviewRevision can reach a manual-import command under the synthetic gate without exact preview binding or native rejection validation.",
+          "P1: contradictory Sonarr same-file identity and foreign Radarr file identity can produce false AlreadySatisfied results.",
+          "P2: wrapped context errors expose URL/transport detail instead of a sanitized Arr error.",
+          "P2: new registration overwrites an explicit Monitored=true opt-in with false."
+        ],
+        "round": 1
+      },
       "dispatch": {
         "assignedAt": "2026-09-15",
         "model": "gpt-5.6-luna",
@@ -2213,12 +2226,34 @@
         "implementationCommit": "d131422a7319be22ccc6fba17a54a047c89e25d8",
         "handoffCommit": "e7047e143fae06d2871afc56337709fca339a311",
         "reviewSourceCommit": "d131422a7319be22ccc6fba17a54a047c89e25d8",
-        "status": "review_pending",
+        "status": "in_progress",
+        "reviewCommit": "fbf2ecd106e50d89bf20c93cd926a52cd8e86f42",
+        "reviewIntegrationCommit": "609a781a3b60859533e4918535edae82e7e2fcb8",
+        "reviewRound": 1,
+        "correctionRound": 1,
+        "correctionOwner": "/root/x05_implementer",
+        "correctionBaseSha": "d131422a7319be22ccc6fba17a54a047c89e25d8",
+        "correctionCheckout": "shared main",
+        "correctionReviewPath": "docs/execution/handoffs/X-06-review-round2.md",
+        "correctionHandoffPath": "docs/execution/handoffs/X-06-correction-round1.md",
+        "correctionReviewer": "/root/x05_reviewer",
+        "correctionStatus": "dispatched",
         "dependencyCommits": {
           "X-05": "165f22c2d81c4123d2ab31cf00d7613cdba87054",
           "X-22": "ea41f1f49569a079696f091a6113ee4d97641df4"
         }
-      }
+      },
+      "reviewHistory": [
+        {
+          "round": 1,
+          "reviewer": "/root/x05_reviewer",
+          "commit": "fbf2ecd106e50d89bf20c93cd926a52cd8e86f42",
+          "status": "changes_requested",
+          "sourceCommit": "d131422a7319be22ccc6fba17a54a047c89e25d8",
+          "receipt": "docs/execution/handoffs/X-06-review-round1.md",
+          "integratedCommit": "609a781a3b60859533e4918535edae82e7e2fcb8"
+        }
+      ]
     },
     "X-07": {
       "status": "done",
