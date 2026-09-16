@@ -242,15 +242,27 @@ func (handler *FilesystemHandler) Dispatch(ctx context.Context, action execution
 		// files were published). Preserve that subset as per-target evidence and
 		// classify the failure as dispatched/uncertain whenever the returned
 		// effect or error leaves any possibility of a mutation.
-		partial := filesystemDispatchResult(observation, intent, effect, handler.now(), false)
+		partial := filesystemDispatchResult(handler.kind, observation, intent, effect, handler.now(), false)
+		if len(effect.Affected) > 0 && len(partial.Effects) == 0 {
+			return partial, handler.failure(fmt.Errorf("%w: filesystem action returned unapproved affected entries", ErrStateUnknown), true)
+		}
 		return partial, handler.failure(err, filesystemEffectMayHaveDispatched(effect, err))
 	}
 	outcome := effect.Outcome
 	if !outcome.Valid() {
-		partial := filesystemDispatchResult(observation, intent, effect, handler.now(), false)
+		partial := filesystemDispatchResult(handler.kind, observation, intent, effect, handler.now(), false)
+		if len(effect.Affected) > 0 && len(partial.Effects) == 0 {
+			return partial, handler.failure(fmt.Errorf("%w: filesystem action returned unapproved affected entries", ErrStateUnknown), true)
+		}
 		return partial, handler.failure(fmt.Errorf("%w: filesystem action returned an invalid effect outcome", ErrStateUnknown), true)
 	}
-	return filesystemDispatchResult(observation, intent, effect, handler.now(), true), nil
+	result := filesystemDispatchResult(handler.kind, observation, intent, effect, handler.now(), true)
+	if len(effect.Affected) > 0 && len(result.Effects) == 0 {
+		result.Accepted = false
+		result.Outcome = ""
+		return result, handler.failure(fmt.Errorf("%w: filesystem action returned unapproved affected entries", ErrStateUnknown), true)
+	}
+	return result, nil
 }
 
 // Reconcile reads the exact target set. A retry is permitted only when the
@@ -569,53 +581,142 @@ func (handler *FilesystemHandler) callAction(ctx context.Context, operationID st
 // filesystemDispatchResult translates the action port's aggregate effect into
 // the exact approved target set. A port can finish some files before returning
 // an error; the affected entries are therefore marked individually while
-// untouched targets retain their pending observation state. On an error the
-// result is evidence accompanying the returned failure and is deliberately not
-// presented as an accepted aggregate outcome.
-func filesystemDispatchResult(observation execution.Observation, intent FileIntent, effect ports.FilesystemEffect, observedAt time.Time, accepted bool) execution.DispatchResult {
+// On an errored dispatch, only the exact affected subset is returned so the
+// durable executor can preserve those per-target states and mark omitted
+// targets unknown. Manifest actions map directory children back to their
+// top-level effect; mapping actions use the expanded file list. Any affected
+// entry outside that approved identity set is rejected by the caller before a
+// result can be accepted.
+func filesystemDispatchResult(kind domain.ActionKind, observation execution.Observation, intent FileIntent, effect ports.FilesystemEffect, observedAt time.Time, accepted bool) execution.DispatchResult {
 	result := execution.DispatchResult{
 		Accepted: accepted,
 		Outcome:  effect.Outcome,
 		Evidence: append([]string{"filesystem_effect_returned"}, effect.Evidence...),
-		Effects:  cloneEffects(observation.Effects),
 	}
 	if !effect.Outcome.Valid() {
 		result.Outcome = ""
 	}
 	if accepted {
+		if len(effect.Affected) > 0 {
+			if _, ok := mapFilesystemAffected(kind, observation, intent, effect, observedAt); !ok {
+				return result
+			}
+		}
 		result.Effects = terminalEffects(observation.Effects, effect.Outcome, observedAt, "filesystem_read_back")
+		return result
+	}
+	if len(effect.Affected) == 0 {
 		return result
 	}
 	if effect.ObservedAt.IsZero() {
 		effect.ObservedAt = observedAt
 	}
+	result.Effects, _ = mapFilesystemAffected(kind, observation, intent, effect, observedAt)
+	return result
+}
+
+type approvedFilesystemSource struct {
+	entry       domain.FileManifestEntry
+	effectIndex int
+}
+
+func approvedFilesystemSources(kind domain.ActionKind, intent FileIntent) ([]approvedFilesystemSource, error) {
+	if kind == domain.ActionFSTrash || kind == domain.ActionFSDelete {
+		result := make([]approvedFilesystemSource, 0, len(intent.Manifest))
+		for index, entry := range intent.Manifest {
+			result = appendManifestSources(result, entry, index)
+		}
+		if len(result) == 0 {
+			return nil, fmt.Errorf("%w: filesystem manifest has no approved sources", ErrInvalidIntent)
+		}
+		return result, nil
+	}
 	mappings, err := expandedMappings(intent.Files)
 	if err != nil {
-		return result
+		return nil, err
 	}
-	for index := range result.Effects {
-		if result.Effects[index].Ordinal < 0 {
-			result.Effects[index].Ordinal = int64(index)
-		}
+	result := make([]approvedFilesystemSource, 0, len(mappings))
+	for index, mapping := range mappings {
+		result = append(result, approvedFilesystemSource{entry: mapping.Source, effectIndex: index})
 	}
-	for _, affected := range effect.Affected {
-		for index, mapping := range mappings {
-			if !sameFilesystemSource(affected, mapping.Source) || index >= len(result.Effects) {
-				continue
-			}
-			state := execution.EffectUnknown
-			switch effect.Outcome {
-			case domain.OutcomeApplied:
-				state = execution.EffectApplied
-			case domain.OutcomeAlreadySatisfied:
-				state = execution.EffectAlreadySatisfied
-			}
-			result.Effects[index].State = state
-			result.Effects[index].ObservedAt = effect.ObservedAt.UTC().Format(time.RFC3339Nano)
-			result.Effects[index].Evidence = appendEffectEvidence(result.Effects[index].Evidence, append([]string{"filesystem_affected"}, effect.Evidence...)...)
-		}
+	return result, nil
+}
+
+func appendManifestSources(result []approvedFilesystemSource, entry domain.FileManifestEntry, effectIndex int) []approvedFilesystemSource {
+	result = append(result, approvedFilesystemSource{entry: entry, effectIndex: effectIndex})
+	for _, child := range entry.Children {
+		result = appendManifestSources(result, child, effectIndex)
 	}
 	return result
+}
+
+func mapFilesystemAffected(kind domain.ActionKind, observation execution.Observation, intent FileIntent, effect ports.FilesystemEffect, observedAt time.Time) ([]execution.Effect, bool) {
+	approved, err := approvedFilesystemSources(kind, intent)
+	if err != nil {
+		return nil, false
+	}
+	expectedEffects := len(intent.Manifest)
+	if kind != domain.ActionFSTrash && kind != domain.ActionFSDelete {
+		expectedEffects = len(approved)
+	}
+	if len(observation.Effects) != expectedEffects {
+		return nil, false
+	}
+	if len(effect.Affected) == 0 {
+		return nil, true
+	}
+	matched := make(map[int]struct{}, len(effect.Affected))
+	result := make(map[int]execution.Effect, len(effect.Affected))
+	for _, affected := range effect.Affected {
+		match := -1
+		matchIndex := -1
+		for index, candidate := range approved {
+			if !sameFilesystemSource(affected, candidate.entry) {
+				continue
+			}
+			if matchIndex >= 0 {
+				return nil, false
+			}
+			match = candidate.effectIndex
+			matchIndex = index
+		}
+		if matchIndex < 0 {
+			return nil, false
+		}
+		if _, duplicate := matched[matchIndex]; duplicate {
+			return nil, false
+		}
+		matched[matchIndex] = struct{}{}
+		if _, alreadyMapped := result[match]; alreadyMapped {
+			continue
+		}
+		value := observation.Effects[match]
+		if value.Ordinal < 0 {
+			value.Ordinal = int64(match)
+		}
+		state := execution.EffectUnknown
+		switch effect.Outcome {
+		case domain.OutcomeApplied:
+			state = execution.EffectApplied
+		case domain.OutcomeAlreadySatisfied:
+			state = execution.EffectAlreadySatisfied
+		}
+		value.State = state
+		observed := effect.ObservedAt
+		if observed.IsZero() {
+			observed = observedAt
+		}
+		value.ObservedAt = observed.UTC().Format(time.RFC3339Nano)
+		value.Evidence = appendEffectEvidence(value.Evidence, append([]string{"filesystem_affected"}, effect.Evidence...)...)
+		result[match] = value
+	}
+	ordered := make([]execution.Effect, 0, len(result))
+	for index := range observation.Effects {
+		if value, ok := result[index]; ok {
+			ordered = append(ordered, value)
+		}
+	}
+	return ordered, true
 }
 
 func sameFilesystemSource(left, right domain.FileManifestEntry) bool {

@@ -239,6 +239,8 @@ type fakeFilesystemAction struct {
 	trashCalls    int
 	trashRequest  ports.FilesystemTrashRequest
 	copyEffect    ports.FilesystemEffect
+	trashEffect   ports.FilesystemEffect
+	deleteEffect  ports.FilesystemEffect
 	err           error
 }
 
@@ -268,7 +270,11 @@ func (fake *fakeFilesystemAction) Rename(context.Context, ports.FilesystemRename
 func (fake *fakeFilesystemAction) Trash(_ context.Context, request ports.FilesystemTrashRequest) (ports.FilesystemEffect, error) {
 	fake.trashCalls++
 	fake.trashRequest = request
-	return ports.FilesystemEffect{Outcome: domain.OutcomeApplied, ObservedAt: actionTestNow}, fake.err
+	effect := fake.trashEffect
+	if effect.Outcome == "" {
+		effect = ports.FilesystemEffect{Outcome: domain.OutcomeApplied, ObservedAt: actionTestNow}
+	}
+	return effect, fake.err
 }
 
 func (fake *fakeFilesystemAction) Restore(context.Context, ports.FilesystemRestoreRequest) (ports.FilesystemEffect, error) {
@@ -277,7 +283,7 @@ func (fake *fakeFilesystemAction) Restore(context.Context, ports.FilesystemResto
 
 func (fake *fakeFilesystemAction) Delete(context.Context, ports.FilesystemDeleteRequest) (ports.FilesystemEffect, error) {
 	fake.deleteCalls++
-	return ports.FilesystemEffect{}, fake.err
+	return fake.deleteEffect, fake.err
 }
 
 func manifest(root domain.ConfigID, relative, digest, identity string) domain.FileManifestEntry {
@@ -645,6 +651,168 @@ func TestFilesystemDispatchPreservesAffectedEffectOnErrorAsDispatched(t *testing
 		if !strings.Contains(string(result.Effects[0].Evidence), "filesystem_affected") || !strings.Contains(string(result.Effects[0].Evidence), "first_file_published") {
 			t.Fatalf("affected evidence was discarded (run %d): %s", repetition, result.Effects[0].Evidence)
 		}
+	}
+}
+
+func TestTrashDispatchPreservesAffectedManifestEffectOnError(t *testing.T) {
+	entry := manifest("download", "movie.mkv", "", "inode-trash-1")
+	source := domain.FileTarget{RootID: entry.RootID, RelativePath: entry.RelativePath}
+	read := &fakeFilesystemRead{
+		entries: map[string]ports.FilesystemObservation{targetID(source): {Entry: entry, ObservedAt: actionTestNow}},
+	}
+	actionPort := &fakeFilesystemAction{
+		trashEffect: ports.FilesystemEffect{
+			Outcome:    domain.OutcomeApplied,
+			Affected:   []domain.FileManifestEntry{entry},
+			ObservedAt: actionTestNow,
+			Evidence:   []string{"trash_object_published"},
+		},
+		err: placement.ErrSourceChanged,
+	}
+	handler, err := NewTrashHandler(FilesystemConfig{Read: read, Action: actionPort, Options: testOptions()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	action := testAction(t, domain.ActionFSTrash, FileIntent{Manifest: []domain.FileManifestEntry{entry}})
+	for repetition := 0; repetition < 10; repetition++ {
+		result, dispatchErr := handler.Dispatch(context.Background(), action, execution.Attempt{ID: "partial-trash"})
+		var failure *execution.Failure
+		if !errors.As(dispatchErr, &failure) || !failure.Dispatched || len(result.Effects) != 1 || result.Effects[0].State != execution.EffectApplied {
+			t.Fatalf("affected trash result must remain dispatched/uncertain (run %d): result=%#v err=%v failure=%#v", repetition, result, dispatchErr, failure)
+		}
+		if result.Effects[0].ObservedAt != actionTestNow.Format(time.RFC3339Nano) || !strings.Contains(string(result.Effects[0].Evidence), "filesystem_affected") || !strings.Contains(string(result.Effects[0].Evidence), "trash_object_published") {
+			t.Fatalf("affected trash evidence was discarded (run %d): effect=%#v", repetition, result.Effects[0])
+		}
+	}
+}
+
+func TestDeleteDispatchPreservesAffectedManifestEffectOnError(t *testing.T) {
+	entry := manifest("download", "movie.mkv", "", "inode-delete-1")
+	source := domain.FileTarget{RootID: entry.RootID, RelativePath: entry.RelativePath}
+	read := &fakeFilesystemRead{
+		entries: map[string]ports.FilesystemObservation{targetID(source): {Entry: entry, ObservedAt: actionTestNow}},
+	}
+	actionPort := &fakeFilesystemAction{
+		deleteEffect: ports.FilesystemEffect{
+			Outcome:    domain.OutcomeApplied,
+			Affected:   []domain.FileManifestEntry{entry},
+			ObservedAt: actionTestNow,
+			Evidence:   []string{"delete_object_removed"},
+		},
+		err: organize.ErrSourceChanged,
+	}
+	handler, err := NewDeleteHandler(FilesystemConfig{Read: read, Action: actionPort, Options: testOptions()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	action := testAction(t, domain.ActionFSDelete, FileIntent{Manifest: []domain.FileManifestEntry{entry}})
+	for repetition := 0; repetition < 10; repetition++ {
+		result, dispatchErr := handler.Dispatch(context.Background(), action, execution.Attempt{ID: "partial-delete"})
+		var failure *execution.Failure
+		if !errors.As(dispatchErr, &failure) || !failure.Dispatched || len(result.Effects) != 1 || result.Effects[0].State != execution.EffectApplied {
+			t.Fatalf("affected delete result must remain dispatched/uncertain (run %d): result=%#v err=%v failure=%#v", repetition, result, dispatchErr, failure)
+		}
+		if result.Effects[0].ObservedAt != actionTestNow.Format(time.RFC3339Nano) || !strings.Contains(string(result.Effects[0].Evidence), "filesystem_affected") || !strings.Contains(string(result.Effects[0].Evidence), "delete_object_removed") {
+			t.Fatalf("affected delete evidence was discarded (run %d): effect=%#v", repetition, result.Effects[0])
+		}
+	}
+}
+
+func TestTrashManifestChildAffectedMapsToOneApprovedEffect(t *testing.T) {
+	child := manifest("download", "season/episode.mkv", "", "inode-child-1")
+	directory := domain.FileManifestEntry{
+		RootID:       "download",
+		RelativePath: "season",
+		Type:         domain.ManifestDirectory,
+		FileIdentity: "inode-season-1",
+		ObservedAt:   actionTestNow,
+		Children:     []domain.FileManifestEntry{child},
+	}
+	read := &fakeFilesystemRead{entries: map[string]ports.FilesystemObservation{
+		targetID(domain.FileTarget{RootID: directory.RootID, RelativePath: directory.RelativePath}): {Entry: directory, ObservedAt: actionTestNow},
+	}}
+	actionPort := &fakeFilesystemAction{trashEffect: ports.FilesystemEffect{
+		Outcome:    domain.OutcomeApplied,
+		Affected:   []domain.FileManifestEntry{child, directory},
+		ObservedAt: actionTestNow,
+		Evidence:   []string{"directory_trash_complete"},
+	}}
+	handler, err := NewTrashHandler(FilesystemConfig{Read: read, Action: actionPort, Options: testOptions()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	action := testAction(t, domain.ActionFSTrash, FileIntent{Manifest: []domain.FileManifestEntry{directory}})
+	result, err := handler.Dispatch(context.Background(), action, execution.Attempt{ID: "nested-trash"})
+	if err != nil || !result.Accepted || result.Outcome != domain.OutcomeApplied || len(result.Effects) != 1 {
+		t.Fatalf("nested manifest affected entries must map to one top-level effect: result=%#v err=%v", result, err)
+	}
+}
+
+func TestFilesystemDispatchRejectsForeignAndDuplicateAffectedEntries(t *testing.T) {
+	source := manifest("download", "movie.mkv", strings.Repeat("a", 64), "inode-1")
+	mapping := ports.FileMap{Source: source, Destination: domain.FileTarget{RootID: "library", RelativePath: "movie.mkv"}}
+	tests := []struct {
+		name     string
+		affected []domain.FileManifestEntry
+		err      error
+	}{
+		{name: "foreign", affected: []domain.FileManifestEntry{manifest("download", "other.mkv", strings.Repeat("a", 64), "inode-other")}, err: placement.ErrSourceChanged},
+		{name: "duplicate", affected: []domain.FileManifestEntry{source, source}, err: placement.ErrSourceChanged},
+		{name: "foreign_without_error", affected: []domain.FileManifestEntry{manifest("download", "other.mkv", strings.Repeat("a", 64), "inode-other")}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			read := &fakeFilesystemRead{
+				entries: map[string]ports.FilesystemObservation{targetID(sourceTarget(mapping)): {Entry: source, ObservedAt: actionTestNow}},
+				missing: map[string]bool{targetID(mapping.Destination): true},
+			}
+			actionPort := &fakeFilesystemAction{copyEffect: ports.FilesystemEffect{Outcome: domain.OutcomeApplied, Affected: test.affected, ObservedAt: actionTestNow}, err: test.err}
+			handler, err := NewCopyHandler(FilesystemConfig{Read: read, Action: actionPort, Options: testOptions()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			action := testAction(t, domain.ActionFSCopy, FileIntent{Files: []ports.FileMap{mapping}})
+			for repetition := 0; repetition < 10; repetition++ {
+				result, dispatchErr := handler.Dispatch(context.Background(), action, execution.Attempt{ID: "malformed-copy"})
+				var failure *execution.Failure
+				if !errors.As(dispatchErr, &failure) || !failure.Dispatched || result.Accepted || len(result.Effects) != 0 {
+					t.Fatalf("unapproved affected entries must fail closed (run %d): result=%#v err=%v failure=%#v", repetition, result, dispatchErr, failure)
+				}
+			}
+		})
+	}
+}
+
+func TestFilesystemDispatchMapsOnlyAffectedMappingSubset(t *testing.T) {
+	first := manifest("download", "one.mkv", strings.Repeat("a", 64), "inode-one")
+	second := manifest("download", "two.mkv", strings.Repeat("b", 64), "inode-two")
+	firstMap := ports.FileMap{Source: first, Destination: domain.FileTarget{RootID: "library", RelativePath: "one.mkv"}}
+	secondMap := ports.FileMap{Source: second, Destination: domain.FileTarget{RootID: "library", RelativePath: "two.mkv"}}
+	read := &fakeFilesystemRead{
+		entries: map[string]ports.FilesystemObservation{
+			targetID(sourceTarget(firstMap)):  {Entry: first, ObservedAt: actionTestNow},
+			targetID(sourceTarget(secondMap)): {Entry: second, ObservedAt: actionTestNow},
+		},
+		missing: map[string]bool{targetID(firstMap.Destination): true, targetID(secondMap.Destination): true},
+	}
+	actionPort := &fakeFilesystemAction{copyEffect: ports.FilesystemEffect{
+		Outcome:    domain.OutcomeApplied,
+		Affected:   []domain.FileManifestEntry{first},
+		ObservedAt: actionTestNow,
+		Evidence:   []string{"first_file_published"},
+	}, err: placement.ErrSourceChanged}
+	handler, err := NewCopyHandler(FilesystemConfig{Read: read, Action: actionPort, Options: testOptions()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	action := testAction(t, domain.ActionFSCopy, FileIntent{Files: []ports.FileMap{firstMap, secondMap}})
+	result, dispatchErr := handler.Dispatch(context.Background(), action, execution.Attempt{ID: "partial-copy-set"})
+	var failure *execution.Failure
+	if !errors.As(dispatchErr, &failure) || !failure.Dispatched || len(result.Effects) != 1 {
+		t.Fatalf("partial mapping must return only affected effects: result=%#v err=%v failure=%#v", result, dispatchErr, failure)
+	}
+	if result.Effects[0].TargetID != targetID(firstMap.Destination) || result.Effects[0].State != execution.EffectApplied || !strings.Contains(string(result.Effects[0].Evidence), "first_file_published") {
+		t.Fatalf("partial mapping effect was not translated exactly: %#v", result.Effects[0])
 	}
 }
 
