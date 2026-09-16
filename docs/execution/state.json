@@ -960,7 +960,8 @@
         "9b682b56306d450d582e4ec23f6f8e5e1df37243 D-04 product adds versioned SQLite/key/descriptor/trash backup, strict manifest verification and isolated restore checks; 0d8bccedf51cc25490167cb5692374807f2fc90c records the handoff.",
         "ca64d535cb891889553e62ae516a917ef72fc962 independent review requests six release-blocking findings; bfc411a663a430a009d8d7b97864fb502179b9f0 integrates the receipt. P1s cover pre-publication verification, future schema, archive overlap, atomic no-replace publication, symlink ancestors and post-publication uncertainty; P2 covers cancellation and aggregate bounds.",
         "8c4b223c1e211571c9c2db127f81b1ef6a1919d6 correction product addresses all six independent-review findings; d8299c9fc8e9dd7b1d4e5dd3f7fe0257468b323e records the correction handoff.",
-        "ec768b048cb46121c8bd09ea87d79dc79de2308e independent correction review round two requests two P1 fixes; 04eac468167386f4810bb327941785a7c90ea4d5 integrates the receipt. Publication identity/cleanup binding and immutable restore manifest binding remain blockers; all prior findings and guardrails pass."
+        "ec768b048cb46121c8bd09ea87d79dc79de2308e independent correction review round two requests two P1 fixes; 04eac468167386f4810bb327941785a7c90ea4d5 integrates the receipt. Publication identity/cleanup binding and immutable restore manifest binding remain blockers; all prior findings and guardrails pass.",
+        "6adb5a5cf2ce7d9effd5d4ba6c2a8737d9e28b3a correction round two binds verified staging identity through publication/cleanup and snapshots exact restore manifest bytes; fe0b2b3e7299e5ea7dac8be6bec9d819d81fa115 records the handoff and checks."
       ],
       "review": {
         "status": "changes_requested",
@@ -1000,7 +1001,7 @@
         "reviewPath": "docs/execution/handoffs/D-04-review-round1.md",
         "handoffPath": "docs/execution/handoffs/D-04.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "implementation",
+        "status": "review_pending",
         "implementationCommit": "9b682b56306d450d582e4ec23f6f8e5e1df37243",
         "handoffCommit": "0d8bccedf51cc25490167cb5692374807f2fc90c",
         "reviewSourceCommit": "9b682b56306d450d582e4ec23f6f8e5e1df37243",
@@ -1013,12 +1014,18 @@
         "correctionReviewPath": "docs/execution/handoffs/D-04-review-round3.md",
         "correctionHandoffPath": "docs/execution/handoffs/D-04-correction-round2.md",
         "correctionReviewer": "/root/x05_reviewer",
-        "correctionStatus": "implementation",
+        "correctionStatus": "review_pending",
         "priorCorrectionRound": 1,
         "priorCorrectionImplementationCommit": "8c4b223c1e211571c9c2db127f81b1ef6a1919d6",
         "priorCorrectionHandoffCommit": "d8299c9fc8e9dd7b1d4e5dd3f7fe0257468b323e",
         "priorCorrectionReviewCommit": "ec768b048cb46121c8bd09ea87d79dc79de2308e",
-        "priorCorrectionReviewIntegrationCommit": "04eac468167386f4810bb327941785a7c90ea4d5"
+        "priorCorrectionReviewIntegrationCommit": "04eac468167386f4810bb327941785a7c90ea4d5",
+        "correctionImplementationCommit": "6adb5a5cf2ce7d9effd5d4ba6c2a8737d9e28b3a",
+        "correctionHandoffCommit": "fe0b2b3e7299e5ea7dac8be6bec9d819d81fa115",
+        "correctionProductCommits": [
+          "6adb5a5cf2ce7d9effd5d4ba6c2a8737d9e28b3a"
+        ],
+        "correctionReviewSourceCommit": "6adb5a5cf2ce7d9effd5d4ba6c2a8737d9e28b3a"
       },
       "reviewHistory": [
         {
@@ -4801,7 +4808,7 @@
       ]
     }
   },
-  "nextAction": "D-04 correction round two is dispatched for publication object identity/cleanup binding and immutable restore manifest binding after review receipt ec768b048cb46121c8bd09ea87d79dc79de2308e. X-08 remains queued; X-20 transport and G-01 remain open.",
+  "nextAction": "D-04 correction round two is ready for independent review at 6adb5a5cf2ce7d9effd5d4ba6c2a8737d9e28b3a; handoff fe0b2b3e7299e5ea7dac8be6bec9d819d81fa115. X-08 remains queued; X-20 transport and G-01 remain open.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
