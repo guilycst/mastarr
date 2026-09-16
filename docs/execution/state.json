@@ -3355,7 +3355,9 @@
         "Own only internal/workflows/, internal/reviews/ and docs/execution/handoffs/W-04.md. Implement ordered workflows and review decisions on existing planning, execution and storage ports; do not edit state.json, API/UI contracts, adapters, clients, storage schemas or workers.",
         "Keep W-03 gates intact: F-05 filesystem organize operations remain explicit fail-closed where unsupported; G-01 Arr native registration/import writes remain blocked; Seerr remains read-only.",
         "The first W-04 implementation attempt was interrupted after a bounded window with no files or handoff; no product changes were made and the checkout remains at the recorded base.",
-        "retry dispatch checkpoint fee702c4d35afc7e3f333877c75e3e6fbac71073: first slice is review decision validation and durable approval binding in internal/reviews/ only; ordered workflow composition remains a follow-up in internal/workflows/."
+        "retry dispatch checkpoint fee702c4d35afc7e3f333877c75e3e6fbac71073: first slice is review decision validation and durable approval binding in internal/reviews/ only; ordered workflow composition remains a follow-up in internal/workflows/.",
+        "W-04 review-decision slice product 2d4712df7679a67d5f054f0c614558f812e7dea5 adds immutable plan persistence, exact approval gates, registration/import separation, transactional decision/action/idempotency persistence, replay/conflict handling and bounded validation; focused/race/vet/module/generation/Vacuum/architecture/pre-commit checks passed.",
+        "W-04 review-decision slice handoff 0bc36d3229334f18388dd2c609ab21b040801cdd records A-12/A-15/A-56 evidence and defers ordered workflow composition to the next bounded slice."
       ],
       "review": null,
       "dispatch": {
@@ -3397,8 +3399,8 @@
           "F-05": "Linux has no reviewed inode-bound quarantine removal primitive in the current implementation. Unsupported move, rename, permanent-delete and cross-device source-removal paths must fail closed before mutation.",
           "G-01": "Arr native registration/import writes remain blocked pending X-05 evidence; workflows must compose review/queue intent without dispatching disabled native writes."
         },
-        "implementationCommit": null,
-        "handoffCommit": null,
+        "implementationCommit": "2d4712df7679a67d5f054f0c614558f812e7dea5",
+        "handoffCommit": "0bc36d3229334f18388dd2c609ab21b040801cdd",
         "reviewSourceCommit": null,
         "reviewCommit": null,
         "reviewIntegrationCommit": null,
@@ -3416,7 +3418,7 @@
             "internal/reviews/",
             "docs/execution/handoffs/W-04-review-slice.md"
           ],
-          "status": "dispatched",
+          "status": "completed",
           "handoffPath": "docs/execution/handoffs/W-04-review-slice.md",
           "expectedChecks": [
             "focused internal/reviews tests and race",
@@ -3424,8 +3426,32 @@
             "GOWORK=off go mod verify",
             "full offline guardrails before slice handoff"
           ],
-          "nextFollowup": "compose ordered recipes and queue integration in internal/workflows/ after the review slice is committed"
-        }
+          "nextFollowup": "compose ordered recipes and queue integration in internal/workflows/ after the review slice is committed",
+          "productCommit": "2d4712df7679a67d5f054f0c614558f812e7dea5",
+          "handoffCommit": "0bc36d3229334f18388dd2c609ab21b040801cdd"
+        },
+        "productCommits": [
+          "2d4712df7679a67d5f054f0c614558f812e7dea5"
+        ],
+        "handoffCommits": [
+          "0bc36d3229334f18388dd2c609ab21b040801cdd"
+        ],
+        "currentSlice": "workflow-composition",
+        "currentSliceBaseSha": "0bc36d3229334f18388dd2c609ab21b040801cdd",
+        "currentSliceStatus": "implementation",
+        "currentSliceOwnedPaths": [
+          "internal/workflows/",
+          "docs/execution/handoffs/W-04-workflow-slice.md"
+        ],
+        "currentSliceHandoffPath": "docs/execution/handoffs/W-04-workflow-slice.md",
+        "currentSliceExpectedChecks": [
+          "ordered registration/import/placement recipes with explicit prerequisites and later import review",
+          "persist workflow and step state using existing durable execution/storage contracts",
+          "reject steps added to cancelled/deadline workflows and prevent later dispatch after cancellation",
+          "preserve completed effects and distinguish failed/blocked/needs-review steps",
+          "synthetic A-12/A-32/A-35/A-37 workflow tests plus focused/race/vet",
+          "GOWORK=off module verification and full offline guardrails"
+        ]
       },
       "reviewHistory": []
     },
@@ -5372,7 +5398,7 @@
       ]
     }
   },
-  "nextAction": "W-04 retry slice is dispatched from fee702c4d35afc7e3f333877c75e3e6fbac71073. The worker first owns internal/reviews/ and its slice handoff, then will continue in internal/workflows/; keep the independent final review pending until both slices are complete.",
+  "nextAction": "W-04 review-decision slice is recorded at product 2d4712df7679a67d5f054f0c614558f812e7dea5 and handoff 0bc36d3229334f18388dd2c609ab21b040801cdd. Workflow-composition slice is dispatched from state checkpoint 0bc36d3229334f18388dd2c609ab21b040801cdd; await its product and handoff, then send the independent final review.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
