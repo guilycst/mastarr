@@ -253,9 +253,11 @@ type RestoreReport struct {
 // descriptor open also lets the post-publication read-back prove which object
 // became visible at the destination.
 type stagingDirectory struct {
-	path string
-	file *os.File
-	info fs.FileInfo
+	path       string
+	file       *os.File
+	info       fs.FileInfo
+	finalCheck func(context.Context) error
+	postCheck  func(context.Context, string) error
 }
 
 func openStagingDirectory(path string) (*stagingDirectory, error) {
@@ -421,7 +423,15 @@ func Create(ctx context.Context, source Source, destination string) (Manifest, e
 	if err := validateManifest(manifest); err != nil {
 		return Manifest{}, incompleteError("generated manifest", err)
 	}
-	if err := writeManifestContext(ctx, staging, manifest, budget.limits.MaxManifestBytes); err != nil {
+	manifestBytes, err := marshalManifest(manifest)
+	if err != nil {
+		return Manifest{}, err
+	}
+	if budget.limits.MaxManifestBytes > 0 && len(manifestBytes) > budget.limits.MaxManifestBytes {
+		return Manifest{}, fmt.Errorf("%w: manifest exceeds configured limit", ErrIncomplete)
+	}
+	manifestDigest := sha256.Sum256(manifestBytes)
+	if err := writeManifestBytesContext(ctx, staging, manifestBytes, budget.limits.MaxManifestBytes); err != nil {
 		return Manifest{}, err
 	}
 	if err := syncTreeContext(ctx, staging); err != nil {
@@ -433,13 +443,28 @@ func Create(ctx context.Context, source Source, destination string) (Manifest, e
 	if _, err := Verify(ctx, staging); err != nil {
 		return Manifest{}, err
 	}
+	stage.finalCheck = func(checkCtx context.Context) error {
+		if err := stagingManifestMatches(checkCtx, stage.path, manifestBytes, manifestDigest); err != nil {
+			return err
+		}
+		if _, err := Verify(checkCtx, stage.path); err != nil {
+			return err
+		}
+		return stagingManifestMatches(checkCtx, stage.path, manifestBytes, manifestDigest)
+	}
+	stage.postCheck = func(checkCtx context.Context, published string) error {
+		if _, err := Verify(checkCtx, published); err != nil {
+			return err
+		}
+		return publishedManifestMatches(checkCtx, published, manifestBytes, manifestDigest)
+	}
 	if err := validateSource(ctx, source); err != nil {
 		return Manifest{}, err
 	}
 	if err := contextCheckpoint(ctx); err != nil {
 		return Manifest{}, err
 	}
-	if err := publishDirectoryBound(stage, destination, parent); err != nil {
+	if err := publishDirectoryBoundContext(ctx, stage, destination, parent); err != nil {
 		return Manifest{}, err
 	}
 	return manifest, nil
@@ -515,13 +540,53 @@ func Restore(ctx context.Context, archive, destination string) (RestoreReport, e
 	if err := manifestSnapshotMatches(ctx, archive, manifestBytes, manifestDigest); err != nil {
 		return RestoreReport{}, err
 	}
-	stagedManifest, stagedManifestBytes, err := readManifestSnapshotContext(ctx, staging)
+	_, stagedManifestBytes, err := readManifestSnapshotContext(ctx, staging)
 	if err != nil {
 		return RestoreReport{}, err
 	}
 	stagedDigest := sha256.Sum256(stagedManifestBytes)
 	if stagedDigest != manifestDigest || !bytes.Equal(stagedManifestBytes, manifestBytes) {
 		return RestoreReport{}, fmt.Errorf("%w: staged manifest differs from preflight", ErrIncomplete)
+	}
+	stage.finalCheck = func(checkCtx context.Context) error {
+		if err := manifestSnapshotMatches(checkCtx, archive, manifestBytes, manifestDigest); err != nil {
+			return err
+		}
+		if err := stagingManifestMatches(checkCtx, stage.path, manifestBytes, manifestDigest); err != nil {
+			return err
+		}
+		finalReport, err := Verify(checkCtx, stage.path)
+		if err != nil {
+			return err
+		}
+		if err := manifestSnapshotMatches(checkCtx, archive, manifestBytes, manifestDigest); err != nil {
+			return err
+		}
+		if err := stagingManifestMatches(checkCtx, stage.path, manifestBytes, manifestDigest); err != nil {
+			return err
+		}
+		report = finalReport
+		return nil
+	}
+	stage.postCheck = func(checkCtx context.Context, published string) error {
+		if err := manifestSnapshotMatches(checkCtx, archive, manifestBytes, manifestDigest); err != nil {
+			return err
+		}
+		if err := publishedManifestMatches(checkCtx, published, manifestBytes, manifestDigest); err != nil {
+			return err
+		}
+		finalReport, err := Verify(checkCtx, published)
+		if err != nil {
+			return err
+		}
+		if err := manifestSnapshotMatches(checkCtx, archive, manifestBytes, manifestDigest); err != nil {
+			return err
+		}
+		if err := publishedManifestMatches(checkCtx, published, manifestBytes, manifestDigest); err != nil {
+			return err
+		}
+		report = finalReport
+		return nil
 	}
 	currentArchiveInfo, err := os.Stat(archive)
 	if err != nil || !os.SameFile(archiveInfo, currentArchiveInfo) {
@@ -533,10 +598,9 @@ func Restore(ctx context.Context, archive, destination string) (RestoreReport, e
 	if err := contextCheckpoint(ctx); err != nil {
 		return RestoreReport{}, err
 	}
-	if err := publishDirectoryBound(stage, destination, parent); err != nil {
+	if err := publishDirectoryBoundContext(ctx, stage, destination, parent); err != nil {
 		return RestoreReport{}, err
 	}
-	report.Manifest = stagedManifest
 	return report, nil
 }
 
@@ -1269,15 +1333,23 @@ func writeManifest(directory string, manifest Manifest) error {
 	return writeManifestContext(context.Background(), directory, manifest, maxManifestBytes)
 }
 
+func marshalManifest(manifest Manifest) ([]byte, error) {
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("%w: encode manifest", ErrIncomplete)
+	}
+	data = append(data, '\n')
+	return data, nil
+}
+
 func writeManifestContext(ctx context.Context, directory string, manifest Manifest, maximum int) error {
 	if err := contextCheckpoint(ctx); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(manifest, "", "  ")
+	data, err := marshalManifest(manifest)
 	if err != nil {
-		return fmt.Errorf("%w: encode manifest", ErrIncomplete)
+		return err
 	}
-	data = append(data, '\n')
 	if maximum <= 0 {
 		maximum = maxManifestBytes
 	}
@@ -1340,6 +1412,13 @@ func publishDirectory(staging, destination, parent string) error {
 }
 
 func publishDirectoryBound(stage *stagingDirectory, destination, parent string) error {
+	return publishDirectoryBoundContext(context.Background(), stage, destination, parent)
+}
+
+func publishDirectoryBoundContext(ctx context.Context, stage *stagingDirectory, destination, parent string) error {
+	if err := validContext(ctx); err != nil {
+		return err
+	}
 	if stage == nil {
 		return fmt.Errorf("%w: %w", ErrIncomplete, ErrStagingChanged)
 	}
@@ -1353,6 +1432,14 @@ func publishDirectoryBound(stage *stagingDirectory, destination, parent string) 
 	if err := stage.verifyPathIdentity(); err != nil {
 		return fmt.Errorf("%w: before publication: %w", ErrIncomplete, err)
 	}
+	if stage.finalCheck != nil {
+		if err := stage.finalCheck(ctx); err != nil {
+			return err
+		}
+		if err := stage.verifyPathIdentity(); err != nil {
+			return fmt.Errorf("%w: after content verification: %w", ErrIncomplete, err)
+		}
+	}
 	if err := atomicPublishDirectoryBound(stage, destination, parent); err != nil {
 		return err
 	}
@@ -1361,6 +1448,14 @@ func publishDirectoryBound(stage *stagingDirectory, destination, parent string) 
 		// detected after native rename. Do not claim success or remove the
 		// visible object; leave it for read-only reconciliation.
 		return fmt.Errorf("%w: published staging identity: %w", ErrPublicationUncertain, err)
+	}
+	if stage.postCheck != nil {
+		if err := stage.postCheck(ctx, destination); err != nil {
+			// A visible destination exists, but its complete child set or
+			// report did not survive the publication boundary. Leave it for
+			// read-only reconciliation rather than claiming success.
+			return fmt.Errorf("%w: published content: %w", ErrPublicationUncertain, err)
+		}
 	}
 	if err := syncPublishedParent(parent); err != nil {
 		return fmt.Errorf("%w: sync published directory: %w", ErrPublicationUncertain, err)
@@ -1496,6 +1591,30 @@ func manifestSnapshotMatches(ctx context.Context, directory string, expected []b
 	currentDigest := sha256.Sum256(current)
 	if currentDigest != expectedDigest || !bytes.Equal(current, expected) {
 		return fmt.Errorf("%w: manifest changed during restore", ErrIncomplete)
+	}
+	return nil
+}
+
+func stagingManifestMatches(ctx context.Context, directory string, expected []byte, expectedDigest [sha256.Size]byte) error {
+	_, current, err := readManifestSnapshotContext(ctx, directory)
+	if err != nil {
+		return incompleteError("staging manifest changed before publication", err)
+	}
+	currentDigest := sha256.Sum256(current)
+	if currentDigest != expectedDigest || !bytes.Equal(current, expected) {
+		return fmt.Errorf("%w: staging manifest changed before publication", ErrIncomplete)
+	}
+	return nil
+}
+
+func publishedManifestMatches(ctx context.Context, directory string, expected []byte, expectedDigest [sha256.Size]byte) error {
+	_, current, err := readManifestSnapshotContext(ctx, directory)
+	if err != nil {
+		return incompleteError("published manifest changed after publication", err)
+	}
+	currentDigest := sha256.Sum256(current)
+	if currentDigest != expectedDigest || !bytes.Equal(current, expected) {
+		return fmt.Errorf("%w: published manifest changed after publication", ErrIncomplete)
 	}
 	return nil
 }

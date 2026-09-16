@@ -804,6 +804,102 @@ func TestPublicationUncertaintyRetainsReplacementStagingDirectory(t *testing.T) 
 	}
 }
 
+func TestCreateRejectsChildMutationBeforePublication(t *testing.T) {
+	previous := beforeStagingPublication
+	called := false
+	beforeStagingPublication = func(candidate *stagingDirectory) {
+		t.Helper()
+		called = true
+		before, err := candidate.file.Stat()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(candidate.path, "unexpected-child"), []byte("unreviewed"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		after, err := candidate.file.Stat()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !os.SameFile(before, after) {
+			t.Fatal("child mutation replaced the staging root")
+		}
+	}
+	t.Cleanup(func() { beforeStagingPublication = previous })
+
+	fixture := newBackupFixture(t)
+	destination := filepath.Join(t.TempDir(), "archive")
+	_, err := Create(context.Background(), fixture.source(true), destination)
+	if !called {
+		t.Fatal("publication mutation callback did not run")
+	}
+	if !errors.Is(err, ErrIncomplete) {
+		t.Fatalf("child mutation create error = %v, want ErrIncomplete", err)
+	}
+	if _, statErr := os.Stat(destination); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("child mutation published destination, stat error = %v", statErr)
+	}
+}
+
+func TestRestoreRejectsStagingManifestMutationBeforePublication(t *testing.T) {
+	fixture := newBackupFixture(t)
+	archive := filepath.Join(t.TempDir(), "archive")
+	if _, err := Create(context.Background(), fixture.source(true), archive); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	previous := beforeStagingPublication
+	called := false
+	beforeStagingPublication = func(candidate *stagingDirectory) {
+		t.Helper()
+		called = true
+		before, err := candidate.file.Stat()
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(candidate.path, manifestName)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var manifest Manifest
+		if err := json.Unmarshal(data, &manifest); err != nil {
+			t.Fatal(err)
+		}
+		manifest.CreatedAt = manifest.CreatedAt.Add(24 * time.Hour)
+		mutated, err := marshalManifest(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, mutated, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		after, err := candidate.file.Stat()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !os.SameFile(before, after) {
+			t.Fatal("manifest mutation replaced the staging root")
+		}
+	}
+	t.Cleanup(func() { beforeStagingPublication = previous })
+
+	target := filepath.Join(t.TempDir(), "restored")
+	_, err := Restore(context.Background(), archive, target)
+	if !called {
+		t.Fatal("publication mutation callback did not run")
+	}
+	if !errors.Is(err, ErrIncomplete) {
+		t.Fatalf("staging manifest mutation restore error = %v, want ErrIncomplete", err)
+	}
+	if _, statErr := os.Stat(target); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("staging manifest mutation published target, stat error = %v", statErr)
+	}
+}
+
 func TestRestoreRejectsSameInodeManifestMutation(t *testing.T) {
 	fixture := newBackupFixture(t)
 	archive := filepath.Join(t.TempDir(), "archive")

@@ -49,8 +49,12 @@ parent. Mastarr never overwrites an existing backup.
    the key and private trees into a private staging directory, records SHA-256
    digests, sizes, and permission bits, writes a versioned `manifest.json`,
    syncs the staging directory, and runs the complete read-only `Verify` check
-   while it is still private. Only a fully verified tree is published through
-   the platform's atomic no-replace directory operation.
+   while it is still private. The complete child set and exact generated
+   manifest are checked again at the publication boundary, so a child added,
+   removed, replaced or changed after verification fails closed. Only a fully
+   verified tree is published through the platform's atomic no-replace
+   directory operation, followed by a complete destination read-back before
+   success is returned.
 4. Treat the completed backup directory as sensitive. It contains the key
    that can decrypt the database's credential envelopes. Do not put it in a
    public artifact store or log its contents. A key supplied only through an
@@ -104,11 +108,14 @@ rejects duplicate/unknown fields and unsafe paths, rejects archive/target
 overlap, verifies every artifact, copies into a private staging directory, and
 runs the read-only `backup.Verify` check before publishing the target. Restore
 copies the exact preflight manifest bytes, checks their digest again after all
-artifact work, and returns the manifest proven by the staged verification. It
-never starts workers, contacts an upstream service, or runs a migration
-downgrade. The database and manifest schema versions must not exceed the
-embedded migration ceiling; supported older versions remain eligible for the
-normal upward migration path after the isolated check.
+artifact work, and reruns the complete child-set verification at the
+publication boundary and after native publication. The returned manifest is
+the value proven by that final destination read-back; any child or manifest
+mutation in the publication window fails closed or is reported as an uncertain
+visible effect. Restore never starts workers, contacts an upstream service, or
+runs a migration downgrade. The database and manifest schema versions must not
+exceed the embedded migration ceiling; supported older versions remain eligible
+for the normal upward migration path after the isolated check.
 
 Verification requires all of the following:
 
@@ -148,9 +155,9 @@ those inputs are supplied externally.
 Missing or wrong key material, changed ciphertext, changed credential binding,
 edited descriptor/trash payloads, missing retained files, dirty schema state,
 unexpected files, symlinks, path traversal, duplicate manifest fields,
-schema-version disagreement, and future schemas all fail closed. The target is
-not published and the key is never regenerated over an existing encrypted
-database. Preserve
+schema-version disagreement, future schemas, and any child-set change after
+verification all fail closed. The target is not published and the key is never
+regenerated over an existing encrypted database. Preserve
 the failing archive for diagnosis and use a known-good backup after correcting
 the source or restore environment.
 
@@ -160,7 +167,8 @@ inspection and never publishes a destination. Publication uses a reviewed
 no-replace primitive on
 Linux and macOS. Other platforms return `ErrPublicationUnsupported` rather
 than falling back to a replace-capable rename. If the containing-parent sync
-fails after the atomic rename, the operation returns `ErrPublicationUncertain`;
+fails after the atomic rename, or the post-publication child-set read-back
+detects a changed destination, the operation returns `ErrPublicationUncertain`;
 the destination is a visible effect and must be reconciled with `Verify` before
 retrying.
 
