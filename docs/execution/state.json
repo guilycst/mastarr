@@ -15,7 +15,9 @@
   "resumeDocument": "docs/execution/RESUME.md",
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
-  "activeImplementationTasks": [],
+  "activeImplementationTasks": [
+    "D-04"
+  ],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
   "guardrailBaseline": {
@@ -947,12 +949,44 @@
       ]
     },
     "D-04": {
-      "status": "planned",
-      "owner": null,
-      "baseSha": null,
+      "status": "in_progress",
+      "owner": "/root/x05_implementer",
+      "baseSha": "2e298aa2a2a81e0a80e773a864dcb704ec549448",
       "integratedSha": null,
-      "evidence": [],
-      "review": null
+      "evidence": [
+        "dispatched after D-03 and X-09 approvals; owns only internal/backup/, docs/operations/backup-restore.md and its handoff.",
+        "Create consistent SQLite, encryption-key, retained-descriptor and trash backup/restore instructions plus an isolated restore check. Do not perform live migration or downgrade, and fail closed on incomplete backups.",
+        "Use synthetic temporary instances and fixture bytes only. Preserve encrypted-key requirements, descriptor/trash retention, startup validation and uncertainty/idempotency evidence; no credentials, private coordinates or live media."
+      ],
+      "review": null,
+      "dispatch": {
+        "assignedAt": "2026-09-16",
+        "model": "gpt-5.6-luna",
+        "reasoning": "max",
+        "role": "implementer",
+        "baseSha": "2e298aa2a2a81e0a80e773a864dcb704ec549448",
+        "ownedPaths": [
+          "internal/backup/",
+          "docs/operations/backup-restore.md",
+          "docs/execution/handoffs/D-04.md"
+        ],
+        "checkout": "shared main",
+        "expectedChecks": [
+          "A-41",
+          "A-43",
+          "A-44",
+          "consistent DB/key/descriptor/trash backup manifest and incomplete-backup failure",
+          "isolated restore decrypts and preserves uncertainty/idempotency without live migration downgrade",
+          "synthetic fixture tests and no credential or private-path leakage",
+          "GOWORK=off root tests/race/vet/mod verify",
+          "generation, API/Vacuum, architecture, planning, lint and fast guardrails",
+          "Linux amd64/arm64 CGO-free compile"
+        ],
+        "reviewPath": "docs/execution/handoffs/D-04-review-round1.md",
+        "handoffPath": "docs/execution/handoffs/D-04.md",
+        "nextReviewer": "/root/x05_reviewer",
+        "status": "implementation"
+      }
     },
     "F-01": {
       "status": "done",
@@ -4715,7 +4749,7 @@
       ]
     }
   },
-  "nextAction": "X-09 correction is review-approved at d460363223110e088391929809f4a847e60d754d and integrated at c8cd64f95729577b883df5f219f2b9f1e6780101; close the lane and dispatch the next dependency-ready task. X-20 transport and G-01 remain open.",
+  "nextAction": "D-04 backup/restore procedure is dispatched from 2e298aa2a2a81e0a80e773a864dcb704ec549448 to /root/x05_implementer; review its exact product and handoff before integration. X-08 is queued for a later implementer. X-20 transport and G-01 remain open.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
