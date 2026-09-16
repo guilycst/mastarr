@@ -1348,7 +1348,10 @@ func rejectedStepDecision(metadata stepMetadata) (bool, error) {
 	if err := json.Unmarshal(raw, &decision); err != nil {
 		return false, fmt.Errorf("%w: rejection decision evidence is malformed", ErrWorkflowConflict)
 	}
-	return decision == string(reviews.DecisionReject), nil
+	if decision != string(reviews.DecisionReject) {
+		return false, fmt.Errorf("%w: decision marker %q is contradictory", ErrWorkflowConflict, decision)
+	}
+	return true, nil
 }
 
 func mustActionState(ctx context.Context, tx *sql.Tx, step *sqlc.WorkflowStep) (domain.ActionState, bool) {

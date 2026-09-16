@@ -287,6 +287,82 @@ func TestRejectedReviewAtomicallyProjectsBlockedStepAcrossRestart(t *testing.T) 
 	}
 }
 
+func TestSyncRejectsContradictoryDecisionMarkersWithoutMutation(t *testing.T) {
+	for _, testCase := range []struct {
+		name      string
+		evidence  string
+		wantState domain.WorkflowState
+		wantStep  domain.StepState
+		wantError bool
+	}{
+		{name: "absent", evidence: `{"evidence":"unreviewed"}`, wantState: domain.WorkflowRunning, wantStep: domain.StepQueued},
+		{name: "reject", evidence: `{"decision":"reject","evidence":"rejected"}`, wantState: domain.WorkflowNeedsReview, wantStep: domain.StepBlocked},
+		{name: "approve", evidence: `{"decision":"approve","evidence":"contradictory"}`, wantState: domain.WorkflowRunning, wantStep: domain.StepBlocked, wantError: true},
+		{name: "unknown", evidence: `{"decision":"unknown","evidence":"contradictory"}`, wantState: domain.WorkflowRunning, wantStep: domain.StepBlocked, wantError: true},
+		{name: "empty", evidence: `{"decision":"","evidence":"contradictory"}`, wantState: domain.WorkflowRunning, wantStep: domain.StepBlocked, wantError: true},
+		{name: "null", evidence: `{"decision":null,"evidence":"contradictory"}`, wantState: domain.WorkflowRunning, wantStep: domain.StepBlocked, wantError: true},
+		{name: "malformed", evidence: `{"decision":42,"evidence":"malformed"}`, wantState: domain.WorkflowRunning, wantStep: domain.StepBlocked, wantError: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			service, reviewService, store := newWorkflowService(t)
+			plan := workflowRegistrationPlan(t, "workflow-decision-marker-"+testCase.name, planning.ApprovalRegistration)
+			if _, err := reviewService.StorePlan(context.Background(), reviews.PlanSaveRequest{Plan: plan}); err != nil {
+				t.Fatal(err)
+			}
+			workflow, err := service.Create(context.Background(), CreateRequest{
+				Name: "decision marker", Steps: []StepSpec{{ID: "review", PlanID: plan.ID}},
+				At: workflowTestNow, IdempotencyKey: "create-decision-marker-" + testCase.name,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.DB().Exec("UPDATE workflow_runs SET state = 'running' WHERE id = ?", workflow.ID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.DB().Exec("UPDATE workflow_steps SET state = 'blocked', outcome_json = ?, updated_at = ? WHERE id = ? AND workflow_id = ?", testCase.evidence, workflowTestNow.Format(time.RFC3339Nano), "review", workflow.ID); err != nil {
+				t.Fatal(err)
+			}
+			var beforeWorkflowState string
+			var beforeCurrentStep int64
+			var beforeWorkflowOutcome, beforeWorkflowUpdated string
+			if err := store.DB().QueryRow("SELECT state, current_step, outcome_json, updated_at FROM workflow_runs WHERE id = ?", workflow.ID).Scan(&beforeWorkflowState, &beforeCurrentStep, &beforeWorkflowOutcome, &beforeWorkflowUpdated); err != nil {
+				t.Fatal(err)
+			}
+			var beforeStepState, beforeStepOutcome, beforeStepUpdated string
+			if err := store.DB().QueryRow("SELECT state, outcome_json, updated_at FROM workflow_steps WHERE id = ?", "review").Scan(&beforeStepState, &beforeStepOutcome, &beforeStepUpdated); err != nil {
+				t.Fatal(err)
+			}
+
+			projected, syncErr := service.Sync(context.Background(), workflow.ID)
+			if testCase.wantError {
+				if !errors.Is(syncErr, ErrWorkflowConflict) {
+					t.Fatalf("Sync error = %v, want ErrWorkflowConflict", syncErr)
+				}
+				var afterWorkflowState string
+				var afterCurrentStep int64
+				var afterWorkflowOutcome, afterWorkflowUpdated string
+				if err := store.DB().QueryRow("SELECT state, current_step, outcome_json, updated_at FROM workflow_runs WHERE id = ?", workflow.ID).Scan(&afterWorkflowState, &afterCurrentStep, &afterWorkflowOutcome, &afterWorkflowUpdated); err != nil {
+					t.Fatal(err)
+				}
+				var afterStepState, afterStepOutcome, afterStepUpdated string
+				if err := store.DB().QueryRow("SELECT state, outcome_json, updated_at FROM workflow_steps WHERE id = ?", "review").Scan(&afterStepState, &afterStepOutcome, &afterStepUpdated); err != nil {
+					t.Fatal(err)
+				}
+				if afterWorkflowState != beforeWorkflowState || afterCurrentStep != beforeCurrentStep || afterWorkflowOutcome != beforeWorkflowOutcome || afterWorkflowUpdated != beforeWorkflowUpdated || afterStepState != beforeStepState || afterStepOutcome != beforeStepOutcome || afterStepUpdated != beforeStepUpdated {
+					t.Fatalf("contradictory marker mutated durable rows: workflow %q/%d/%s/%s -> %q/%d/%s/%s, step %q/%s/%s -> %q/%s/%s", beforeWorkflowState, beforeCurrentStep, beforeWorkflowOutcome, beforeWorkflowUpdated, afterWorkflowState, afterCurrentStep, afterWorkflowOutcome, afterWorkflowUpdated, beforeStepState, beforeStepOutcome, beforeStepUpdated, afterStepState, afterStepOutcome, afterStepUpdated)
+				}
+				return
+			}
+			if syncErr != nil {
+				t.Fatalf("Sync error = %v, want success", syncErr)
+			}
+			if projected.State != testCase.wantState || projected.Steps[0].State != testCase.wantStep {
+				t.Fatalf("projection = state %q/step %q, want %q/%q", projected.State, projected.Steps[0].State, testCase.wantState, testCase.wantStep)
+			}
+		})
+	}
+}
+
 func TestAddStepUsesTrustedClockForDeadlineAndCallerTimestamp(t *testing.T) {
 	service, reviewService, _ := newWorkflowService(t)
 	first := workflowRegistrationPlan(t, "workflow-clock-first", planning.ApprovalRegistration)
