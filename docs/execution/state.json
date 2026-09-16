@@ -2173,10 +2173,14 @@
       "owner": "/root/x05_implementer",
       "baseSha": "208165fed313698053a91f97f929c6af02bfadf7",
       "integratedSha": null,
+      "implementationCommit": "d131422a7319be22ccc6fba17a54a047c89e25d8",
+      "handoffCommit": "e7047e143fae06d2871afc56337709fca339a311",
+      "reviewSourceCommit": "d131422a7319be22ccc6fba17a54a047c89e25d8",
       "evidence": [
         "dispatched after X-05 approval; owns the Arr registration and manual-import adapter plus synthetic fixtures and handoff.",
         "Keep root validation, explicit command/read-back evidence and capability gates intact. G-01 remains unresolved, so no live upstream writes are permitted and any unsupported capability must remain blocked rather than silently enabled.",
-        "This lane is the legacy/root write capability slice. Standalone Sonarr/Radarr transport migration remains X-20 and must not be pulled into this change."
+        "This lane is the legacy/root write capability slice. Standalone Sonarr/Radarr transport migration remains X-20 and must not be pulled into this change.",
+        "d131422a7319be22ccc6fba17a54a047c89e25d8 product and e7047e143fae06d2871afc56337709fca339a311 handoff add guarded registration/manual-import commands, read-before-write idempotency, exact read-back and synthetic lost-response coverage; G-01 keeps public native writes fail-closed."
       ],
       "review": null,
       "dispatch": {
@@ -2206,6 +2210,10 @@
         "reviewPath": "docs/execution/handoffs/X-06-review-round1.md",
         "handoffPath": "docs/execution/handoffs/X-06.md",
         "nextReviewer": "/root/x05_reviewer",
+        "implementationCommit": "d131422a7319be22ccc6fba17a54a047c89e25d8",
+        "handoffCommit": "e7047e143fae06d2871afc56337709fca339a311",
+        "reviewSourceCommit": "d131422a7319be22ccc6fba17a54a047c89e25d8",
+        "status": "review_pending",
         "dependencyCommits": {
           "X-05": "165f22c2d81c4123d2ab31cf00d7613cdba87054",
           "X-22": "ea41f1f49569a079696f091a6113ee4d97641df4"
@@ -4437,7 +4445,7 @@
       ]
     }
   },
-  "nextAction": "X-06 is dispatched for the guarded Arr registration and manual-import adapter. Keep G-01 blocked, record the handoff, then request independent review.",
+  "nextAction": "X-06 product d131422a7319be22ccc6fba17a54a047c89e25d8 and handoff e7047e143fae06d2871afc56337709fca339a311 are ready. Queue independent review; keep G-01 blocked.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
