@@ -10,6 +10,13 @@ import (
 	"strings"
 )
 
+func descriptorObjectIdentity(_ fs.FileInfo) (string, bool) {
+	// The fallback platforms do not have a reviewed, serializable object
+	// identity primitive for restart-safe deletion. Callers fail closed before
+	// attempting a physical delete when this proof is unavailable.
+	return "", false
+}
+
 // Platforms without the reviewed Unix no-follow primitives still use a
 // canonical, no-symlink path check. Deletion remains fail closed because a
 // descriptor-bound unlink is unavailable.

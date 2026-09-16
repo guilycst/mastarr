@@ -9,11 +9,23 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
 
 const descriptorOpenReadOnly = unix.O_RDONLY | unix.O_CLOEXEC | unix.O_NOFOLLOW
+
+func descriptorObjectIdentity(info fs.FileInfo) (string, bool) {
+	if info == nil {
+		return "", false
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return "", false
+	}
+	return fmt.Sprintf("unix:dev=%d:ino=%d", stat.Dev, stat.Ino), true
+}
 
 func createPrivateStage(root string) (*os.File, string, fs.FileInfo, error) {
 	directory, err := openRootDirectory(root)

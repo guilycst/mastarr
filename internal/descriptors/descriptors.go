@@ -33,6 +33,7 @@ const (
 	privateStagePrefix       = ".stage-"
 	maxIdentifierBytes       = 256
 	maxReasonBytes           = 128
+	deleteIntentAction       = "descriptor.delete.intent"
 )
 
 var (
@@ -244,8 +245,16 @@ func (service *Service) CaptureMounted(ctx context.Context, request CaptureReque
 	if err := verifyStableFile(ctx, file, before, digest, int64(len(data)), service.maxBytes); err != nil {
 		return Record{}, err
 	}
-	// A mounted source is verified by this package's opened-file identity and
-	// two digest/size observations, so only its bounded exact bytes proceed.
+	// The opened descriptor proves the bytes that were read, but it does not
+	// prove that the configured pathname still selects that same object. A
+	// source can be atomically replaced while the opened descriptor remains
+	// valid. Re-open the constrained pathname and bind it to the verified
+	// object before any bytes are persisted.
+	if err := verifyMountedPath(ctx, service.mountedRoot, relativePath, info, digest, int64(len(data)), service.maxBytes); err != nil {
+		return Record{}, err
+	}
+	// Only the bounded bytes whose configured pathname still names the
+	// verified object proceed to the private descriptor store.
 	return service.capture(ctx, request, data, "mounted_file")
 }
 
@@ -367,10 +376,12 @@ func (service *Service) Content(ctx context.Context, id string) ([]byte, error) 
 	return data, nil
 }
 
-// Delete removes exactly one retained object after explicit acknowledgement
-// and marks its metadata deleted in the same local journal transaction as a
-// redacted audit event. Repeating a completed deletion returns the retained
-// metadata without another filesystem effect or duplicate audit event.
+// Delete removes exactly one retained object after explicit acknowledgement.
+// A redacted pending intent is committed before unlink, and the terminal
+// metadata/audit transition is committed only after the filesystem effect.
+// This leaves a restart-reconcilable record if the database fails after
+// unlink. Repeating a completed deletion returns retained metadata without
+// another filesystem effect or duplicate terminal audit event.
 func (service *Service) Delete(ctx context.Context, request DeleteRequest) (Record, error) {
 	if err := service.validate(); err != nil {
 		return Record{}, err
@@ -393,48 +404,78 @@ func (service *Service) Delete(ctx context.Context, request DeleteRequest) (Reco
 	if row.DeletedAt.Valid {
 		return service.recordForRow(ctx, row)
 	}
+	pendingMetadata, pending, err := service.pendingDeleteIntent(ctx, row)
+	if err != nil {
+		return Record{}, err
+	}
 	if row.OriginalDigest.Valid {
 		if err := validateStoragePath(row.StoragePath, row.ID); err != nil {
 			return Record{}, err
 		}
 		file, info, openErr := openConstrainedFile(service.storageRoot, row.StoragePath)
 		if openErr != nil {
-			return Record{}, fmt.Errorf("%w: retained object cannot be verified", ErrDescriptorChanged)
+			if pending && errors.Is(openErr, fs.ErrNotExist) {
+				// A committed intent proves this exact private object was the
+				// target of a deletion. Its absence means the filesystem phase
+				// completed before a durable terminal transition; reconcile the
+				// metadata without attempting a pathname operation.
+			} else {
+				return Record{}, fmt.Errorf("%w: retained object cannot be verified", ErrDescriptorChanged)
+			}
+		} else {
+			fileIdentity, identityOK := descriptorObjectIdentity(info)
+			if !identityOK {
+				_ = file.Close()
+				return Record{}, fmt.Errorf("%w: retained object identity unavailable", ErrDeleteUncertain)
+			}
+			if pending && pendingMetadata.FileIdentity != fileIdentity {
+				_ = file.Close()
+				return Record{}, ErrDescriptorChanged
+			}
+			dataDigest, verifyErr := digestOpenedFile(ctx, file, info, service.maxBytes)
+			if verifyErr != nil {
+				_ = file.Close()
+				return Record{}, verifyErr
+			}
+			if dataDigest != row.OriginalDigest.String {
+				_ = file.Close()
+				return Record{}, ErrDescriptorChanged
+			}
+			if err := service.ensureDeleteIntent(ctx, row, fileIdentity); err != nil {
+				_ = file.Close()
+				return Record{}, err
+			}
+			beforeDeleteDescriptor(request.DescriptorID)
+			// Re-read after the review seam and immediately before unlink. This
+			// catches an in-place rewrite that preserves the selected inode; the
+			// descriptor-relative removal below separately rejects pathname
+			// replacement with a different inode.
+			latestDigest, verifyErr := digestOpenedFile(ctx, file, info, service.maxBytes)
+			if verifyErr != nil {
+				_ = file.Close()
+				return Record{}, verifyErr
+			}
+			if latestDigest != row.OriginalDigest.String {
+				_ = file.Close()
+				return Record{}, ErrDescriptorChanged
+			}
+			if err := removeConstrainedFile(service.storageRoot, row.StoragePath, info); err != nil {
+				_ = file.Close()
+				return Record{}, err
+			}
+			if err := file.Close(); err != nil {
+				return Record{}, fmt.Errorf("%w: close deleted object", ErrDeleteUncertain)
+			}
+			if err := syncDirectoryPath(service.objectsRoot); err != nil {
+				return Record{}, fmt.Errorf("%w: sync deleted object directory", ErrDeleteUncertain)
+			}
+			afterDeleteUnlink(request.DescriptorID)
 		}
-		dataDigest, verifyErr := digestOpenedFile(ctx, file, info, service.maxBytes)
-		if verifyErr != nil {
-			_ = file.Close()
-			return Record{}, verifyErr
-		}
-		if dataDigest != row.OriginalDigest.String {
-			_ = file.Close()
-			return Record{}, ErrDescriptorChanged
-		}
-		beforeDeleteDescriptor(request.DescriptorID)
-		// Re-read after the review seam and immediately before unlink. This
-		// catches an in-place rewrite that preserves the selected inode; the
-		// descriptor-relative removal below separately rejects pathname
-		// replacement with a different inode.
-		latestDigest, verifyErr := digestOpenedFile(ctx, file, info, service.maxBytes)
-		if verifyErr != nil {
-			_ = file.Close()
-			return Record{}, verifyErr
-		}
-		if latestDigest != row.OriginalDigest.String {
-			_ = file.Close()
-			return Record{}, ErrDescriptorChanged
-		}
-		if err := removeConstrainedFile(service.storageRoot, row.StoragePath, info); err != nil {
-			_ = file.Close()
-			return Record{}, err
-		}
-		if err := file.Close(); err != nil {
-			return Record{}, fmt.Errorf("%w: close deleted object", ErrDeleteUncertain)
-		}
-		if err := syncDirectoryPath(service.objectsRoot); err != nil {
-			return Record{}, fmt.Errorf("%w: sync deleted object directory", ErrDeleteUncertain)
-		}
-		_ = dataDigest
+	} else if err := service.ensureDeleteIntent(ctx, row, ""); err != nil {
+		// Unavailable descriptors have no filesystem phase, but they still
+		// receive the same durable intent/terminal audit sequence so a retry
+		// cannot lose the exact reviewed deletion scope.
+		return Record{}, err
 	}
 	deletedAt := service.now()
 	if err := service.markDeleted(ctx, row.ID, deletedAt, row.DescriptorType, row.OriginalDigest); err != nil {
@@ -660,6 +701,138 @@ func (service *Service) removeGeneratedObject(storagePath, id string) error {
 	}
 	_ = file.Close()
 	return removeConstrainedFile(service.storageRoot, storagePath, info)
+}
+
+type deleteIntentMetadata struct {
+	Scope          string `json:"scope"`
+	DescriptorType string `json:"descriptor_type"`
+	Digest         string `json:"digest"`
+	FileIdentity   string `json:"file_identity,omitempty"`
+}
+
+// pendingDeleteIntent returns whether an append-only, redacted deletion
+// intent exists for the exact descriptor identity. Audit rows cannot be
+// updated by design, so the later descriptor.delete event is the terminal
+// state and the pending row remains as the durable pre-unlink evidence.
+func (service *Service) pendingDeleteIntent(ctx context.Context, row storedRecord) (deleteIntentMetadata, bool, error) {
+	var rawMetadata string
+	err := service.db.QueryRowContext(ctx, `SELECT metadata_json FROM audit_events WHERE action = ? AND resource_kind = 'descriptor' AND resource_id = ? AND outcome = 'pending' ORDER BY id LIMIT 1`, deleteIntentAction, row.ID).Scan(&rawMetadata)
+	if errors.Is(err, sql.ErrNoRows) {
+		return deleteIntentMetadata{}, false, nil
+	}
+	if err != nil {
+		if contextErr := contextCheckpoint(ctx); contextErr != nil {
+			return deleteIntentMetadata{}, false, contextErr
+		}
+		return deleteIntentMetadata{}, false, fmt.Errorf("%w: read deletion intent", ErrStorage)
+	}
+	metadata, err := decodeDeleteIntentMetadata(rawMetadata)
+	if err != nil {
+		return deleteIntentMetadata{}, false, err
+	}
+	if err := validateDeleteIntentMetadata(metadata, row, ""); err != nil {
+		return deleteIntentMetadata{}, false, err
+	}
+	return metadata, true, nil
+}
+
+// ensureDeleteIntent commits the exact deletion identity before any
+// irreversible filesystem effect. It is idempotent for the descriptor's
+// pending intent and contains no pathname or descriptor bytes.
+func (service *Service) ensureDeleteIntent(ctx context.Context, row storedRecord, fileIdentity string) error {
+	metadata, err := json.Marshal(deleteIntentMetadata{
+		Scope:          "descriptor",
+		DescriptorType: row.DescriptorType,
+		Digest:         row.OriginalDigest.String,
+		FileIdentity:   fileIdentity,
+	})
+	if err != nil {
+		return fmt.Errorf("%w: encode deletion intent", ErrStorage)
+	}
+	tx, err := service.db.BeginTx(ctx, nil)
+	if err != nil {
+		if contextErr := contextCheckpoint(ctx); contextErr != nil {
+			return contextErr
+		}
+		return fmt.Errorf("%w: begin deletion intent", ErrStorage)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var existing string
+	queryErr := tx.QueryRowContext(ctx, `SELECT metadata_json FROM audit_events WHERE action = ? AND resource_kind = 'descriptor' AND resource_id = ? AND outcome = 'pending' ORDER BY id LIMIT 1`, deleteIntentAction, row.ID).Scan(&existing)
+	switch {
+	case queryErr == nil:
+		existingMetadata, decodeErr := decodeDeleteIntentMetadata(existing)
+		if decodeErr != nil {
+			return decodeErr
+		}
+		if err := validateDeleteIntentMetadata(existingMetadata, row, fileIdentity); err != nil {
+			return err
+		}
+	case errors.Is(queryErr, sql.ErrNoRows):
+		eventID, idErr := newID()
+		if idErr != nil {
+			return idErr
+		}
+		if _, insertErr := tx.ExecContext(ctx, `INSERT INTO audit_events (event_id, occurred_at, actor, action, resource_kind, resource_id, outcome, metadata_json, redacted) VALUES (?, ?, 'unauthenticated', ?, 'descriptor', ?, 'pending', ?, 1)`, eventID, service.now().Format(time.RFC3339Nano), deleteIntentAction, row.ID, string(metadata)); insertErr != nil {
+			if contextErr := contextCheckpoint(ctx); contextErr != nil {
+				return contextErr
+			}
+			return fmt.Errorf("%w: persist deletion intent", ErrStorage)
+		}
+	default:
+		if contextErr := contextCheckpoint(ctx); contextErr != nil {
+			return contextErr
+		}
+		return fmt.Errorf("%w: read deletion intent", ErrStorage)
+	}
+	if err := tx.Commit(); err != nil {
+		if contextErr := contextCheckpoint(ctx); contextErr != nil {
+			return contextErr
+		}
+		return fmt.Errorf("%w: commit deletion intent", ErrStorage)
+	}
+	return nil
+}
+
+func decodeDeleteIntentMetadata(raw string) (deleteIntentMetadata, error) {
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var metadata deleteIntentMetadata
+	if err := decoder.Decode(&metadata); err != nil {
+		return deleteIntentMetadata{}, fmt.Errorf("%w: malformed deletion intent", ErrStorage)
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		return deleteIntentMetadata{}, fmt.Errorf("%w: malformed deletion intent", ErrStorage)
+	}
+	return metadata, nil
+}
+
+func validateDeleteIntentMetadata(metadata deleteIntentMetadata, row storedRecord, expectedIdentity string) error {
+	if metadata.Scope != "descriptor" || metadata.DescriptorType != row.DescriptorType || metadata.Digest != row.OriginalDigest.String {
+		return fmt.Errorf("%w: deletion intent identity changed", ErrDescriptorChanged)
+	}
+	if row.OriginalDigest.Valid {
+		if metadata.FileIdentity == "" {
+			return fmt.Errorf("%w: deletion intent lacks object identity", ErrStorage)
+		}
+		if expectedIdentity != "" && metadata.FileIdentity != expectedIdentity {
+			return ErrDescriptorChanged
+		}
+	} else if metadata.FileIdentity != "" {
+		return fmt.Errorf("%w: unavailable deletion intent has object identity", ErrStorage)
+	}
+	return nil
+}
+
+func ensureJSONEOF(decoder *json.Decoder) error {
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return errors.New("unexpected trailing JSON value")
+		}
+		return err
+	}
+	return nil
 }
 
 func (service *Service) markDeleted(ctx context.Context, id string, deletedAt time.Time, descriptorType string, digest sql.NullString) error {
@@ -1034,6 +1207,38 @@ func verifyStableFile(ctx context.Context, file *os.File, before fs.FileInfo, di
 	return nil
 }
 
+// verifyMountedPath re-opens the configured source pathname after the
+// opened-file stability check. Holding an fd keeps an unlinked inode readable,
+// so the fd checks alone cannot detect an atomic pathname replacement. The
+// pathname must still resolve to the same object and the second opened view
+// must still carry the bytes that were approved for capture.
+func verifyMountedPath(ctx context.Context, root, relative string, expected fs.FileInfo, digest string, size, maximum int64) error {
+	if err := contextCheckpoint(ctx); err != nil {
+		return err
+	}
+	file, info, err := openConstrainedFile(root, relative)
+	if err != nil {
+		// The initial path was already validated. Any later path failure means
+		// the selected source no longer has the identity that was reviewed.
+		return fmt.Errorf("%w: mounted pathname changed: %v", ErrDescriptorChanged, err)
+	}
+	defer file.Close()
+	if expected == nil || !os.SameFile(expected, info) {
+		return ErrDescriptorChanged
+	}
+	data, reopenedDigest, before, err := readStableFile(ctx, file, info, maximum)
+	if err != nil {
+		return err
+	}
+	if err := verifyStableFile(ctx, file, before, reopenedDigest, int64(len(data)), maximum); err != nil {
+		return err
+	}
+	if reopenedDigest != digest || int64(len(data)) != size {
+		return ErrDescriptorChanged
+	}
+	return nil
+}
+
 func digestOpenedFile(ctx context.Context, file *os.File, info fs.FileInfo, maximum int64) (string, error) {
 	data, digest, before, err := readStableFile(ctx, file, info, maximum)
 	if err != nil {
@@ -1193,3 +1398,4 @@ func removeFileIfSame(name string, expected fs.FileInfo) error {
 // callers. They let synthetic tests inject a mutation at each safety boundary.
 var afterSourceRead = func(*os.File) {}
 var beforeDeleteDescriptor = func(string) {}
+var afterDeleteUnlink = func(string) {}

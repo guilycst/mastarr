@@ -22,6 +22,7 @@ const (
 type descriptorFixture struct {
 	service    *Service
 	store      *storage.Store
+	dbPath     string
 	root       string
 	mounted    string
 	downloadID string
@@ -35,7 +36,8 @@ func newDescriptorFixture(t *testing.T) *descriptorFixture {
 	if err := os.MkdirAll(mounted, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	store, err := storage.Open(filepath.Join(base, "state.sqlite"))
+	dbPath := filepath.Join(base, "state.sqlite")
+	store, err := storage.Open(dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +68,7 @@ func newDescriptorFixture(t *testing.T) *descriptorFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &descriptorFixture{service: service, store: store, root: root, mounted: mounted, downloadID: testDownloadID}
+	return &descriptorFixture{service: service, store: store, dbPath: dbPath, root: root, mounted: mounted, downloadID: testDownloadID}
 }
 
 func syntheticExport(data []byte) VerifiedExport {
@@ -257,6 +259,47 @@ func TestCaptureMountedConfinementAndMutationVerification(t *testing.T) {
 	}
 }
 
+func TestCaptureMountedRejectsAtomicPathReplacement(t *testing.T) {
+	fixture := newDescriptorFixture(t)
+	pathValue := filepath.Join(fixture.mounted, "replacement.torrent")
+	if err := os.WriteFile(pathValue, []byte("original mounted descriptor"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	replacement := []byte("replacement must not be captured")
+	replacementPath := pathValue + ".next"
+	originalHook := afterSourceRead
+	afterSourceRead = func(*os.File) {
+		if err := os.WriteFile(replacementPath, replacement, 0o600); err != nil {
+			t.Errorf("write replacement pathname: %v", err)
+			return
+		}
+		if err := os.Rename(replacementPath, pathValue); err != nil {
+			t.Errorf("atomically replace mounted pathname: %v", err)
+		}
+	}
+	t.Cleanup(func() { afterSourceRead = originalHook })
+
+	for range 4 {
+		if _, err := fixture.service.CaptureMounted(context.Background(), captureRequest(fixture, "atomic-replacement"), "replacement.torrent"); !errors.Is(err, ErrDescriptorChanged) {
+			t.Fatalf("atomic replacement error = %v, want descriptor changed", err)
+		}
+	}
+	var count int
+	if err := fixture.store.DB().QueryRow(`SELECT count(*) FROM descriptors WHERE descriptor_type = 'atomic-replacement'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("atomic replacement created %d descriptor rows", count)
+	}
+	got, err := os.ReadFile(pathValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, replacement) {
+		t.Fatalf("replacement bytes = %q, want %q", got, replacement)
+	}
+}
+
 func TestRecordUnavailablePreservesHonestStateAndCanBeReplaced(t *testing.T) {
 	fixture := newDescriptorFixture(t)
 	request := captureRequest(fixture, "nzb")
@@ -341,6 +384,105 @@ func TestDeleteRequiresAcknowledgementRetainsAuditMetadataAndIsIdempotent(t *tes
 	}
 	if redacted != "1" || bytes.Contains([]byte(metadata), data) {
 		t.Fatalf("audit metadata is not redacted: redacted=%q metadata=%q", redacted, metadata)
+	}
+}
+
+func TestDeleteIntentReconcilesAfterDatabaseFailure(t *testing.T) {
+	fixture := newDescriptorFixture(t)
+	ctx := context.Background()
+	data := []byte("descriptor survives the journal boundary")
+	record, err := fixture.service.CaptureExport(ctx, captureRequest(fixture, "restart-delete"), syntheticExport(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalHook := afterDeleteUnlink
+	afterDeleteUnlink = func(id string) {
+		if id != record.ID {
+			t.Fatalf("delete hook id = %q, want %q", id, record.ID)
+		}
+		if err := fixture.store.Close(); err != nil {
+			t.Fatalf("close database after unlink: %v", err)
+		}
+	}
+	t.Cleanup(func() { afterDeleteUnlink = originalHook })
+	_, err = fixture.service.Delete(ctx, DeleteRequest{DescriptorID: record.ID, IrreversibleAcknowledged: true})
+	if !errors.Is(err, ErrDeleteUncertain) {
+		t.Fatalf("post-unlink database failure = %v, want uncertain", err)
+	}
+	if _, err := os.Stat(filepath.Join(fixture.root, objectPath(record.ID))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("object after post-unlink failure = %v, want absent", err)
+	}
+	// The hook is only for the first process. A fresh service must reconcile
+	// the exact pending intent without dispatching another filesystem delete.
+	afterDeleteUnlink = originalHook
+	reopened, err := storage.Open(fixture.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	var retention string
+	if err := reopened.DB().QueryRow(`SELECT retention FROM descriptors WHERE id = ?`, record.ID).Scan(&retention); err != nil {
+		t.Fatal(err)
+	}
+	if retention != string(RetentionRetain) {
+		t.Fatalf("retention before restart reconciliation = %q", retention)
+	}
+	var pendingCount int
+	if err := reopened.DB().QueryRow(`SELECT count(*) FROM audit_events WHERE action = ? AND resource_id = ? AND outcome = 'pending'`, deleteIntentAction, record.ID).Scan(&pendingCount); err != nil {
+		t.Fatal(err)
+	}
+	if pendingCount != 1 {
+		t.Fatalf("pending delete intents = %d, want 1", pendingCount)
+	}
+	fresh, err := New(reopened.DB(), Options{
+		StorageRoot: fixture.root,
+		MountedRoot: fixture.mounted,
+		Clock: func() time.Time {
+			return time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A replacement with identical bytes must not satisfy the persisted intent:
+	// digest equality alone cannot prove that it is the original object.
+	objectPathValue := filepath.Join(fixture.root, objectPath(record.ID))
+	if err := os.WriteFile(objectPathValue, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fresh.Delete(ctx, DeleteRequest{DescriptorID: record.ID, IrreversibleAcknowledged: true}); !errors.Is(err, ErrDescriptorChanged) {
+		t.Fatalf("same-content replacement delete = %v, want descriptor changed", err)
+	}
+	replacementBytes, err := os.ReadFile(objectPathValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(replacementBytes, data) {
+		t.Fatalf("same-content replacement changed after rejected retry: %q", replacementBytes)
+	}
+	if err := os.Remove(objectPathValue); err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := fresh.Delete(ctx, DeleteRequest{DescriptorID: record.ID, IrreversibleAcknowledged: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted.Retention != RetentionDeleted || deleted.DeletedAt == nil || deleted.Digest != record.Digest {
+		t.Fatalf("reconciled delete = %#v", deleted)
+	}
+	var finalCount int
+	if err := reopened.DB().QueryRow(`SELECT count(*) FROM audit_events WHERE action = 'descriptor.delete' AND resource_id = ? AND outcome = 'deleted'`, record.ID).Scan(&finalCount); err != nil {
+		t.Fatal(err)
+	}
+	if finalCount != 1 {
+		t.Fatalf("terminal delete audits = %d, want 1", finalCount)
+	}
+	var stillPending int
+	if err := reopened.DB().QueryRow(`SELECT count(*) FROM audit_events WHERE action = ? AND resource_id = ? AND outcome = 'pending'`, deleteIntentAction, record.ID).Scan(&stillPending); err != nil {
+		t.Fatal(err)
+	}
+	if stillPending != 1 {
+		t.Fatalf("durable delete intents after reconciliation = %d, want 1", stillPending)
 	}
 }
 
