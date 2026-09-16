@@ -2960,7 +2960,8 @@
         "02c0b2113d4327119eb55fe419915ea1c99e6093 integrated W-02 approval receipt. G-01 remains open; no upstream write capability was enabled.",
         "Cross-lane finding from W-03 review receipt d11938398a0a7b2dbd4cc530212e35c751a73fb8, integrated as d386489beb52cbb247d6326f34d201e2c596cd43: the executor ignores a DispatchResult whenever dispatch also returns an error and journals all effects unknown with empty evidence. W-02 correction round eight must preserve handler-provided effects, certainty and evidence before returning the error.",
         "f364a10301d68a670f945f57831dfa17c9909bef W-02 correction round eight persists handler-provided partial DispatchResult effects, certainty, evidence and dispatched state before returning an error; omitted targets become unknown and malformed or foreign reports fail closed. Reconciliation regression proves no blind redispatch. 297b6fbc4f12ed6b3dffdba2164b74fb5a115147 records the handoff and full checks.",
-        "eb514ccfe90e334d7e697b0eaac2363590c8ebd1 W-02 correction round eight independent review requested changes: P1 ExternalID-only errored dispatch was not treated as uncertain or persisted, allowing blind redispatch; P2 omitted targets with valid opaque object evidence lost prior evidence. Valid partial and fail-closed malformed/foreign matrices passed; full offline guardrails passed."
+        "eb514ccfe90e334d7e697b0eaac2363590c8ebd1 W-02 correction round eight independent review requested changes: P1 ExternalID-only errored dispatch was not treated as uncertain or persisted, allowing blind redispatch; P2 omitted targets with valid opaque object evidence lost prior evidence. Valid partial and fail-closed malformed/foreign matrices passed; full offline guardrails passed.",
+        "92891ada4e3aa0910f8faee659118f802ef2b1d1 dispatched W-02 correction round nine to /root/x05_implementer from f364a10301d68a670f945f57831dfa17c9909bef; owned paths remain internal/execution/ and docs/execution/handoffs/W-02-correction-round9.md, shared main, with GOWORK=off focused/race/vet/offline guardrail/module/cross-build checks."
       ],
       "review": {
         "status": "approved",
@@ -3040,7 +3041,8 @@
         "correctionImplementationCommit": null,
         "correctionHandoffCommit": null,
         "correctionProductCommits": [],
-        "correctionReviewSourceCommit": null
+        "correctionReviewSourceCommit": null,
+        "correctionDispatchCheckpoint": "92891ada4e3aa0910f8faee659118f802ef2b1d1"
       },
       "reviewHistory": [
         {
