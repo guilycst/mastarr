@@ -723,7 +723,7 @@ func TestCaptureFenceOwnerAndGenerationPreventLiveReuseRelease(t *testing.T) {
 	if err != nil {
 		t.Fatalf("same-operation recovery acquisition = %v", err)
 	}
-	if first.EventID == second.EventID || first.OwnerID == second.OwnerID || first.Generation == 0 || second.Generation == 0 {
+	if first.EventID == second.EventID || first.OwnerID == second.OwnerID || first.Generation == 0 || second.Generation == 0 || first.LeaseUntil.IsZero() || second.LeaseUntil.IsZero() {
 		t.Fatalf("fence ownership was reused: first=%#v second=%#v", first, second)
 	}
 	if err := secondService.finishCaptureIntentOwned(ctx, intent, "committed", &second); !errors.Is(err, ErrCaptureUncertain) {
@@ -743,6 +743,68 @@ func TestCaptureFenceOwnerAndGenerationPreventLiveReuseRelease(t *testing.T) {
 		t.Fatalf("delete acquisition after exact owner release = %v", err)
 	}
 	if err := thirdService.releaseCaptureFence(ctx, third); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCaptureFenceExpiredLeaseAllowsFreshOwner(t *testing.T) {
+	fixture := newDescriptorFixture(t)
+	ctx := context.Background()
+	request := captureRequest(fixture, "capture-fence-expiry")
+	unavailable, err := fixture.service.RecordUnavailable(ctx, request, "qbittorrent.export", "pending")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("expired capture fence can be recovered")
+	stageFile, stagePath, stageInfo, err := createPrivateStage(fixture.service.objectsRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stageFile.Write(data); err != nil {
+		_ = stageFile.Close()
+		t.Fatal(err)
+	}
+	if err := stageFile.Sync(); err != nil {
+		_ = stageFile.Close()
+		t.Fatal(err)
+	}
+	if err := stageFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := fixture.service.getStored(ctx, unavailable.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err := fixture.service.ensureCaptureIntent(ctx, unavailable.ID, &stored, request, digestBytes(data), int64(len(data)), "qbittorrent.export", filepath.Base(stagePath), stageInfo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return current }
+	firstService, err := New(fixture.store.DB(), Options{StorageRoot: fixture.root, MountedRoot: fixture.mounted, Clock: clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := firstService.acquireCaptureFence(ctx, intent, "capture-recover")
+	if err != nil {
+		t.Fatal(err)
+	}
+	current = current.Add(captureFenceLease + time.Second)
+	secondService, err := New(fixture.store.DB(), Options{StorageRoot: fixture.root, MountedRoot: fixture.mounted, Clock: clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := secondService.acquireCaptureFence(ctx, intent, "capture-recover")
+	if err != nil {
+		t.Fatalf("fresh owner after lease expiry = %v", err)
+	}
+	if first.EventID == second.EventID || first.OwnerID == second.OwnerID {
+		t.Fatalf("expired lease reused owner: first=%#v second=%#v", first, second)
+	}
+	if err := secondService.releaseCaptureFence(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+	if err := firstService.releaseCaptureFence(ctx, first); err != nil {
 		t.Fatal(err)
 	}
 }

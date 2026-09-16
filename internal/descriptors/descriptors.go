@@ -38,6 +38,7 @@ const (
 	captureIntentAction         = "descriptor.capture.intent"
 	captureTerminalAction       = "descriptor.capture"
 	captureFenceAction          = "descriptor.capture.fence"
+	captureFenceLease           = 30 * time.Second
 )
 
 var (
@@ -902,6 +903,7 @@ type captureFence struct {
 	Operation     string
 	OwnerID       string
 	Generation    uint64
+	LeaseUntil    time.Time
 }
 
 type captureFenceMetadata struct {
@@ -911,6 +913,7 @@ type captureFenceMetadata struct {
 	Operation     string `json:"operation"`
 	OwnerID       string `json:"owner_id"`
 	Generation    uint64 `json:"generation"`
+	LeaseUntil    string `json:"lease_until"`
 	FenceEventID  string `json:"fence_event_id,omitempty"`
 }
 
@@ -1341,6 +1344,9 @@ func decodeCaptureFenceMetadata(raw string) (captureFenceMetadata, error) {
 	if err := validateToken(metadata.Operation, maxIdentifierBytes); err != nil {
 		return captureFenceMetadata{}, fmt.Errorf("%w: invalid capture fence owner", ErrStorage)
 	}
+	if _, err := time.Parse(time.RFC3339Nano, metadata.LeaseUntil); err != nil {
+		return captureFenceMetadata{}, fmt.Errorf("%w: invalid capture fence lease", ErrStorage)
+	}
 	if metadata.FenceEventID != "" && metadata.FenceEventID == metadata.IntentEventID {
 		return captureFenceMetadata{}, fmt.Errorf("%w: capture fence identity reused", ErrStorage)
 	}
@@ -1350,8 +1356,9 @@ func decodeCaptureFenceMetadata(raw string) (captureFenceMetadata, error) {
 // acquireCaptureFence is the durable compare-and-swap boundary shared by
 // capture recovery and Delete. A pending fence owned by another operation
 // blocks the caller. A second executor for the same operation receives its own
-// owner and generation; retaining every active owner prevents one executor
-// from releasing or terminalizing another executor's protected transition.
+// owner and generation, while an expired lease can be recovered by a fresh
+// executor. Retaining every unexpired owner prevents one executor from
+// releasing or terminalizing another executor's protected transition.
 func (service *Service) acquireCaptureFence(ctx context.Context, intent captureIntent, operation string) (captureFence, error) {
 	if err := validateCaptureIntent(intent); err != nil {
 		return captureFence{}, err
@@ -1370,6 +1377,7 @@ func (service *Service) acquireCaptureFence(ctx context.Context, intent captureI
 		return captureFence{}, fmt.Errorf("%w: begin capture fence", ErrStorage)
 	}
 	defer func() { _ = tx.Rollback() }()
+	now := service.now()
 	rows, queryErr := tx.QueryContext(ctx, `
 		SELECT fence.event_id, fence.metadata_json
 		FROM audit_events AS fence
@@ -1408,7 +1416,12 @@ func (service *Service) acquireCaptureFence(ctx context.Context, intent captureI
 			_ = rows.Close()
 			return captureFence{}, fmt.Errorf("%w: capture fence identity changed", ErrCaptureUncertain)
 		}
-		if metadata.Operation != operation {
+		leaseUntil, parseErr := time.Parse(time.RFC3339Nano, metadata.LeaseUntil)
+		if parseErr != nil {
+			_ = rows.Close()
+			return captureFence{}, fmt.Errorf("%w: invalid capture fence lease", ErrStorage)
+		}
+		if leaseUntil.After(now) && metadata.Operation != operation {
 			_ = rows.Close()
 			return captureFence{}, fmt.Errorf("%w: capture recovery is fenced", ErrCaptureUncertain)
 		}
@@ -1432,6 +1445,7 @@ func (service *Service) acquireCaptureFence(ctx context.Context, intent captureI
 		Operation:     operation,
 		OwnerID:       service.ownerID,
 		Generation:    generation,
+		LeaseUntil:    now.Add(captureFenceLease).Format(time.RFC3339Nano),
 	})
 	if err != nil {
 		return captureFence{}, fmt.Errorf("%w: encode capture fence", ErrStorage)
@@ -1470,8 +1484,9 @@ func (service *Service) acquireCaptureFence(ctx context.Context, intent captureI
 				    AND released.outcome = 'released'
 				    AND json_extract(released.metadata_json, '$.fence_event_id') = existing.event_id
 				  )
+			  AND json_extract(existing.metadata_json, '$.lease_until') > ?
 			  AND json_extract(existing.metadata_json, '$.operation') <> ?
-		)`, eventID, service.now().Format(time.RFC3339Nano), captureFenceAction, intent.ResourceID, string(metadata), captureIntentAction, intent.ResourceID, intent.EventID, captureTerminalAction, captureFenceAction, intent.ResourceID, intent.EventID, captureFenceAction, operation)
+		)`, eventID, now.Format(time.RFC3339Nano), captureFenceAction, intent.ResourceID, string(metadata), captureIntentAction, intent.ResourceID, intent.EventID, captureTerminalAction, captureFenceAction, intent.ResourceID, intent.EventID, captureFenceAction, now.Format(time.RFC3339Nano), operation)
 	if err != nil {
 		if contextErr := contextCheckpoint(ctx); contextErr != nil {
 			return captureFence{}, contextErr
@@ -1491,7 +1506,7 @@ func (service *Service) acquireCaptureFence(ctx context.Context, intent captureI
 		}
 		return captureFence{}, fmt.Errorf("%w: commit capture fence", ErrStorage)
 	}
-	return captureFence{EventID: eventID, IntentEventID: intent.EventID, ResourceID: intent.ResourceID, Operation: operation, OwnerID: service.ownerID, Generation: generation}, nil
+	return captureFence{EventID: eventID, IntentEventID: intent.EventID, ResourceID: intent.ResourceID, Operation: operation, OwnerID: service.ownerID, Generation: generation, LeaseUntil: now.Add(captureFenceLease)}, nil
 }
 
 func (service *Service) releaseCaptureFence(ctx context.Context, fence captureFence) error {
@@ -1514,7 +1529,7 @@ func (service *Service) releaseCaptureFence(ctx context.Context, fence captureFe
 	queryErr := tx.QueryRowContext(ctx, `SELECT outcome, metadata_json FROM audit_events WHERE action = ? AND resource_kind = 'descriptor' AND resource_id = ? AND outcome = 'released' AND json_extract(metadata_json, '$.fence_event_id') = ? LIMIT 1`, captureFenceAction, fence.ResourceID, fence.EventID).Scan(&existingOutcome, &existingRaw)
 	if queryErr == nil {
 		released, decodeErr := decodeCaptureFenceMetadata(existingRaw)
-		if decodeErr != nil || released.IntentEventID != fence.IntentEventID || released.ResourceID != fence.ResourceID || released.Operation != fence.Operation || released.OwnerID != fence.OwnerID || released.Generation != fence.Generation || released.FenceEventID != fence.EventID {
+		if decodeErr != nil || released.IntentEventID != fence.IntentEventID || released.ResourceID != fence.ResourceID || released.Operation != fence.Operation || released.OwnerID != fence.OwnerID || released.Generation != fence.Generation || released.FenceEventID != fence.EventID || released.LeaseUntil != fence.LeaseUntil.Format(time.RFC3339Nano) {
 			return fmt.Errorf("%w: capture fence release identity changed", ErrCaptureUncertain)
 		}
 		if err := tx.Commit(); err != nil {
@@ -1533,7 +1548,7 @@ func (service *Service) releaseCaptureFence(ctx context.Context, fence captureFe
 		return fmt.Errorf("%w: read capture fence", ErrStorage)
 	}
 	pending, decodeErr := decodeCaptureFenceMetadata(pendingRaw)
-	if decodeErr != nil || pending.IntentEventID != fence.IntentEventID || pending.ResourceID != fence.ResourceID || pending.Operation != fence.Operation || pending.OwnerID != fence.OwnerID || pending.Generation != fence.Generation {
+	if decodeErr != nil || pending.IntentEventID != fence.IntentEventID || pending.ResourceID != fence.ResourceID || pending.Operation != fence.Operation || pending.OwnerID != fence.OwnerID || pending.Generation != fence.Generation || pending.LeaseUntil != fence.LeaseUntil.Format(time.RFC3339Nano) {
 		return fmt.Errorf("%w: capture fence owner changed", ErrCaptureUncertain)
 	}
 	eventID, err := newID()
@@ -1580,6 +1595,21 @@ func (service *Service) finishCaptureIntentOwned(ctx context.Context, intent cap
 		return fmt.Errorf("%w: begin capture terminal", ErrStorage)
 	}
 	defer func() { _ = tx.Rollback() }()
+	now := service.now()
+	if owner != nil {
+		var ownerRaw string
+		if err := tx.QueryRowContext(ctx, `SELECT metadata_json FROM audit_events WHERE action = ? AND resource_kind = 'descriptor' AND resource_id = ? AND event_id = ? AND outcome = 'pending' LIMIT 1`, captureFenceAction, intent.ResourceID, owner.EventID).Scan(&ownerRaw); err != nil {
+			return fmt.Errorf("%w: capture terminal owner is missing", ErrCaptureUncertain)
+		}
+		ownerMetadata, decodeErr := decodeCaptureFenceMetadata(ownerRaw)
+		if decodeErr != nil || !captureFenceMatches(owner.EventID, ownerMetadata, owner) {
+			return fmt.Errorf("%w: capture terminal owner changed", ErrCaptureUncertain)
+		}
+		leaseUntil, parseErr := time.Parse(time.RFC3339Nano, ownerMetadata.LeaseUntil)
+		if parseErr != nil || !leaseUntil.After(now) {
+			return fmt.Errorf("%w: capture terminal lease expired", ErrCaptureUncertain)
+		}
+	}
 	activeFences, queryErr := tx.QueryContext(ctx, `
 		SELECT fence.event_id, fence.metadata_json
 		FROM audit_events AS fence
@@ -1595,7 +1625,8 @@ func (service *Service) finishCaptureIntentOwned(ctx context.Context, intent cap
 			    AND released.resource_id = fence.resource_id
 			    AND released.outcome = 'released'
 			    AND json_extract(released.metadata_json, '$.fence_event_id') = fence.event_id
-		  )`, captureFenceAction, intent.ResourceID, intent.EventID, captureFenceAction)
+		  )
+		  AND json_extract(fence.metadata_json, '$.lease_until') > ?`, captureFenceAction, intent.ResourceID, intent.EventID, captureFenceAction, now.Format(time.RFC3339Nano))
 	if queryErr != nil {
 		if contextErr := contextCheckpoint(ctx); contextErr != nil {
 			return contextErr
