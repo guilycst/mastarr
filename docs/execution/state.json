@@ -4269,7 +4269,8 @@
         "No local replace or go.work dependency is allowed. If the public nested module versions cannot bootstrap root integration, preserve the current adapter and document the release/bootstrap blocker.",
         "Dependency commits: X-06 0bbf8405859ac604d9d05237badef45dd0ee7fbc, X-15 828e0084f2d88f86050db5912412352c1a363bc1, X-16 1ef0c07af604e7e63d88bc68955c8097479f7e82.",
         "c20315353bab7e0545204d21a5fd9e1362964b49 product and c111c546429f83d4322e08e7edd495f8de1b29c4 handoff migrate typed catalog/title/episode reads through standalone Sonarr/Radarr clients, preserve bounded private metadata/history bridges, and pass root/nested guardrails without local replace or go.work.",
-        "ad0302c1c309cb8cac4a714a415e15c70a99fcbc independent review round one requests one P1 provider-namespace identity fix, two P2 root context/settings fixes, and an explicit transport-ownership blocker or client contract extension."
+        "ad0302c1c309cb8cac4a714a415e15c70a99fcbc independent review round one requests one P1 provider-namespace identity fix, two P2 root context/settings fixes, and an explicit transport-ownership blocker or client contract extension.",
+        "923e31bbc22aac9782a9d72ca0d59cb8d857f1b8 and ba56aaf0f7b2aafc15923c2c92765f89f42a0007 product commits plus afabf91e3cedca9e4f594578a209de3116869493 handoff isolate provider namespaces, make context errors request-local, preserve metadata presence and contradictions, and retain the bounded transport-ownership blocker with all local checks passing."
       ],
       "review": {
         "status": "changes_requested",
@@ -4320,15 +4321,19 @@
         "correctionRound": 1,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "c20315353bab7e0545204d21a5fd9e1362964b49",
-        "correctionDispatchCommit": null,
         "correctionCheckout": "shared main",
         "correctionReviewPath": "docs/execution/handoffs/X-20-review-round2.md",
         "correctionHandoffPath": "docs/execution/handoffs/X-20-correction-round1.md",
         "correctionReviewer": "/root/x05_reviewer",
-        "correctionStatus": "dispatched",
-        "correctionImplementationCommit": null,
-        "correctionHandoffCommit": null,
-        "correctionReviewSourceCommit": null,
+        "correctionStatus": "review_pending",
+        "correctionImplementationCommit": "ba56aaf0f7b2aafc15923c2c92765f89f42a0007",
+        "correctionProductCommits": [
+          "923e31bbc22aac9782a9d72ca0d59cb8d857f1b8",
+          "ba56aaf0f7b2aafc15923c2c92765f89f42a0007"
+        ],
+        "correctionHandoffCommit": "afabf91e3cedca9e4f594578a209de3116869493",
+        "correctionReviewSourceCommit": "ba56aaf0f7b2aafc15923c2c92765f89f42a0007",
+        "correctionDispatchCommit": "578f7c2457c1f536a034b025db8c39a09c677465",
         "dependencyCommits": {
           "X-06": "0bbf8405859ac604d9d05237badef45dd0ee7fbc",
           "X-15": "828e0084f2d88f86050db5912412352c1a363bc1",
@@ -4595,7 +4600,7 @@
       ]
     }
   },
-  "nextAction": "X-20 review ad0302c1c309cb8cac4a714a415e15c70a99fcbc found one P1 provider-namespace collision and three P2 migration gaps. Queue a focused correction from c20315353bab7e0545204d21a5fd9e1362964b49; keep G-01 blocked.",
+  "nextAction": "X-20 correction product 923e31bbc22aac9782a9d72ca0d59cb8d857f1b8 plus ba56aaf0f7b2aafc15923c2c92765f89f42a0007 and handoff afabf91e3cedca9e4f594578a209de3116869493 are ready for independent review; the bounded transport-ownership blocker and G-01 remain open.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
