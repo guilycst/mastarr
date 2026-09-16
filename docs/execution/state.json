@@ -4271,7 +4271,8 @@
         "c20315353bab7e0545204d21a5fd9e1362964b49 product and c111c546429f83d4322e08e7edd495f8de1b29c4 handoff migrate typed catalog/title/episode reads through standalone Sonarr/Radarr clients, preserve bounded private metadata/history bridges, and pass root/nested guardrails without local replace or go.work.",
         "ad0302c1c309cb8cac4a714a415e15c70a99fcbc independent review round one requests one P1 provider-namespace identity fix, two P2 root context/settings fixes, and an explicit transport-ownership blocker or client contract extension.",
         "923e31bbc22aac9782a9d72ca0d59cb8d857f1b8 and ba56aaf0f7b2aafc15923c2c92765f89f42a0007 product commits plus afabf91e3cedca9e4f594578a209de3116869493 handoff isolate provider namespaces, make context errors request-local, preserve metadata presence and contradictions, and retain the bounded transport-ownership blocker with all local checks passing.",
-        "c55d73bacb004a4a8238342a019e4b42b01151b4 independent round-two review closes foreign-namespace, context, metadata and bounded-transport findings but reproduces a P1 where contradictory same-namespace primary and alias IDs collapse to nonmatch and can trigger a duplicate POST."
+        "c55d73bacb004a4a8238342a019e4b42b01151b4 independent round-two review closes foreign-namespace, context, metadata and bounded-transport findings but reproduces a P1 where contradictory same-namespace primary and alias IDs collapse to nonmatch and can trigger a duplicate POST.",
+        "8e4c722eae49051eabc4572f8ba7fb1176445f0f product and ac4370b4a6b434010a7fda67ffe834115c9c567e handoff add tri-state provider matching for Radarr TMDB, Sonarr TVDB and IMDb, reject contradictions before capability/payload dispatch, preserve valid aliases, and retain the documented partial transport blocker."
       ],
       "review": {
         "status": "changes_requested",
@@ -4319,22 +4320,24 @@
         "correctionRound": 2,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "ba56aaf0f7b2aafc15923c2c92765f89f42a0007",
-        "correctionDispatchCommit": null,
         "correctionCheckout": "shared main",
         "correctionReviewPath": "docs/execution/handoffs/X-20-review-round3.md",
         "correctionHandoffPath": "docs/execution/handoffs/X-20-correction-round2.md",
         "correctionReviewer": "/root/x05_reviewer",
-        "correctionStatus": "dispatched",
+        "correctionStatus": "review_pending",
         "previousCorrectionProductCommits": [
           "923e31bbc22aac9782a9d72ca0d59cb8d857f1b8",
           "ba56aaf0f7b2aafc15923c2c92765f89f42a0007"
         ],
         "previousCorrectionHandoffCommit": "afabf91e3cedca9e4f594578a209de3116869493",
         "previousCorrectionReviewCommit": "c55d73bacb004a4a8238342a019e4b42b01151b4",
-        "correctionImplementationCommit": null,
-        "correctionProductCommits": [],
-        "correctionHandoffCommit": null,
-        "correctionReviewSourceCommit": null,
+        "correctionImplementationCommit": "8e4c722eae49051eabc4572f8ba7fb1176445f0f",
+        "correctionProductCommits": [
+          "8e4c722eae49051eabc4572f8ba7fb1176445f0f"
+        ],
+        "correctionHandoffCommit": "ac4370b4a6b434010a7fda67ffe834115c9c567e",
+        "correctionReviewSourceCommit": "8e4c722eae49051eabc4572f8ba7fb1176445f0f",
+        "correctionDispatchCommit": "6d71570728edba2c6d9d90b07faeb9ce6117b46c",
         "dependencyCommits": {
           "X-06": "0bbf8405859ac604d9d05237badef45dd0ee7fbc",
           "X-15": "828e0084f2d88f86050db5912412352c1a363bc1",
@@ -4610,7 +4613,7 @@
       ]
     }
   },
-  "nextAction": "X-20 round-two review c55d73bacb004a4a8238342a019e4b42b01151b4 found one P1 contradictory same-namespace provider case. Queue a tri-state identity correction from ba56aaf0f7b2aafc15923c2c92765f89f42a0007; keep the bounded transport blocker and G-01 open.",
+  "nextAction": "X-20 tri-state provider correction 8e4c722eae49051eabc4572f8ba7fb1176445f0f and handoff ac4370b4a6b434010a7fda67ffe834115c9c567e are ready for independent review; the bounded transport blocker and G-01 remain open.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
