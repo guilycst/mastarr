@@ -2181,7 +2181,8 @@
         "Keep root validation, explicit command/read-back evidence and capability gates intact. G-01 remains unresolved, so no live upstream writes are permitted and any unsupported capability must remain blocked rather than silently enabled.",
         "This lane is the legacy/root write capability slice. Standalone Sonarr/Radarr transport migration remains X-20 and must not be pulled into this change.",
         "d131422a7319be22ccc6fba17a54a047c89e25d8 product and e7047e143fae06d2871afc56337709fca339a311 handoff add guarded registration/manual-import commands, read-before-write idempotency, exact read-back and synthetic lost-response coverage; G-01 keeps public native writes fail-closed.",
-        "fbf2ecd106e50d89bf20c93cd926a52cd8e86f42 independent review round one requests two P1 and two P2 corrections: exact preview binding, contradictory file identity rejection, sanitized context errors and explicit monitoring opt-in preservation."
+        "fbf2ecd106e50d89bf20c93cd926a52cd8e86f42 independent review round one requests two P1 and two P2 corrections: exact preview binding, contradictory file identity rejection, sanitized context errors and explicit monitoring opt-in preservation.",
+        "8e811aa460d12eb374a623e87fb1d7531e015b3d X-06 correction round one binds writes to an exact observed preview, rejects contradictory read-back identities, sanitizes context errors and preserves explicit monitoring; da6b0aedfe27fe3a113974bd2744964b5e6c2214 records focused/race/root checks with G-01 still fail-closed."
       ],
       "review": {
         "status": "changes_requested",
@@ -2238,7 +2239,10 @@
         "correctionReviewPath": "docs/execution/handoffs/X-06-review-round2.md",
         "correctionHandoffPath": "docs/execution/handoffs/X-06-correction-round1.md",
         "correctionReviewer": "/root/x05_reviewer",
-        "correctionStatus": "dispatched",
+        "correctionStatus": "review_pending",
+        "correctionImplementationCommit": "8e811aa460d12eb374a623e87fb1d7531e015b3d",
+        "correctionHandoffCommit": "da6b0aedfe27fe3a113974bd2744964b5e6c2214",
+        "correctionReviewSourceCommit": "8e811aa460d12eb374a623e87fb1d7531e015b3d",
         "dependencyCommits": {
           "X-05": "165f22c2d81c4123d2ab31cf00d7613cdba87054",
           "X-22": "ea41f1f49569a079696f091a6113ee4d97641df4"
