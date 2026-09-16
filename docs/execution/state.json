@@ -15,9 +15,7 @@
   "resumeDocument": "docs/execution/RESUME.md",
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
-  "activeImplementationTasks": [
-    "W-04"
-  ],
+  "activeImplementationTasks": [],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
   "guardrailBaseline": {
@@ -3346,10 +3344,10 @@
       "implementationCommit": "a4ad5a0fcfee724491513224f6b082a25be82e0a"
     },
     "W-04": {
-      "status": "in_review",
+      "status": "done",
       "owner": "/root",
       "baseSha": "4e5c46d503949a493067ae57d3395545a36021f8",
-      "integratedSha": null,
+      "integratedSha": "780c00e92498660c08b6ac67259bbb4147c58531",
       "evidence": [
         "dispatched from 4e5c46d503949a493067ae57d3395545a36021f8 after W-03 approval product a4ad5a0fcfee724491513224f6b082a25be82e0a and state closure 4e5c46d503949a493067ae57d3395545a36021f8.",
         "Own only internal/workflows/, internal/reviews/ and docs/execution/handoffs/W-04.md. Implement ordered workflows and review decisions on existing planning, execution and storage ports; do not edit state.json, API/UI contracts, adapters, clients, storage schemas or workers.",
@@ -3370,16 +3368,17 @@
         "Correction round two product c05777cda74b8e3940d633c01495aae86a89b73b and handoff 8f012eb0a9e1b7bc6ee227460886d477d7979c01 complete from a2e1fdeb5b8bad2a7280beb739b9157ff9a5ff28; R2a rejected-step needs_review projection and R2b immutable replay attribution regressions pass, ready for independent review.",
         "Independent W-04 correction round-two receipt 128674e1de36944720a8dbccd010fa110c2b9f4c integrated as 86f629a: R2a needs_review projection and R2b immutable replay attribution closed; R2c present non-reject decision markers (approve/unknown/empty/null) are re-queued instead of failing closed. Focused/race/vet/full offline guardrails pass; one P2 remains.",
         "Correction round three dispatched from c48134c3b571c83b5825100ffd7f280c7c19ed0b to /root/x05_implementer for R2c only: present non-reject decision markers must fail closed with unchanged durable state; four-case Sync regression required.",
-        "Correction round three product 780c00e92498660c08b6ac67259bbb4147c58531 and handoff 83429eac6e73575a4d6642dcd29b105c6d218285 complete from 52bda9ca5c2b820c39c84b8a4f54695315937fae; R2c contradictory decision-marker fail-closed regression passes, ready for independent review."
+        "Correction round three product 780c00e92498660c08b6ac67259bbb4147c58531 and handoff 83429eac6e73575a4d6642dcd29b105c6d218285 complete from 52bda9ca5c2b820c39c84b8a4f54695315937fae; R2c contradictory decision-marker fail-closed regression passes, ready for independent review.",
+        "Independent W-04 round-four approval receipt 2aef896fd5d3e10dcefc80f8f5a094852d73fd27 integrated as a8752c3. No P1/P2 findings remain; R1/R2/R2a/R2b/R2c/R3, A-12/A-15/A-32/A-35/A-37/A-56 and full offline guardrails are accepted."
       ],
       "review": {
-        "status": "pending",
-        "decision": "pending",
+        "status": "approved",
+        "decision": "approved",
         "reviewer": "/root/x05_reviewer",
-        "commit": null,
+        "commit": "2aef896fd5d3e10dcefc80f8f5a094852d73fd27",
         "findings": [],
         "round": 4,
-        "integratedCommit": null
+        "integratedCommit": "a8752c3"
       },
       "dispatch": {
         "assignedAt": "2026-09-16",
@@ -3411,7 +3410,7 @@
         "reviewPath": "docs/execution/handoffs/W-04-review-round4.md",
         "handoffPath": "docs/execution/handoffs/W-04.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "review_pending",
+        "status": "done",
         "dependencyCommits": {
           "W-03-approved": "a4ad5a0fcfee724491513224f6b082a25be82e0a",
           "W-03-state-closure": "4e5c46d503949a493067ae57d3395545a36021f8"
@@ -3423,8 +3422,8 @@
         "implementationCommit": "2821b5bf8926849423c93fa7e862fd38b83035bc",
         "handoffCommit": "704ec47524cef4108a3e947c0c0166f6894ed610",
         "reviewSourceCommit": "780c00e92498660c08b6ac67259bbb4147c58531",
-        "reviewCommit": null,
-        "reviewIntegrationCommit": null,
+        "reviewCommit": "2aef896fd5d3e10dcefc80f8f5a094852d73fd27",
+        "reviewIntegrationCommit": "a8752c3",
         "previousAttempt": {
           "owner": "/root/x05_implementer",
           "status": "interrupted",
@@ -3492,7 +3491,7 @@
           "reason": "two bounded implementer attempts produced no workflow files; preserve the completed review slice and implement the minimum ordered composition directly",
           "status": "complete"
         },
-        "correctionStatus": "review_pending",
+        "correctionStatus": "approved",
         "correctionRound": 3,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "52bda9ca5c2b820c39c84b8a4f54695315937fae",
@@ -3502,14 +3501,16 @@
         "correctionReviewer": "/root/x05_reviewer",
         "priorReviewCommit": "128674e1de36944720a8dbccd010fa110c2b9f4c",
         "priorReviewIntegrationCommit": "c48134c3b571c83b5825100ffd7f280c7c19ed0b",
-        "waitingOn": "/root/x05_reviewer",
-        "waitingReason": "independent review of correction round three",
+        "waitingOn": null,
+        "waitingReason": null,
         "correctionImplementationCommit": "780c00e92498660c08b6ac67259bbb4147c58531",
         "correctionHandoffCommit": "83429eac6e73575a4d6642dcd29b105c6d218285",
         "correctionReviewSourceCommit": "780c00e92498660c08b6ac67259bbb4147c58531",
         "priorCorrectionRound": 2,
         "priorCorrectionImplementationCommit": "c05777cda74b8e3940d633c01495aae86a89b73b",
-        "priorCorrectionHandoffCommit": "8f012eb0a9e1b7bc6ee227460886d477d7979c01"
+        "priorCorrectionHandoffCommit": "8f012eb0a9e1b7bc6ee227460886d477d7979c01",
+        "correctionReviewCommit": "2aef896fd5d3e10dcefc80f8f5a094852d73fd27",
+        "correctionReviewIntegrationCommit": "a8752c3"
       },
       "reviewHistory": [
         {
@@ -3542,10 +3543,11 @@
         {
           "round": 4,
           "reviewer": "/root/x05_reviewer",
-          "commit": null,
-          "status": "review_pending",
+          "commit": "2aef896fd5d3e10dcefc80f8f5a094852d73fd27",
+          "status": "approved",
           "sourceCommit": "780c00e92498660c08b6ac67259bbb4147c58531",
-          "receipt": "docs/execution/handoffs/W-04-review-round4.md"
+          "receipt": "docs/execution/handoffs/W-04-review-round4.md",
+          "integratedCommit": "a8752c3"
         }
       ]
     },
@@ -5492,7 +5494,7 @@
       ]
     }
   },
-  "nextAction": "W-04 correction round 3 product 780c00e92498660c08b6ac67259bbb4147c58531 and handoff 83429eac6e73575a4d6642dcd29b105c6d218285 are ready for independent review. Recheck R2c and all prior W-04 evidence, then record an exact receipt before integration. Keep F-05 capability-blocked and G-01 Arr native writes blocked.",
+  "nextAction": "W-04 is done at product 780c00e92498660c08b6ac67259bbb4147c58531 with approval receipt 2aef896fd5d3e10dcefc80f8f5a094852d73fd27 integrated as a8752c3. W-05 trash/restore/janitor lane is now unblocked for dispatch; keep F-05 and G-01 gates explicit.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
