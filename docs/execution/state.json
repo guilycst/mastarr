@@ -2530,7 +2530,8 @@
         "2e1169c3cf1a2763227ac28ac8e7d96a82fe047b product plus d07779afd4a9b052b8f91159debb0c7af6df3632 hardening implement verified bounded descriptor capture, root confinement, metadata/content separation, unavailable states and exact acknowledged deletion; caabffc946cedec237e89f688abfe7ab2d2c58da records the completed handoff and full guardrail checks.",
         "cedb49af4ee4dfb99bba0d4abacfff46aca1f0a3 independent review round one requests two P1 fixes; 9cb06d0f071a525e53ada11a4fe3f1d3612b33e4 integrates the receipt. Mounted path replacement and post-unlink journal failure/restart reconciliation remain blockers; other capture, confinement, metadata, idempotency and guardrails pass.",
         "b766ea8712fd18f6b02dd6c8aa4c304745304298 correction round one binds mounted path identity/content after source read and adds pre-unlink deletion intent with restart reconciliation; 662fa6c19c0274578f52b705450a07d66d977a32 records the handoff and full checks.",
-        "eb996380766dad776c7915f0b27dfecbe23a7724 independent correction review round two closes mounted source and restart journal findings but requests one new P1 concurrency fix; b879cf5ae9cebf156812d87f8ec078d6604c4299 integrates the receipt. Unavailable deletion can race capture and orphan newly retained bytes due to split lock keys and stale SQL fences."
+        "eb996380766dad776c7915f0b27dfecbe23a7724 independent correction review round two closes mounted source and restart journal findings but requests one new P1 concurrency fix; b879cf5ae9cebf156812d87f8ec078d6604c4299 integrates the receipt. Unavailable deletion can race capture and orphan newly retained bytes due to split lock keys and stale SQL fences.",
+        "b8f648f055d922699061264877e9acb81d3ad075 correction round two adds durable descriptor identity fences across capture, unavailable recording and delete, with cross-service race regressions; c243b9f4a1f894114c19794b0c307797cc005918 records the handoff and full checks."
       ],
       "review": {
         "status": "changes_requested",
@@ -2569,7 +2570,7 @@
         "reviewPath": "docs/execution/handoffs/X-08-review-round1.md",
         "handoffPath": "docs/execution/handoffs/X-08.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "implementation",
+        "status": "review_pending",
         "implementationCommit": "2e1169c3cf1a2763227ac28ac8e7d96a82fe047b",
         "productCommits": [
           "2e1169c3cf1a2763227ac28ac8e7d96a82fe047b",
@@ -2577,7 +2578,7 @@
         ],
         "handoffCommit": "caabffc946cedec237e89f688abfe7ab2d2c58da",
         "reviewSourceCommit": "d07779afd4a9b052b8f91159debb0c7af6df3632",
-        "correctionStatus": "implementation",
+        "correctionStatus": "review_pending",
         "correctionRound": 2,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "b766ea8712fd18f6b02dd6c8aa4c304745304298",
@@ -2590,7 +2591,13 @@
         "priorCorrectionImplementationCommit": "b766ea8712fd18f6b02dd6c8aa4c304745304298",
         "priorCorrectionHandoffCommit": "662fa6c19c0274578f52b705450a07d66d977a32",
         "priorCorrectionReviewCommit": "eb996380766dad776c7915f0b27dfecbe23a7724",
-        "priorCorrectionReviewIntegrationCommit": "b879cf5ae9cebf156812d87f8ec078d6604c4299"
+        "priorCorrectionReviewIntegrationCommit": "b879cf5ae9cebf156812d87f8ec078d6604c4299",
+        "correctionImplementationCommit": "b8f648f055d922699061264877e9acb81d3ad075",
+        "correctionHandoffCommit": "c243b9f4a1f894114c19794b0c307797cc005918",
+        "correctionProductCommits": [
+          "b8f648f055d922699061264877e9acb81d3ad075"
+        ],
+        "correctionReviewSourceCommit": "b8f648f055d922699061264877e9acb81d3ad075"
       },
       "implementationCommit": "d07779afd4a9b052b8f91159debb0c7af6df3632",
       "handoffCommit": "caabffc946cedec237e89f688abfe7ab2d2c58da",
@@ -4923,7 +4930,7 @@
       ]
     }
   },
-  "nextAction": "X-08 correction round two is dispatched for a single capture/delete identity fence after review receipt eb996380766dad776c7915f0b27dfecbe23a7724. X-20 remains capability-blocked and G-01 remains open.",
+  "nextAction": "X-08 correction round two is ready for independent review at b8f648f055d922699061264877e9acb81d3ad075; handoff c243b9f4a1f894114c19794b0c307797cc005918. X-20 remains capability-blocked and G-01 remains open.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
