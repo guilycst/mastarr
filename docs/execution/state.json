@@ -2976,7 +2976,8 @@
         "de65cae07d376024ba44c01bf9426d9de8e51da3 state checkpoint dispatched W-02 correction round twelve to /root/x05_implementer from 6b85c3afde31cf2772f9dc5e84a7982de504635b; owned paths remain internal/execution/ and docs/execution/handoffs/W-02-correction-round12.md, shared main, with GOWORK=off focused/race/vet/offline guardrail/module/cross-build checks.",
         "c3c15f149cd6b13630ef44696295f2eddb1a3ff5 W-02 correction round twelve preserves raw invalid UTF-8 and escaped unpaired surrogate marker bytes via _mastarr_prior, with direct/partial-dispatch regressions and all prior marker/ExternalID/restart/fail-closed checks passing.",
         "def4023ee075b1483b1f4c062010f19d0d295106 records the W-02 correction round twelve handoff and exact checks.",
-        "a6c49e88ad2f89ca7af65c806bdb426ba96ccdc5 W-02 correction round twelve review closed ill-formed members inside object markers and all prior executor cases, but found P2 top-level JSON string arrays bypass losslessJSONString, losing raw invalid UTF-8 and unpaired surrogate bytes. Direct/partial dispatch probes failed 40/40; full offline guardrails and 18 cross-builds passed."
+        "a6c49e88ad2f89ca7af65c806bdb426ba96ccdc5 W-02 correction round twelve review closed ill-formed members inside object markers and all prior executor cases, but found P2 top-level JSON string arrays bypass losslessJSONString, losing raw invalid UTF-8 and unpaired surrogate bytes. Direct/partial dispatch probes failed 40/40; full offline guardrails and 18 cross-builds passed.",
+        "42c9eb0034f430ae139ee8e2a59bc914ab418d95 state checkpoint dispatched W-02 correction round thirteen to /root/x05_implementer from c3c15f149cd6b13630ef44696295f2eddb1a3ff5; owned paths remain internal/execution/ and docs/execution/handoffs/W-02-correction-round13.md, shared main, with GOWORK=off focused/race/vet/offline guardrail/module/cross-build checks."
       ],
       "review": {
         "status": "approved",
@@ -3057,7 +3058,7 @@
         "correctionHandoffCommit": null,
         "correctionProductCommits": [],
         "correctionReviewSourceCommit": null,
-        "correctionDispatchCheckpoint": "de65cae07d376024ba44c01bf9426d9de8e51da3"
+        "correctionDispatchCheckpoint": "42c9eb0034f430ae139ee8e2a59bc914ab418d95"
       },
       "reviewHistory": [
         {
