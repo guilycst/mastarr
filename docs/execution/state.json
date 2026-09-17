@@ -3776,14 +3776,19 @@
         "Reviewer full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed in 312.43s; focused/race/vet/mod/lint/architecture/planning/Linux checks passed; functional corrections remain.",
         "9337475cceaee1c2401b8baaa05f45f40e0789ed C-04 correction round two product: durable configuration reload gate, append-only idempotency reservation/completion, restart/concurrency fencing, and exact JSON-number digests.",
         "a08180a50df979c1f4ae6425ff4a02b42a4dd021 C-04 correction round two handoff records owned paths, regressions, checks and no migration/bootstrap blocker.",
-        "Correction round two checks passed: focused/race transport and startup tests, root tests/vet/module verification, architecture, planning, pre-commit fast guardrail, full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci in 103.68s, and Linux amd64/arm64 CGO-free builds."
+        "Correction round two checks passed: focused/race transport and startup tests, root tests/vet/module verification, architecture, planning, pre-commit fast guardrail, full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci in 103.68s, and Linux amd64/arm64 CGO-free builds.",
+        "be8683bb8b9dd5031585478c480441674aa65c1f independent C-04 correction round three review: R2a rollback visibility, R3b exact-number digesting and R1/R4/R5/R6 remain closed; R3c durable completion recovery remains P1 and R2b manager ownership remains P2.",
+        "Reviewer full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed; focused/repeated race probes and Linux builds passed."
       ],
       "review": {
-        "status": "pending",
-        "decision": "pending",
+        "status": "changes_requested",
+        "decision": "changes_requested",
         "reviewer": "/root/x05_reviewer",
-        "commit": null,
-        "findings": [],
+        "commit": "be8683bb8b9dd5031585478c480441674aa65c1f",
+        "findings": [
+          "R3c P1 durable idempotency completion has no production recovery owner; same-key retries remain pending forever",
+          "R2b P2 configuration reload shares credential manager without ownership-safe close/zeroization"
+        ],
         "round": 3
       },
       "dispatch": {
@@ -3811,42 +3816,40 @@
           "generation/API/Vacuum/lint/architecture/planning/full offline guardrails",
           "Linux amd64/arm64 CGO-free builds"
         ],
-        "reviewPath": "docs/execution/handoffs/C-04-review-round3.md",
-        "handoffPath": "docs/execution/handoffs/C-04-correction-round2.md",
+        "reviewPath": "docs/execution/handoffs/C-04-review-round4.md",
+        "handoffPath": "docs/execution/handoffs/C-04-correction-round3.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "review_pending",
+        "status": "in_progress",
         "dependencyCommits": {
           "D-04": "036288114bcf303f98e0ee02e54ddce18384e504",
           "F-03": "b65f5d65d67e6fc823fbf54fa8ab4f2a4d17d191",
           "X-08": "8c770f779204a00c2d8cc6312a2c0fc04262ea35",
           "W-05": "ea3958b15508d13893b55674b59cfb0bf50d1ffe"
         },
-        "waitingOn": "/root/x05_reviewer",
-        "waitingReason": "Independent C-04 correction round three review of R2a/R3a/R3b and regression of closed findings.",
+        "waitingOn": "/root/x05_implementer",
+        "waitingReason": "C-04 correction round 3 for R3c durable completion recovery and R2b manager ownership-safe reload/close.",
         "implementationCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
         "handoffCommit": "c46b84183f0723d0cbb439eb539cd600c235acf0",
         "reviewSourceCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
         "reviewRound": 3,
         "reviewCommit": "461b0c06b0a3094f5da28ca2920400b639e22a61",
         "reviewIntegrationCommit": "d593fd4",
-        "correctionStatus": "review_pending",
-        "correctionRound": 2,
+        "correctionStatus": "in_progress",
+        "correctionRound": 3,
         "correctionOwner": "/root/x05_implementer",
-        "correctionBaseSha": "d593fd4",
-        "correctionDispatchCheckpoint": "d593fd4",
-        "correctionReviewPath": "docs/execution/handoffs/C-04-review-round3.md",
-        "correctionHandoffPath": "docs/execution/handoffs/C-04-correction-round2.md",
+        "correctionBaseSha": "6843deb95a67e205f5d48531cbb5c78d6ecb350f",
+        "correctionDispatchCheckpoint": "6843deb",
+        "correctionReviewPath": "docs/execution/handoffs/C-04-review-round4.md",
+        "correctionHandoffPath": "docs/execution/handoffs/C-04-correction-round3.md",
         "correctionReviewer": "/root/x05_reviewer",
-        "priorReviewCommit": "461b0c06b0a3094f5da28ca2920400b639e22a61",
-        "priorReviewIntegrationCommit": "d593fd4",
-        "correctionImplementationCommit": "9337475cceaee1c2401b8baaa05f45f40e0789ed",
-        "correctionHandoffCommit": "a08180a50df979c1f4ae6425ff4a02b42a4dd021",
-        "correctionReviewSourceCommit": "9337475cceaee1c2401b8baaa05f45f40e0789ed",
+        "priorReviewCommit": "be8683bb8b9dd5031585478c480441674aa65c1f",
+        "priorReviewIntegrationCommit": "6843deb",
+        "correctionImplementationCommit": null,
+        "correctionHandoffCommit": null,
+        "correctionReviewSourceCommit": null,
         "correctionReviewCommit": null,
         "correctionReviewIntegrationCommit": null,
-        "correctionProductCommits": [
-          "9337475cceaee1c2401b8baaa05f45f40e0789ed"
-        ]
+        "correctionProductCommits": []
       },
       "implementationCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
       "handoffCommit": "c46b84183f0723d0cbb439eb539cd600c235acf0",
@@ -3881,10 +3884,11 @@
         {
           "round": 3,
           "reviewer": "/root/x05_reviewer",
-          "commit": null,
-          "status": "pending",
+          "commit": "be8683bb8b9dd5031585478c480441674aa65c1f",
+          "status": "changes_requested",
           "sourceCommit": "9337475cceaee1c2401b8baaa05f45f40e0789ed",
-          "receipt": "docs/execution/handoffs/C-04-review-round3.md"
+          "receipt": "docs/execution/handoffs/C-04-review-round3.md",
+          "integratedCommit": "6843deb"
         }
       ]
     },
@@ -5815,7 +5819,7 @@
       ]
     }
   },
-  "nextAction": "C-04 correction round two product 9337475cceaee1c2401b8baaa05f45f40e0789ed and handoff a08180a50df979c1f4ae6425ff4a02b42a4dd021 are pushed; independent round-three review is queued for R2a/R3a/R3b.",
+  "nextAction": "C-04 review be8683bb8b9dd5031585478c480441674aa65c1f integrated as 6843deb; R3c/R2b remain. Dispatch correction round three to /root/x05_implementer from 6843deb.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
