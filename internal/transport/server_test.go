@@ -472,6 +472,380 @@ func TestDefaultConfigurationRecoveryOwnerReadsBackWithoutRedispatch(t *testing.
 	}
 }
 
+func TestDefaultPatchRecoveryRecognizesPostMutationRevision(t *testing.T) {
+	now := time.Date(2026, 9, 17, 10, 0, 0, 0, time.UTC)
+	type patchCase struct {
+		name  string
+		setup func(*configuration.Manager) (path, body, ifMatch, marker string, err error)
+		read  func(*configuration.Manager) (string, error)
+	}
+	cases := []patchCase{
+		{
+			name: "connection",
+			setup: func(manager *configuration.Manager) (string, string, string, string, error) {
+				connection, err := manager.CreateConnection(context.Background(), configuration.ConnectionSpec{
+					ID:       domain.ConfigID("patch-connection"),
+					Kind:     domain.ConnectionQBittorrent,
+					Label:    "before",
+					Endpoint: "http://qbt.test",
+				})
+				return "/api/v1/connections/patch-connection", `{"label":"after"}`, quoteETagValue(connection.Revision), `"label":"after"`, err
+			},
+			read: func(manager *configuration.Manager) (string, error) {
+				connection, err := manager.GetConnection(context.Background(), domain.ConfigID("patch-connection"), false)
+				return connection.Revision, err
+			},
+		},
+		{
+			name: "storage-root",
+			setup: func(manager *configuration.Manager) (string, string, string, string, error) {
+				root, err := manager.CreateStorageRoot(context.Background(), configuration.StorageRootSpec{
+					ID:      domain.ConfigID("patch-root"),
+					Label:   "before",
+					Purpose: domain.StorageLibrary,
+					Path:    "/synthetic/library",
+				})
+				return "/api/v1/storage-roots/patch-root", `{"label":"after"}`, quoteETagValue(root.Revision), `"label":"after"`, err
+			},
+			read: func(manager *configuration.Manager) (string, error) {
+				root, err := manager.GetStorageRoot(context.Background(), domain.ConfigID("patch-root"), false)
+				return root.Revision, err
+			},
+		},
+		{
+			name: "path-mapping",
+			setup: func(manager *configuration.Manager) (string, string, string, string, error) {
+				if _, err := manager.CreateConnection(context.Background(), configuration.ConnectionSpec{
+					ID:       domain.ConfigID("mapping-connection"),
+					Kind:     domain.ConnectionQBittorrent,
+					Label:    "qbt",
+					Endpoint: "http://qbt.test",
+				}); err != nil {
+					return "", "", "", "", err
+				}
+				if _, err := manager.CreateStorageRoot(context.Background(), configuration.StorageRootSpec{
+					ID:      domain.ConfigID("mapping-root"),
+					Label:   "library",
+					Purpose: domain.StorageLibrary,
+					Path:    "/synthetic/library",
+				}); err != nil {
+					return "", "", "", "", err
+				}
+				mapping, err := manager.CreatePathMapping(context.Background(), configuration.PathMappingSpec{
+					ID:                domain.ConfigID("patch-mapping"),
+					ConnectionID:      domain.ConfigID("mapping-connection"),
+					SourcePrefix:      "/downloads",
+					RootID:            domain.ConfigID("mapping-root"),
+					DestinationPrefix: "library",
+				})
+				return "/api/v1/path-mappings/patch-mapping", `{"destinationPrefix":"library-v2"}`, quoteETagValue(mapping.Revision), `"destinationPrefix":"library-v2"`, err
+			},
+			read: func(manager *configuration.Manager) (string, error) {
+				mapping, err := manager.GetPathMapping(context.Background(), domain.ConfigID("patch-mapping"), false)
+				return mapping.Revision, err
+			},
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			manager, err := configuration.New(configuration.Options{Now: func() time.Time { return now }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer manager.Close()
+			path, body, ifMatch, marker, err := testCase.setup(manager)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := testCase.read(manager)
+			if err != nil {
+				t.Fatal(err)
+			}
+			store := newTestDurableIdempotency()
+			store.failCompletion.Store(true)
+			options := Options{
+				Configuration:          manager,
+				IdempotencyPersistence: store.persistence(),
+				Now:                    func() time.Time { return now },
+				Ready:                  true,
+			}
+			firstServer, err := New(options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			first := doJSON(firstServer.Handler(), http.MethodPatch, path, body, map[string]string{
+				"Idempotency-Key": "patch-lost-" + testCase.name,
+				"If-Match":        ifMatch,
+			})
+			if first.Code != http.StatusServiceUnavailable || !strings.Contains(first.Body.String(), "persistence_unavailable") {
+				t.Fatalf("lost completion response = %d: %s", first.Code, first.Body.String())
+			}
+			after, err := testCase.read(manager)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after == before {
+				t.Fatalf("mutation revision did not change: %q", after)
+			}
+			snapshot, err := manager.Snapshot(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			reloaded, err := configuration.New(configuration.Options{
+				Now: func() time.Time { return now },
+				APIState: configuration.APIState{
+					Connections:  snapshot.Connections,
+					StorageRoots: snapshot.StorageRoots,
+					PathMappings: snapshot.PathMappings,
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer reloaded.Close()
+			store.failCompletion.Store(false)
+			recoveryOptions := options
+			recoveryOptions.Configuration = reloaded
+			secondServer, err := New(recoveryOptions)
+			if err != nil {
+				t.Fatal(err)
+			}
+			second := doJSON(secondServer.Handler(), http.MethodPatch, path, body, map[string]string{
+				"Idempotency-Key": "patch-lost-" + testCase.name,
+				"If-Match":        ifMatch,
+			})
+			if second.Code != http.StatusOK || !strings.Contains(second.Body.String(), marker) {
+				t.Fatalf("read-back recovery = %d: %s", second.Code, second.Body.String())
+			}
+			final, err := testCase.read(reloaded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if final != after {
+				t.Fatalf("recovery changed revision: before retry %q, after %q", after, final)
+			}
+			store.mu.Lock()
+			record := cloneTestIdempotencyRecord(store.records["PATCH "+path+"\x00patch-lost-"+testCase.name])
+			store.mu.Unlock()
+			if record.State != IdempotencyStateCompleted || !record.Replayable || record.AttemptID == "" {
+				t.Fatalf("recovered record = %#v; want completed original attempt", record)
+			}
+		})
+	}
+}
+
+func TestConfigurationFailureClassifierDoesNotReleasePresentCreate(t *testing.T) {
+	now := time.Date(2026, 9, 17, 10, 0, 0, 0, time.UTC)
+	manager, err := configuration.New(configuration.Options{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	connection, err := manager.CreateConnection(context.Background(), configuration.ConnectionSpec{
+		ID:       domain.ConfigID("existing-create"),
+		Kind:     domain.ConnectionQBittorrent,
+		Label:    "existing",
+		Endpoint: "http://qbt.test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := New(Options{Configuration: manager, Now: func() time.Time { return now }, Ready: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &idempotencyRequestState{
+		method: http.MethodPost,
+		path:   "/api/v1/connections",
+		body:   []byte(`{"id":"existing-create","kind":"qbittorrent","label":"different","endpoint":"http://qbt.test"}`),
+	}
+	known, materialized := server.configurationEffectMaterialized(context.WithValue(context.Background(), idempotencyRequestStateKey{}, state))
+	if !known || !materialized {
+		t.Fatalf("present conflicting create classified as known=%t materialized=%t; want pending", known, materialized)
+	}
+	if connection.ID != domain.ConfigID("existing-create") {
+		t.Fatal("test setup lost existing connection")
+	}
+}
+
+func TestDefaultPathMappingDeleteRecoveryUsesRetainedRevision(t *testing.T) {
+	now := time.Date(2026, 9, 17, 10, 0, 0, 0, time.UTC)
+	manager, err := configuration.New(configuration.Options{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	if _, err := manager.CreateConnection(context.Background(), configuration.ConnectionSpec{
+		ID:       domain.ConfigID("delete-connection"),
+		Kind:     domain.ConnectionQBittorrent,
+		Label:    "qbt",
+		Endpoint: "http://qbt.test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.CreateStorageRoot(context.Background(), configuration.StorageRootSpec{
+		ID:      domain.ConfigID("delete-root"),
+		Label:   "library",
+		Purpose: domain.StorageLibrary,
+		Path:    "/synthetic/library",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	mapping, err := manager.CreatePathMapping(context.Background(), configuration.PathMappingSpec{
+		ID:                domain.ConfigID("delete-mapping"),
+		ConnectionID:      domain.ConfigID("delete-connection"),
+		SourcePrefix:      "/downloads",
+		RootID:            domain.ConfigID("delete-root"),
+		DestinationPrefix: "library",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newTestDurableIdempotency()
+	store.failCompletion.Store(true)
+	options := Options{
+		Configuration:          manager,
+		IdempotencyPersistence: store.persistence(),
+		Now:                    func() time.Time { return now },
+		Ready:                  true,
+	}
+	firstServer, err := New(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/path-mappings/delete-mapping"
+	first := doJSON(firstServer.Handler(), http.MethodDelete, path, "", map[string]string{
+		"Idempotency-Key": "delete-lost",
+		"If-Match":        quoteETagValue(mapping.Revision),
+	})
+	if first.Code != http.StatusServiceUnavailable || !strings.Contains(first.Body.String(), "persistence_unavailable") {
+		t.Fatalf("lost delete response = %d: %s", first.Code, first.Body.String())
+	}
+	retired, err := manager.GetPathMapping(context.Background(), domain.ConfigID("delete-mapping"), true)
+	if err != nil || retired.Source.Source != domain.SourceAPI || retired.Revision != mapping.Revision {
+		t.Fatalf("retained mapping = %#v, err=%v; want API tombstone with original revision", retired, err)
+	}
+	reloaded, err := configuration.New(configuration.Options{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reloaded.Close()
+	if _, err := reloaded.CreateConnection(context.Background(), configuration.ConnectionSpec{
+		ID:       domain.ConfigID("delete-connection"),
+		Kind:     domain.ConnectionQBittorrent,
+		Label:    "qbt",
+		Endpoint: "http://qbt.test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reloaded.CreateStorageRoot(context.Background(), configuration.StorageRootSpec{
+		ID:      domain.ConfigID("delete-root"),
+		Label:   "library",
+		Purpose: domain.StorageLibrary,
+		Path:    "/synthetic/library",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reloadedMapping, err := reloaded.CreatePathMapping(context.Background(), configuration.PathMappingSpec{
+		ID:                domain.ConfigID("delete-mapping"),
+		ConnectionID:      domain.ConfigID("delete-connection"),
+		SourcePrefix:      "/downloads",
+		RootID:            domain.ConfigID("delete-root"),
+		DestinationPrefix: "library",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloadedMapping.Revision != mapping.Revision {
+		t.Fatalf("reloaded mapping revision = %q, want %q", reloadedMapping.Revision, mapping.Revision)
+	}
+	if err := reloaded.RetirePathMapping(context.Background(), reloadedMapping.ID, reloadedMapping.Revision); err != nil {
+		t.Fatal(err)
+	}
+	store.failCompletion.Store(false)
+	recoveryOptions := options
+	recoveryOptions.Configuration = reloaded
+	secondServer, err := New(recoveryOptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := doJSON(secondServer.Handler(), http.MethodDelete, path, "", map[string]string{
+		"Idempotency-Key": "delete-lost",
+		"If-Match":        quoteETagValue(mapping.Revision),
+	})
+	if second.Code != http.StatusNoContent {
+		t.Fatalf("retained-mapping recovery = %d: %s", second.Code, second.Body.String())
+	}
+	store.mu.Lock()
+	record := cloneTestIdempotencyRecord(store.records["DELETE "+path+"\x00delete-lost"])
+	store.mu.Unlock()
+	if record.State != IdempotencyStateCompleted || !record.Replayable || record.AttemptID == "" {
+		t.Fatalf("recovered delete record = %#v; want completed original attempt", record)
+	}
+}
+
+func TestKnownPreEffectRouteFailureReleasesDurableKey(t *testing.T) {
+	store := newTestDurableIdempotency()
+	body := `{"id":"route-retry","kind":"qbittorrent","label":"route-retry","endpoint":"http://qbt.test"}`
+	firstServer, err := New(Options{IdempotencyPersistence: store.persistence(), Now: time.Now, Ready: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := doJSON(firstServer.Handler(), http.MethodPost, "/api/v1/connections", body, map[string]string{"Idempotency-Key": "route-retry"})
+	if first.Code != http.StatusServiceUnavailable || !strings.Contains(first.Body.String(), "not_ready") {
+		t.Fatalf("unassembled route response = %d: %s", first.Code, first.Body.String())
+	}
+	store.mu.Lock()
+	record := cloneTestIdempotencyRecord(store.records["POST /api/v1/connections\x00route-retry"])
+	store.mu.Unlock()
+	if record.State != IdempotencyStateReleased || record.AttemptID == "" || record.CreatedAt == "" {
+		t.Fatalf("route release record = %#v; want timestamped released reservation", record)
+	}
+	var dispatches atomic.Int32
+	secondServer, err := New(Options{
+		IdempotencyPersistence: store.persistence(),
+		Now:                    time.Now,
+		Ready:                  true,
+		Dependencies: &RouteDependencies{CreateConnection: func(context.Context, api.CreateConnectionRequestObject) (api.CreateConnectionResponseObject, error) {
+			dispatches.Add(1)
+			return syntheticConnectionResponse("route-retry"), nil
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := doJSON(secondServer.Handler(), http.MethodPost, "/api/v1/connections", body, map[string]string{"Idempotency-Key": "route-retry"})
+	if second.Code != http.StatusCreated || dispatches.Load() != 1 {
+		t.Fatalf("assembled retry = %d, dispatches=%d: %s", second.Code, dispatches.Load(), second.Body.String())
+	}
+}
+
+func TestInjectedUnavailableRouteRemainsPending(t *testing.T) {
+	store := newTestDurableIdempotency()
+	body := `{"id":"injected-unavailable","kind":"qbittorrent","label":"injected-unavailable","endpoint":"http://qbt.test"}`
+	server, err := New(Options{
+		IdempotencyPersistence: store.persistence(),
+		Now:                    time.Now,
+		Ready:                  true,
+		Dependencies: &RouteDependencies{CreateConnection: func(context.Context, api.CreateConnectionRequestObject) (api.CreateConnectionResponseObject, error) {
+			return nil, ErrNotReady
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := doJSON(server.Handler(), http.MethodPost, "/api/v1/connections", body, map[string]string{"Idempotency-Key": "injected-unavailable"})
+	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "not_ready") {
+		t.Fatalf("injected route response = %d: %s", response.Code, response.Body.String())
+	}
+	store.mu.Lock()
+	record := cloneTestIdempotencyRecord(store.records["POST /api/v1/connections\x00injected-unavailable"])
+	store.mu.Unlock()
+	if record.State != IdempotencyStateCompleted || record.Replayable || record.AttemptID == "" {
+		t.Fatalf("injected unavailable record = %#v; want unreplayable pending evidence", record)
+	}
+}
+
 func TestConfigurationRollbackReleasesExactDurableReservation(t *testing.T) {
 	store := newTestDurableIdempotency()
 	storeFail := atomic.Bool{}

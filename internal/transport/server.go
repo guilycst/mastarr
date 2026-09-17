@@ -150,15 +150,16 @@ type idempotencyRequestStateKey struct{}
 // the exact durable reservation owned by the current HTTP request. It is
 // deliberately request-local and carries no request body or credential data.
 type idempotencyRequestState struct {
-	scope    string
-	key      string
-	digest   string
-	attempt  string
-	method   string
-	path     string
-	ifMatch  string
-	body     []byte
-	released atomic.Bool
+	scope     string
+	key       string
+	digest    string
+	attempt   string
+	createdAt string
+	method    string
+	path      string
+	ifMatch   string
+	body      []byte
+	released  atomic.Bool
 }
 
 // New constructs a generated-server implementation.  It does not open a
@@ -1553,6 +1554,14 @@ func (server *Server) policy(next http.Handler) http.Handler {
 			replay(w, &entry)
 			return
 		}
+		if server.knownPreEffectRouteFailure(r.Method, r.URL.Path, entry) && server.releaseCurrentIdempotency(r.Context()) == nil {
+			// A route-level unavailable/not-ready response is produced before any
+			// application service is assembled or dispatched. Release only this
+			// explicitly classified no-effect reservation; arbitrary 503 and
+			// persistence failures remain held for reconciliation.
+			replay(w, &entry)
+			return
+		}
 		if persistence := server.idempotencyPersistence(); persistence != nil && persistence.Complete != nil {
 			if err := server.persistIdempotency(r.Context(), scope, idempotencyKey, digest, entry); err != nil {
 				writeProblem(w, r, err)
@@ -2091,6 +2100,84 @@ func shouldRememberIdempotency(entry idempotencyEntry) bool {
 	return entry.status >= http.StatusOK && entry.status < http.StatusInternalServerError && entry.status != http.StatusRequestTimeout && entry.status != http.StatusTooManyRequests
 }
 
+func (server *Server) knownPreEffectRouteFailure(method, path string, entry idempotencyEntry) bool {
+	if entry.status != http.StatusServiceUnavailable || len(bytes.TrimSpace(entry.body)) == 0 {
+		return false
+	}
+	if !server.unassembledMutationRoute(method, path) {
+		return false
+	}
+	decoder := json.NewDecoder(bytes.NewReader(entry.body))
+	decoder.DisallowUnknownFields()
+	var problem api.Problem
+	if err := decoder.Decode(&problem); err != nil {
+		return false
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return false
+	}
+	// These are the stable sanitized outcomes emitted by the transport before
+	// an unassembled route can invoke application code. A generic 503, upstream
+	// outage, or persistence failure is deliberately excluded.
+	return problem.Code == "service_unavailable" || problem.Code == "not_ready"
+}
+
+// unassembledMutationRoute proves that the generated route returned before
+// invoking an application service. Injected dependencies are deliberately
+// excluded: a service may have performed an effect before returning a
+// sanitized unavailable error, so that response must remain pending.
+func (server *Server) unassembledMutationRoute(method, path string) bool {
+	if server == nil {
+		return false
+	}
+	dependency := server.routeDependencies()
+	switch {
+	case method == http.MethodPost && path == "/api/v1/action-plans":
+		return dependency == nil || dependency.CreateActionPlan == nil
+	case method == http.MethodPost && strings.HasPrefix(path, "/api/v1/action-plans/") && strings.HasSuffix(path, "/revisions"):
+		return dependency == nil || dependency.CreateActionPlanRevision == nil
+	case method == http.MethodPost && strings.HasPrefix(path, "/api/v1/action-runs/") && strings.HasSuffix(path, "/cancellations"):
+		return dependency == nil || dependency.CancelActionRun == nil
+	case method == http.MethodPost && strings.HasPrefix(path, "/api/v1/action-runs/") && strings.HasSuffix(path, "/reconciliations"):
+		return dependency == nil || dependency.RequestActionReconciliation == nil
+	case method == http.MethodPost && strings.HasPrefix(path, "/api/v1/action-runs/") && strings.HasSuffix(path, "/retry-requests"):
+		return dependency == nil || dependency.RequestActionRetry == nil
+	case method == http.MethodPost && path == "/api/v1/connection-checks":
+		return dependency == nil || dependency.CreateConnectionCheck == nil
+	case method == http.MethodPost && path == "/api/v1/connections":
+		return (dependency == nil || dependency.CreateConnection == nil) && server.configurationManager() == nil
+	case method == http.MethodPatch && strings.HasPrefix(path, "/api/v1/connections/"):
+		return (dependency == nil || dependency.PatchConnection == nil) && server.configurationManager() == nil
+	case method == http.MethodDelete && strings.HasPrefix(path, "/api/v1/connections/"):
+		return (dependency == nil || dependency.RetireConnection == nil) && server.configurationManager() == nil
+	case method == http.MethodPost && path == "/api/v1/storage-roots":
+		return (dependency == nil || dependency.CreateStorageRoot == nil) && server.configurationManager() == nil
+	case method == http.MethodPatch && strings.HasPrefix(path, "/api/v1/storage-roots/"):
+		return (dependency == nil || dependency.PatchStorageRoot == nil) && server.configurationManager() == nil
+	case method == http.MethodDelete && strings.HasPrefix(path, "/api/v1/storage-roots/"):
+		return (dependency == nil || dependency.RetireStorageRoot == nil) && server.configurationManager() == nil
+	case method == http.MethodPost && path == "/api/v1/path-mappings":
+		return (dependency == nil || dependency.CreatePathMapping == nil) && server.configurationManager() == nil
+	case method == http.MethodPatch && strings.HasPrefix(path, "/api/v1/path-mappings/"):
+		return (dependency == nil || dependency.PatchPathMapping == nil) && server.configurationManager() == nil
+	case method == http.MethodDelete && strings.HasPrefix(path, "/api/v1/path-mappings/"):
+		return (dependency == nil || dependency.RetirePathMapping == nil) && server.configurationManager() == nil
+	case method == http.MethodPost && path == "/api/v1/review-decisions":
+		return dependency == nil || dependency.CreateReviewDecision == nil
+	case method == http.MethodPost && path == "/api/v1/scans":
+		return dependency == nil || dependency.CreateScan == nil
+	case method == http.MethodPost && strings.HasPrefix(path, "/api/v1/scans/") && strings.HasSuffix(path, "/cancellations"):
+		return dependency == nil || dependency.CancelScan == nil
+	case method == http.MethodPost && path == "/api/v1/workflow-runs":
+		return dependency == nil || dependency.CreateWorkflowRun == nil
+	case method == http.MethodPost && strings.HasPrefix(path, "/api/v1/workflow-runs/") && strings.HasSuffix(path, "/cancellations"):
+		return dependency == nil || dependency.CancelWorkflowRun == nil
+	default:
+		return false
+	}
+}
+
 func (server *Server) lookupDurableIdempotency(ctx context.Context, scope, key string, digest []byte) (*idempotencyEntry, bool, error) {
 	persistence := server.idempotencyPersistence()
 	if persistence == nil || persistence.Load == nil {
@@ -2206,6 +2293,9 @@ func (server *Server) releaseCurrentIdempotency(ctx context.Context) error {
 	if persistence == nil || persistence.Release == nil {
 		return ErrIdempotencyStore
 	}
+	if strings.TrimSpace(state.createdAt) == "" {
+		return ErrIdempotencyStore
+	}
 	err := persistence.Release(ctx, IdempotencyRecord{
 		Scope:        state.scope,
 		Key:          state.key,
@@ -2213,6 +2303,7 @@ func (server *Server) releaseCurrentIdempotency(ctx context.Context) error {
 		Status:       http.StatusProcessing,
 		ResourceKind: "idempotency_reservation",
 		ResourceID:   stableIdempotencyResourceID(state.scope, state.key),
+		CreatedAt:    state.createdAt,
 		State:        IdempotencyStateReserved,
 		AttemptID:    state.attempt,
 	})
@@ -2243,6 +2334,7 @@ func (server *Server) reserveIdempotency(ctx context.Context, scope, key string,
 		return false, ErrIdempotencyStore
 	}
 	attempt := requestID()
+	createdAt := server.now().UTC().Format(time.RFC3339Nano)
 	acquired, err := persistence.Reserve(ctx, IdempotencyRecord{
 		Scope:        scope,
 		Key:          key,
@@ -2250,7 +2342,7 @@ func (server *Server) reserveIdempotency(ctx context.Context, scope, key string,
 		Status:       http.StatusProcessing,
 		ResourceKind: "idempotency_reservation",
 		ResourceID:   stableIdempotencyResourceID(scope, key),
-		CreatedAt:    server.now().UTC().Format(time.RFC3339Nano),
+		CreatedAt:    createdAt,
 		State:        IdempotencyStateReserved,
 		AttemptID:    attempt,
 	})
@@ -2262,6 +2354,7 @@ func (server *Server) reserveIdempotency(ctx context.Context, scope, key string,
 	}
 	if acquired && state != nil {
 		state.attempt = attempt
+		state.createdAt = createdAt
 	}
 	return acquired, nil
 }

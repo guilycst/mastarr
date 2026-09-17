@@ -155,12 +155,20 @@ func (server *Server) recoverConfigurationIdempotency(ctx context.Context, reque
 		if !ok {
 			return IdempotencyRecord{}, false, nil
 		}
-		// Path-mapping domain records intentionally do not expose a tombstone
-		// timestamp. Without an explicit retired marker, an old snapshot cannot
-		// prove that DELETE completed, so leave this attempt for an injected
-		// reconciliation owner.
-		_ = id
-		return IdempotencyRecord{}, false, nil
+		// Retired mappings retain their immutable revision but are omitted from
+		// the active lookup. The two lookups together prove that this exact API
+		// mapping was retired; an active, YAML-owned, or revision-mismatched row
+		// remains unresolved and cannot be replayed as a successful DELETE.
+		if _, err := manager.GetPathMapping(ctx, domain.ConfigID(id), false); err == nil {
+			return IdempotencyRecord{}, false, nil
+		} else if !errors.Is(err, configuration.ErrResourceNotFound) {
+			return IdempotencyRecord{}, false, nil
+		}
+		mapping, err := manager.GetPathMapping(ctx, domain.ConfigID(id), true)
+		if err != nil || mapping.Source.Source != domain.SourceAPI || !strongRecoveryMatch(request.IfMatch, mapping.Revision) {
+			return IdempotencyRecord{}, false, nil
+		}
+		return server.configurationRecoveryRecord(request, http.StatusNoContent, mapping.ID.String(), nil, nil), true, nil
 	default:
 		return IdempotencyRecord{}, false, nil
 	}
@@ -232,7 +240,7 @@ func sameConnectionCreate(current domain.Connection, body api.ConnectionCreate, 
 }
 
 func sameConnectionPatch(current domain.Connection, body api.ConnectionPatch, ifMatch string) bool {
-	if current.Source.Source != domain.SourceAPI || current.RetiredAt != nil || !strongRecoveryMatch(ifMatch, current.Revision) {
+	if current.Source.Source != domain.SourceAPI || current.RetiredAt != nil || !validRecoveryETag(ifMatch) {
 		return false
 	}
 	if body.Label != nil && *body.Label != current.Label {
@@ -249,7 +257,7 @@ func sameStorageRootCreate(current domain.StorageRoot, body api.StorageRootCreat
 }
 
 func sameStorageRootPatch(current domain.StorageRoot, body api.StorageRootPatch, ifMatch string) bool {
-	if current.Source.Source != domain.SourceAPI || current.RetiredAt != nil || !strongRecoveryMatch(ifMatch, current.Revision) {
+	if current.Source.Source != domain.SourceAPI || current.RetiredAt != nil || !validRecoveryETag(ifMatch) {
 		return false
 	}
 	if body.Label != nil && *body.Label != current.Label || body.Path != nil && *body.Path != current.Path {
@@ -266,10 +274,15 @@ func samePathMappingCreate(current domain.PathMapping, body api.PathMappingCreat
 }
 
 func samePathMappingPatch(current domain.PathMapping, body api.PathMappingPatch, ifMatch string) bool {
-	if current.Source.Source != domain.SourceAPI || !strongRecoveryMatch(ifMatch, current.Revision) {
+	if current.Source.Source != domain.SourceAPI || !validRecoveryETag(ifMatch) {
 		return false
 	}
 	return (body.SourcePrefix == nil || *body.SourcePrefix == current.SourcePrefix) && (body.DestinationPrefix == nil || *body.DestinationPrefix == current.DestinationPrefix)
+}
+
+func validRecoveryETag(value string) bool {
+	_, err := strongETag(value)
+	return err == nil
 }
 
 // configurationEffectMaterialized classifies a persistence failure after the
@@ -315,9 +328,14 @@ func (server *Server) configurationEffectMaterialized(ctx context.Context) (know
 		if !decodeRecoveryBody(state.body, &body) {
 			return false, false
 		}
-		connection, err := manager.GetConnection(ctx, domain.ConfigID(body.Id), false)
+		_, err := manager.GetConnection(ctx, domain.ConfigID(body.Id), false)
 		if err == nil {
-			return true, sameConnectionCreate(connection, body, server.hasManagedCredentials(connection.ID))
+			// A present candidate is not proof that this request created it.  It
+			// may be a pre-existing or conflicting resource, and release would
+			// make the caller retry against that unrelated state.  Keep the
+			// reservation pending until the exact recovery owner can prove the
+			// request's identity and response.
+			return true, true
 		}
 		if errors.Is(err, configuration.ErrResourceNotFound) {
 			return true, false
@@ -340,11 +358,19 @@ func (server *Server) configurationEffectMaterialized(ctx context.Context) (know
 		if !decodeRecoveryBody(state.body, &body) {
 			return false, false
 		}
-		if !strongRecoveryMatch(state.ifMatch, connection.Revision) {
-			return true, true
+		if !validRecoveryETag(state.ifMatch) {
+			return false, false
 		}
-		changed := body.Label != nil && *body.Label != connection.Label || body.Endpoint != nil && *body.Endpoint != connection.Endpoint || body.Credentials != nil
-		return true, changed
+		// The reload is serialized behind the failed request's write gate. An
+		// unchanged revision is therefore authoritative evidence that the
+		// candidate never reached durable state, regardless of the requested
+		// values. A changed revision is an uncertain/potentially materialized
+		// target and must stay pending; it is never released merely because a
+		// field differs.
+		if expected, _ := strongETag(state.ifMatch); expected == connection.Revision {
+			return true, false
+		}
+		return true, true
 	case state.method == http.MethodDelete && strings.HasPrefix(state.path, "/api/v1/connections/"):
 		id, ok := recoveryPathID(state.path, "/api/v1/connections/")
 		if !ok {
@@ -369,9 +395,12 @@ func (server *Server) configurationEffectMaterialized(ctx context.Context) (know
 		if !decodeRecoveryBody(state.body, &body) {
 			return false, false
 		}
-		root, err := manager.GetStorageRoot(ctx, domain.ConfigID(body.Id), false)
+		_, err := manager.GetStorageRoot(ctx, domain.ConfigID(body.Id), false)
 		if err == nil {
-			return true, sameStorageRootCreate(root, body)
+			// Presence alone cannot distinguish a committed request from a
+			// conflicting pre-existing resource.  Preserve the reservation for
+			// exact read-back recovery instead of releasing it.
+			return true, true
 		}
 		if errors.Is(err, configuration.ErrResourceNotFound) {
 			return true, false
@@ -393,10 +422,13 @@ func (server *Server) configurationEffectMaterialized(ctx context.Context) (know
 		if !decodeRecoveryBody(state.body, &body) {
 			return false, false
 		}
-		if !strongRecoveryMatch(state.ifMatch, root.Revision) {
-			return true, true
+		if !validRecoveryETag(state.ifMatch) {
+			return false, false
 		}
-		return true, sameStorageRootPatch(root, body, state.ifMatch)
+		if expected, _ := strongETag(state.ifMatch); expected == root.Revision {
+			return true, false
+		}
+		return true, true
 	case state.method == http.MethodDelete && strings.HasPrefix(state.path, "/api/v1/storage-roots/"):
 		id, ok := recoveryPathID(state.path, "/api/v1/storage-roots/")
 		if !ok {
@@ -418,9 +450,11 @@ func (server *Server) configurationEffectMaterialized(ctx context.Context) (know
 		if !decodeRecoveryBody(state.body, &body) {
 			return false, false
 		}
-		mapping, err := manager.GetPathMapping(ctx, domain.ConfigID(body.Id), false)
+		_, err := manager.GetPathMapping(ctx, domain.ConfigID(body.Id), false)
 		if err == nil {
-			return true, samePathMappingCreate(mapping, body)
+			// A pre-existing mapping with this identifier is ambiguous.  It is
+			// never safe to release the request merely because a row exists.
+			return true, true
 		}
 		if errors.Is(err, configuration.ErrResourceNotFound) {
 			return true, false
@@ -442,10 +476,13 @@ func (server *Server) configurationEffectMaterialized(ctx context.Context) (know
 		if !decodeRecoveryBody(state.body, &body) {
 			return false, false
 		}
-		if !strongRecoveryMatch(state.ifMatch, mapping.Revision) {
-			return true, true
+		if !validRecoveryETag(state.ifMatch) {
+			return false, false
 		}
-		return true, samePathMappingPatch(mapping, body, state.ifMatch)
+		if expected, _ := strongETag(state.ifMatch); expected == mapping.Revision {
+			return true, false
+		}
+		return true, true
 	case state.method == http.MethodDelete && strings.HasPrefix(state.path, "/api/v1/path-mappings/"):
 		id, ok := recoveryPathID(state.path, "/api/v1/path-mappings/")
 		if !ok {
@@ -453,14 +490,17 @@ func (server *Server) configurationEffectMaterialized(ctx context.Context) (know
 		}
 		if _, err := manager.GetPathMapping(ctx, domain.ConfigID(id), false); err == nil {
 			return true, false
-		}
-		if _, err := manager.GetPathMapping(ctx, domain.ConfigID(id), true); err == nil {
-			return true, true
-		} else if errors.Is(err, configuration.ErrResourceNotFound) {
-			return true, false
-		} else {
+		} else if !errors.Is(err, configuration.ErrResourceNotFound) {
 			return false, false
 		}
+		mapping, err := manager.GetPathMapping(ctx, domain.ConfigID(id), true)
+		if err == nil && mapping.Source.Source == domain.SourceAPI && strongRecoveryMatch(state.ifMatch, mapping.Revision) {
+			return true, true
+		}
+		if errors.Is(err, configuration.ErrResourceNotFound) {
+			return true, false
+		}
+		return false, false
 	default:
 		return false, false
 	}

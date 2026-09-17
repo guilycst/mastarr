@@ -7,15 +7,18 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/guilycst/mastarr/internal/bootstrap"
 	"github.com/guilycst/mastarr/internal/configuration"
 	"github.com/guilycst/mastarr/internal/credentials"
+	"github.com/guilycst/mastarr/internal/domain"
 	"github.com/guilycst/mastarr/internal/storage"
 	"github.com/guilycst/mastarr/internal/transport"
 )
@@ -399,6 +402,76 @@ func TestSQLiteIdempotencyReleaseAllowsExactRetryAndPreservesConflict(t *testing
 	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPublicSQLiteRollbackReleasePersistsCreatedAtAndAllowsRetry(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), databaseName)
+	store, err := storage.Open(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 9, 17, 10, 0, 0, 0, time.UTC)
+	candidate, err := configuration.New(configuration.Options{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer candidate.Close()
+	reloaded, err := configuration.New(configuration.Options{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reloaded.Close()
+	var failOnce atomic.Bool
+	failOnce.Store(true)
+	configurationPersistence := &transport.ConfigurationPersistence{
+		CreateStorageRoot: func(ctx context.Context, _ domain.StorageRoot, mutate func(context.Context) (domain.StorageRoot, error)) (domain.StorageRoot, error) {
+			root, mutateErr := mutate(ctx)
+			if failOnce.CompareAndSwap(true, false) {
+				return root, transport.ErrConfigurationStore
+			}
+			return root, mutateErr
+		},
+	}
+	idempotency := newSQLiteIdempotencyPersistence(store.DB(), func() time.Time { return now })
+	server, err := transport.New(transport.Options{
+		Configuration:            candidate,
+		ConfigurationPersistence: configurationPersistence,
+		ConfigurationReload: func(context.Context) (*configuration.Manager, []domain.ConfigID, error) {
+			return reloaded, nil, nil
+		},
+		IdempotencyPersistence: idempotency,
+		Ready:                  true,
+		Now:                    func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"id":"sqlite-release-root","label":"Library","purpose":"library","path":"/synthetic/library"}`
+	request := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/storage-roots", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Idempotency-Key", "sqlite-release")
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, req)
+		return response
+	}
+	first := request()
+	if first.Code != http.StatusServiceUnavailable || !bytes.Contains(first.Body.Bytes(), []byte(`"persistence_unavailable"`)) {
+		t.Fatalf("rollback response = %d: %s", first.Code, first.Body.String())
+	}
+	released, found, err := idempotency.Load(context.Background(), "POST /api/v1/storage-roots", "sqlite-release")
+	if err != nil || found || released.State != transport.IdempotencyStateReleased || strings.TrimSpace(released.CreatedAt) == "" || released.AttemptID == "" {
+		t.Fatalf("released SQLite record = %#v, found=%t, err=%v; want timestamped release", released, found, err)
+	}
+	second := request()
+	if second.Code != http.StatusCreated {
+		t.Fatalf("same-key retry after SQLite release = %d: %s", second.Code, second.Body.String())
+	}
+	completed, found, err := idempotency.Load(context.Background(), "POST /api/v1/storage-roots", "sqlite-release")
+	if err != nil || !found || completed.State != transport.IdempotencyStateCompleted || !completed.Replayable {
+		t.Fatalf("completed SQLite retry record = %#v, found=%t, err=%v", completed, found, err)
 	}
 }
 

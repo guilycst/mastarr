@@ -579,7 +579,7 @@ func loadSQLiteIdempotencyRowFromValues(_ context.Context, record transport.Idem
 }
 
 func (persistence *sqliteIdempotencyPersistence) reserve(ctx context.Context, record transport.IdempotencyRecord) (bool, error) {
-	if persistence == nil || persistence.db == nil || record.State != transport.IdempotencyStateReserved || validateSQLiteIdempotencyRecord(record) != nil {
+	if persistence == nil || persistence.db == nil || record.State != transport.IdempotencyStateReserved || strings.TrimSpace(record.CreatedAt) == "" || validateSQLiteIdempotencyRecord(record) != nil {
 		return false, errConfigurationPersistence
 	}
 	if record.AttemptID != "" && validateAttemptID(record.AttemptID) != nil {
@@ -632,7 +632,7 @@ func (persistence *sqliteIdempotencyPersistence) reserve(ctx context.Context, re
 }
 
 func (persistence *sqliteIdempotencyPersistence) complete(ctx context.Context, record transport.IdempotencyRecord) error {
-	if persistence == nil || persistence.db == nil || record.State != transport.IdempotencyStateCompleted || validateSQLiteIdempotencyRecord(record) != nil {
+	if persistence == nil || persistence.db == nil || record.State != transport.IdempotencyStateCompleted || strings.TrimSpace(record.CreatedAt) == "" || validateSQLiteIdempotencyRecord(record) != nil {
 		return errConfigurationPersistence
 	}
 	if record.AttemptID != "" && validateAttemptID(record.AttemptID) != nil {
@@ -673,7 +673,7 @@ func (persistence *sqliteIdempotencyPersistence) complete(ctx context.Context, r
 }
 
 func (persistence *sqliteIdempotencyPersistence) release(ctx context.Context, record transport.IdempotencyRecord) error {
-	if persistence == nil || persistence.db == nil || record.State != transport.IdempotencyStateReserved || validateSQLiteIdempotencyRecord(record) != nil || validateAttemptID(record.AttemptID) != nil {
+	if persistence == nil || persistence.db == nil || record.State != transport.IdempotencyStateReserved || strings.TrimSpace(record.CreatedAt) == "" || validateSQLiteIdempotencyRecord(record) != nil || validateAttemptID(record.AttemptID) != nil {
 		return errConfigurationPersistence
 	}
 	responseJSON, err := json.Marshal(sqliteIdempotencyResponse{State: transport.IdempotencyStateReleased, Digest: record.Digest, AttemptID: record.AttemptID, Status: http.StatusProcessing})
