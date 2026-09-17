@@ -15,7 +15,9 @@
   "resumeDocument": "docs/execution/RESUME.md",
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
-  "activeImplementationTasks": [],
+  "activeImplementationTasks": [
+    "U-02"
+  ],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
   "guardrailBaseline": {
@@ -4170,12 +4172,58 @@
       "verificationNote": "U-01 correction round two approved by independent review. All R1-R5 closed; UI ordinary/race/vet/mod verify/tidy, generation, architecture/planning, HTTP/HTTPS metadata/header probes, Linux amd64/arm64 CGO-free builds, and full offline ./scripts/check-guardrails.sh --ci passed."
     },
     "U-02": {
-      "status": "planned",
-      "owner": null,
-      "baseSha": null,
+      "status": "in_progress",
+      "owner": "/root/x05_implementer",
+      "baseSha": "c2aa8a692e719d3e925f37c0d2b42357e86cce04",
       "integratedSha": null,
-      "evidence": [],
-      "review": null
+      "evidence": [
+        "Dispatched from clean coordinator checkpoint c2aa8a692e719d3e925f37c0d2b42357e86cce04 after U-01 approval.",
+        "Own only ui/internal/inventory/ and docs/execution/handoffs/U-02.md; do not edit shared API, state, or other UI lanes.",
+        "UI remains an HTTP-only BFF: use the generated UI client and frozen API contract; no root internals, database, storage, upstream clients, media mounts or safety decisions.",
+        "Synthetic fixtures only. Preserve provenance, unknown coverage, download-client metadata, per-instance tracking, editable identity/episode/subtitle associations, pagination and deep-link input state.",
+        "No mutations beyond rendering read-only inventory and matching views; review and workflow actions remain in later U-03."
+      ],
+      "review": null,
+      "dispatch": {
+        "assignedAt": "2026-09-17",
+        "model": "gpt-5.6-luna",
+        "reasoning": "max",
+        "role": "implementer",
+        "baseSha": "c2aa8a692e719d3e925f37c0d2b42357e86cce04",
+        "ownedPaths": [
+          "ui/internal/inventory/",
+          "docs/execution/handoffs/U-02.md"
+        ],
+        "checkout": "shared main",
+        "expectedChecks": [
+          "A-01",
+          "A-07",
+          "A-08",
+          "A-09",
+          "A-10",
+          "A-11",
+          "A-49",
+          "GOWORK=off UI tests/race/vet/module verification",
+          "generated-client reproducibility from frozen OpenAPI",
+          "HTTP-only import architecture check",
+          "Linux amd64/arm64 CGO-free UI build"
+        ],
+        "reviewPath": "docs/execution/handoffs/U-02-review-round1.md",
+        "handoffPath": "docs/execution/handoffs/U-02.md",
+        "nextReviewer": "/root/x05_reviewer",
+        "status": "assigned",
+        "waitingOn": "/root/x05_implementer",
+        "waitingReason": "U-02 implementation and handoff are required before independent review.",
+        "dependencyCommits": {
+          "U-01": "c2aa8a692e719d3e925f37c0d2b42357e86cce04"
+        },
+        "implementationCommit": null,
+        "handoffCommit": null,
+        "reviewSourceCommit": null,
+        "reviewRound": 0,
+        "reviewCommit": null,
+        "reviewIntegrationCommit": null
+      }
     },
     "U-03": {
       "status": "planned",
@@ -6021,7 +6069,7 @@
       ]
     }
   },
-  "nextAction": "U-01 is approved and integrated at 2f861a0322e8a693550ed6069e19776a1149a48e; dispatch U-02 discovery, inventory and matching views from this clean checkpoint.",
+  "nextAction": "U-02 is dispatched to /root/x05_implementer from clean checkpoint c2aa8a692e719d3e925f37c0d2b42357e86cce04; await the inventory and matching views handoff before independent review.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
