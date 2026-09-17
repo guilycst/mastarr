@@ -192,6 +192,11 @@ const (
 	TrashDirectoryLeaf     TrashReconciliationState = "directory_leaf"
 	TrashPartialDirectory  TrashReconciliationState = "partial_directory_leaves"
 	TrashRetryPending      TrashReconciliationState = "retry_pending"
+	// TrashTerminalStale means a previously terminal item no longer has the
+	// exact trash-only read-back that justified its terminal state. It is kept
+	// distinct from pending source-only scope so a retry cannot treat a stale
+	// terminal row as ordinary remaining work.
+	TrashTerminalStale TrashReconciliationState = "terminal_item_stale"
 )
 
 type trashReconciliationItem struct {
@@ -875,6 +880,7 @@ func (service *Service) observePlannedTrash(ctx context.Context, entry Entry) (t
 	states := make([]TrashReconciliationState, 0, len(entry.Items))
 	observedStates := make([]TrashReconciliationState, 0, len(entry.Items))
 	allMaterialized := true
+	terminalStale := false
 	for _, item := range entry.Items {
 		originalTarget := domain.FileTarget{RootID: item.RootID, RelativePath: item.OriginalRelativePath}
 		trashTarget := domain.FileTarget{RootID: item.RootID, RelativePath: item.TrashRelativePath}
@@ -954,6 +960,16 @@ func (service *Service) observePlannedTrash(ctx context.Context, entry Entry) (t
 			observation.Evidence = append(observation.Evidence, "directory_leaf")
 			itemEffect.Evidence = append(itemEffect.Evidence, "directory_leaf")
 		}
+		if !isPendingTrashItem(item) && observation.State != TrashOnly {
+			// A terminal item is materialized only by an exact trash-only
+			// observation. Seeing its source, both paths, neither path, or a
+			// changed identity means the durable terminal state is stale. Keep
+			// this separate from pending states so RetryTrash cannot authorize a
+			// narrow retry and falsely complete the aggregate entry.
+			terminalStale = true
+			observation.Evidence = appendUniqueString(observation.Evidence, "trash_terminal_item_stale")
+			itemEffect.Evidence = appendUniqueString(itemEffect.Evidence, "trash_terminal_item_stale")
+		}
 		observedStates = append(observedStates, observation.State)
 		// A previously matched retry item is already terminal only when the
 		// exact trash object remains present and the source is absent. Keep that
@@ -974,7 +990,13 @@ func (service *Service) observePlannedTrash(ctx context.Context, entry Entry) (t
 	} else {
 		reconciliation.Disposition = classifyTrashReconciliation(states)
 	}
+	if terminalStale {
+		reconciliation.Disposition = TrashTerminalStale
+	}
 	reconciliation.Evidence = []string{"trash_reconciliation_observed"}
+	if terminalStale {
+		reconciliation.Evidence = append(reconciliation.Evidence, "trash_terminal_item_stale")
+	}
 	if reconciliation.Disposition == TrashPartial && containsDirectoryEvidence(reconciliation.Items) {
 		reconciliation.Disposition = TrashPartialDirectory
 	}
@@ -1164,7 +1186,14 @@ func (service *Service) persistTrashReconciliation(ctx context.Context, entry En
 				return ErrClaimed
 			}
 		}
-		outcome, err := encodeTrashReconciliation(reconciliation, state, effects)
+		priorOutcome := ""
+		if outcomeOperation(janitor.OutcomeJson) == OperationTrash {
+			// Keep the complete preceding action/reconciliation envelope. A
+			// read-back is additive evidence and must not erase affected item
+			// identities, action errors, timestamps, or scope diagnostics.
+			priorOutcome = janitor.OutcomeJson
+		}
+		outcome, err := encodeTrashReconciliation(reconciliation, state, effects, priorOutcome)
 		if err != nil {
 			return fmt.Errorf("%w: encode trash reconciliation: %v", ErrStorage, err)
 		}
@@ -1189,7 +1218,7 @@ func stateForTrashReconciliation(reconciliationState, current string) string {
 	return reconciliationState
 }
 
-func encodeTrashReconciliation(reconciliation trashReconciliation, state string, effects []ItemEffect) (string, error) {
+func encodeTrashReconciliation(reconciliation trashReconciliation, state string, effects []ItemEffect, priorOutcome string) (string, error) {
 	value := map[string]any{
 		"operation":   OperationTrash,
 		"state":       state,
@@ -1202,6 +1231,18 @@ func encodeTrashReconciliation(reconciliation trashReconciliation, state string,
 	}
 	if len(effects) > 0 {
 		value["effects"] = effects
+	}
+	if strings.TrimSpace(priorOutcome) != "" {
+		if json.Valid([]byte(priorOutcome)) {
+			// RawMessage preserves the prior package-owned outcome as a JSON
+			// envelope. It remains queryable evidence without flattening or
+			// silently dropping fields from the action result.
+			value["priorOutcome"] = json.RawMessage(priorOutcome)
+		} else {
+			// This should not occur for package-generated outcomes, but retain
+			// an opaque historical value rather than allowing evidence loss.
+			value["priorOutcome"] = priorOutcome
+		}
 	}
 	encoded, err := json.Marshal(value)
 	if err != nil {
