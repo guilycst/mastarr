@@ -4056,7 +4056,9 @@
         "Own only ui/internal/client/, ui/internal/shell/, ui/internal/config/, ui/cmd/, ui/internal/assets/ and docs/execution/handoffs/U-01.md.",
         "Nested UI remains HTTP-only: no root internals, DB, storage, upstream clients, media mounts or safety decisions.",
         "Use frozen api/openapi.yaml and the generated HTTP client; do not add go.work or local replace directives.",
-        "No credentials, private service coordinates, real inventory, media data or live deployment."
+        "No credentials, private service coordinates, real inventory, media data or live deployment.",
+        "2f86d298d890e466334ecaa6d0bd92dc4d50f64f U-01 product adds HTTP-only BFF config, generated-client wrapper, server-rendered shell/routes/errors, safe metadata and preview asset.",
+        "0ddb7fc75b00ec296879efca8f2b46720a81b56b U-01 handoff records owned paths, UI-only boundary, frozen ui module limitation, checks and deferred browser/full-CI evidence."
       ],
       "review": {
         "status": "pending",
@@ -4066,9 +4068,9 @@
         "findings": [],
         "round": 1
       },
-      "implementationCommit": null,
-      "handoffCommit": null,
-      "reviewSourceCommit": null,
+      "implementationCommit": "2f86d298d890e466334ecaa6d0bd92dc4d50f64f",
+      "handoffCommit": "0ddb7fc75b00ec296879efca8f2b46720a81b56b",
+      "reviewSourceCommit": "2f86d298d890e466334ecaa6d0bd92dc4d50f64f",
       "reviewIntegrationCommit": null,
       "dispatch": {
         "assignedAt": "2026-09-17",
@@ -4099,18 +4101,18 @@
         "reviewPath": "docs/execution/handoffs/U-01-review-round1.md",
         "handoffPath": "docs/execution/handoffs/U-01.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "in_progress",
-        "waitingOn": "/root/x05_implementer",
-        "waitingReason": "Implement BFF shell and generated-client boundary, then provide product and handoff commits for independent review.",
+        "status": "awaiting_review",
+        "waitingOn": "/root/x05_reviewer",
+        "waitingReason": "U-01 product and handoff are complete; independent review is required for the BFF shell, metadata, startup config and HTTP-only boundary.",
         "dependencyCommits": {
           "U-00": "508d88ef7e11d115d004cd48dae8bb9b2bb7608c",
           "C-03": "8c9bf9a6277e068f9ae6b859fab2c5f7aa4890a1",
           "C-04": "37326ef211c2f2141f412c1f3bbcada208ec6f46"
         },
-        "implementationCommit": null,
-        "handoffCommit": null,
-        "reviewSourceCommit": null,
-        "reviewRound": 0,
+        "implementationCommit": "2f86d298d890e466334ecaa6d0bd92dc4d50f64f",
+        "handoffCommit": "0ddb7fc75b00ec296879efca8f2b46720a81b56b",
+        "reviewSourceCommit": "2f86d298d890e466334ecaa6d0bd92dc4d50f64f",
+        "reviewRound": 1,
         "reviewCommit": null,
         "reviewIntegrationCommit": null,
         "correctionStatus": null,
@@ -4128,7 +4130,18 @@
         "correctionReviewIntegrationCommit": null,
         "correctionProductCommits": []
       },
-      "reviewHistory": []
+      "reviewHistory": [
+        {
+          "round": 1,
+          "reviewer": "/root/x05_reviewer",
+          "commit": null,
+          "status": "pending",
+          "sourceCommit": "2f86d298d890e466334ecaa6d0bd92dc4d50f64f",
+          "receipt": "docs/execution/handoffs/U-01-review-round1.md",
+          "productCommit": "2f86d298d890e466334ecaa6d0bd92dc4d50f64f",
+          "handoffCommit": "0ddb7fc75b00ec296879efca8f2b46720a81b56b"
+        }
+      ]
     },
     "U-02": {
       "status": "planned",
@@ -5982,7 +5995,7 @@
       ]
     }
   },
-  "nextAction": "U-01 BFF shell and generated-client boundary is dispatched from clean checkpoint 4aecc47ddfba0eb21a36a8ffcb423df711191a1d; implementer owns the nested UI paths and independent review follows.",
+  "nextAction": "U-01 product and handoff are recorded; dispatch independent review round one for the BFF shell and generated-client boundary.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
