@@ -15,9 +15,7 @@
   "resumeDocument": "docs/execution/RESUME.md",
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
-  "activeImplementationTasks": [
-    "U-02"
-  ],
+  "activeImplementationTasks": [],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
   "guardrailBaseline": {
@@ -4172,10 +4170,10 @@
       "verificationNote": "U-01 correction round two approved by independent review. All R1-R5 closed; UI ordinary/race/vet/mod verify/tidy, generation, architecture/planning, HTTP/HTTPS metadata/header probes, Linux amd64/arm64 CGO-free builds, and full offline ./scripts/check-guardrails.sh --ci passed."
     },
     "U-02": {
-      "status": "in_progress",
+      "status": "done",
       "owner": "/root/x05_implementer",
       "baseSha": "c2aa8a692e719d3e925f37c0d2b42357e86cce04",
-      "integratedSha": null,
+      "integratedSha": "c214be4cfbc073fec62465c277b144101f7fdb33",
       "evidence": [
         "Dispatched from clean coordinator checkpoint c2aa8a692e719d3e925f37c0d2b42357e86cce04 after U-01 approval.",
         "Own only ui/internal/inventory/ and docs/execution/handoffs/U-02.md; do not edit shared API, state, or other UI lanes.",
@@ -4198,14 +4196,12 @@
         "0e96c0ec7d84bab3efcd566b6352ab65cf12a607 U-02 correction round-four handoff records R5c-a transport regression and focused/UI/race/vet/mod/generation/Vacuum/architecture/planning/lint/full offline checks plus Linux builds passing."
       ],
       "review": {
-        "status": "changes_requested",
-        "decision": "changes_requested",
+        "status": "approved",
+        "decision": "approved",
         "reviewer": "/root/x05_reviewer",
-        "commit": "1683d40afd2c8364bab511f4009ebf609fe6be59",
-        "findings": [
-          "R5c-a P1 maximum handler-valid GET draft exceeds the default production http.Server request-header limit and returns HTTP 431 before inventory code; direct ServeHTTP tests miss the transport boundary."
-        ],
-        "round": 4
+        "commit": "a09d7ffc52c05c9387aadd4c8757bbce4a83990b",
+        "findings": [],
+        "round": 5
       },
       "dispatch": {
         "assignedAt": "2026-09-17",
@@ -4234,19 +4230,19 @@
         "reviewPath": "docs/execution/handoffs/U-02-review-round1.md",
         "handoffPath": "docs/execution/handoffs/U-02.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "awaiting_review",
-        "waitingOn": "/root/x05_reviewer",
-        "waitingReason": "U-02 correction round four product and handoff are complete; independent review round five is required for the transport-safe bounds.",
+        "status": "approved",
+        "waitingOn": null,
+        "waitingReason": null,
         "dependencyCommits": {
           "U-01": "c2aa8a692e719d3e925f37c0d2b42357e86cce04"
         },
         "implementationCommit": "0e0e66d16c4211e20d4b773262165f7e5b4e3dc9",
         "handoffCommit": "f832b664104f2f0d07523a15cf019bd87cbf793a",
         "reviewSourceCommit": "0e0e66d16c4211e20d4b773262165f7e5b4e3dc9",
-        "reviewRound": 4,
-        "reviewCommit": "1683d40afd2c8364bab511f4009ebf609fe6be59",
-        "reviewIntegrationCommit": "063da25058ed690162c5b63e85db88706f81f658",
-        "correctionStatus": "awaiting_review",
+        "reviewRound": 5,
+        "reviewCommit": "a09d7ffc52c05c9387aadd4c8757bbce4a83990b",
+        "reviewIntegrationCommit": "c214be4cfbc073fec62465c277b144101f7fdb33",
+        "correctionStatus": "approved",
         "correctionRound": 4,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "063da25058ed690162c5b63e85db88706f81f658",
@@ -4257,8 +4253,8 @@
         "correctionImplementationCommit": "6c3b1d819601fedd14b2c080b84bc5632e01b494",
         "correctionHandoffCommit": "0e96c0ec7d84bab3efcd566b6352ab65cf12a607",
         "correctionReviewSourceCommit": "6c3b1d819601fedd14b2c080b84bc5632e01b494",
-        "correctionReviewCommit": null,
-        "correctionReviewIntegrationCommit": null,
+        "correctionReviewCommit": "a09d7ffc52c05c9387aadd4c8757bbce4a83990b",
+        "correctionReviewIntegrationCommit": "c214be4cfbc073fec62465c277b144101f7fdb33",
         "correctionDispatchCommit": "063da25058ed690162c5b63e85db88706f81f658",
         "correctionProductCommits": [
           "6c3b1d819601fedd14b2c080b84bc5632e01b494"
@@ -4336,17 +4332,19 @@
         {
           "round": 5,
           "reviewer": "/root/x05_reviewer",
-          "commit": null,
-          "status": "pending",
+          "commit": "a09d7ffc52c05c9387aadd4c8757bbce4a83990b",
+          "status": "approved",
           "sourceCommit": "6c3b1d819601fedd14b2c080b84bc5632e01b494",
           "receipt": "docs/execution/handoffs/U-02-review-round5.md",
           "handoff": "docs/execution/handoffs/U-02-correction-round4.md",
           "productCommit": "6c3b1d819601fedd14b2c080b84bc5632e01b494",
           "handoffCommit": "0e96c0ec7d84bab3efcd566b6352ab65cf12a607",
           "priorReviewCommit": "1683d40afd2c8364bab511f4009ebf609fe6be59",
-          "integratedCommit": null
+          "integratedCommit": "c214be4cfbc073fec62465c277b144101f7fdb33"
         }
-      ]
+      ],
+      "reviewIntegrationCommit": "c214be4cfbc073fec62465c277b144101f7fdb33",
+      "verificationNote": "U-02 approved after independent round-five review. The default production http.Server maximum-form probe reached the reader with 2,066 fields and 671,459 escaped bytes; focused/full UI ordinary and race tests, vet, mod verify/tidy, generation/Vacuum, lint/architecture/planning, Linux amd64/arm64 builds and full offline guardrails passed."
     },
     "U-03": {
       "status": "planned",
@@ -6192,7 +6190,7 @@
       ]
     }
   },
-  "nextAction": "U-02 correction round four product 6c3b1d819601fedd14b2c080b84bc5632e01b494 and handoff 0e96c0ec7d84bab3efcd566b6352ab65cf12a607 are recorded; dispatch independent review round five from this clean checkpoint.",
+  "nextAction": "U-02 is approved and integrated at c214be4cfbc073fec62465c277b144101f7fdb33; dispatch U-03 exact review and workflow controls from this clean checkpoint.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
