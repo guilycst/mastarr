@@ -43,10 +43,10 @@ func (server *Server) recoverConfigurationIdempotency(ctx context.Context, reque
 		if err != nil || !sameConnectionCreate(connection, body, server.hasManagedCredentials(connection.ID)) {
 			return IdempotencyRecord{}, false, nil
 		}
-		if body.Credentials != nil && !server.hasManagedCredentials(connection.ID) {
+		if body.Credentials != nil && (!server.hasManagedCredentials(connection.ID) || !sameManagedCredentialInput(ctx, manager, connection, body.Credentials)) {
 			return IdempotencyRecord{}, false, nil
 		}
-		return server.configurationRecoveryRecord(request, http.StatusCreated, connection.ID.String(), mapConnection(connection), map[string][]string{
+		return server.configurationRecoveryRecord(request, http.StatusCreated, connection.ID.String(), server.mapConnection(connection), map[string][]string{
 			"ETag":     {quoteETagValue(connection.Revision)},
 			"Location": {"/api/v1/connections/" + url.PathEscape(connection.ID.String())},
 		}), true, nil
@@ -63,10 +63,7 @@ func (server *Server) recoverConfigurationIdempotency(ctx context.Context, reque
 		if err != nil || !sameConnectionPatch(connection, body, request.IfMatch) {
 			return IdempotencyRecord{}, false, nil
 		}
-		// Managed credential plaintext cannot be reconstructed from a pending
-		// request without replaying its mutation. Keep that case pending and
-		// require an explicit reconciliation owner instead.
-		if body.Credentials != nil {
+		if body.Credentials != nil && (!server.hasManagedCredentials(connection.ID) || !sameManagedCredentialInput(ctx, manager, connection, body.Credentials)) {
 			return IdempotencyRecord{}, false, nil
 		}
 		return server.configurationRecoveryRecord(request, http.StatusOK, connection.ID.String(), mapConnection(connection), map[string][]string{
@@ -249,7 +246,52 @@ func sameConnectionPatch(current domain.Connection, body api.ConnectionPatch, if
 	if body.Endpoint != nil && *body.Endpoint != current.Endpoint {
 		return false
 	}
-	return body.Credentials == nil
+	return true
+}
+
+// sameManagedCredentialInput proves a recovered connection create/patch by
+// resolving the exact requested fields from the current managed store. The
+// resolved plaintext is held only for the byte comparison and is cleared on
+// every path; no credential value enters the recovery record or response.
+func sameManagedCredentialInput(ctx context.Context, manager *configuration.Manager, current domain.Connection, input *api.CredentialInput) bool {
+	if manager == nil || input == nil || current.Source.Source != domain.SourceAPI || current.RetiredAt != nil {
+		return false
+	}
+	values, cleanup, err := credentialInputs(input)
+	if err != nil {
+		return false
+	}
+	defer cleanup()
+	// Managed references are intentionally omitted from the public domain
+	// object, so discover the complete active field set through the bounded
+	// credential vocabulary and read each value back from the manager. This
+	// rejects both missing requested fields and extra current fields without
+	// exposing the plaintext in a durable record.
+	observedFields := 0
+	for _, field := range []string{"apiKey", "token", "username", "password"} {
+		observed, resolveErr := manager.ResolveCredential(ctx, current.ID, field)
+		requested, requestedOK := values[field]
+		if resolveErr != nil {
+			zeroCredentialBytes(observed)
+			if requestedOK {
+				return false
+			}
+			continue
+		}
+		observedFields++
+		if !requestedOK || !bytes.Equal(observed, requested.Value) {
+			zeroCredentialBytes(observed)
+			return false
+		}
+		zeroCredentialBytes(observed)
+	}
+	return observedFields == len(values)
+}
+
+func zeroCredentialBytes(value []byte) {
+	for index := range value {
+		value[index] = 0
+	}
 }
 
 func sameStorageRootCreate(current domain.StorageRoot, body api.StorageRootCreate) bool {

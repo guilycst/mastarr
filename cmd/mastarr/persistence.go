@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/guilycst/mastarr/internal/configuration"
 	"github.com/guilycst/mastarr/internal/domain"
 	"github.com/guilycst/mastarr/internal/transport"
 )
@@ -82,6 +83,19 @@ func (persistence *sqliteConfigurationPersistence) createConnection(ctx context.
 	pendingSnapshot := sqliteSnapshotID("connection", draft.ID.String(), pendingRevision)
 	if err := insertConfigSnapshot(ctx, tx, pendingSnapshot, "api", "api", pendingRevision, now, "{}", now); err != nil {
 		return domain.Connection{}, errConfigurationPersistence
+	}
+	var existingID string
+	err = tx.QueryRowContext(ctx, `SELECT id FROM connections WHERE id = ? LIMIT 1`, draft.ID.String()).Scan(&existingID)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		// The manager remains the authority for the normal create path.
+	case err != nil:
+		return domain.Connection{}, errConfigurationPersistence
+	default:
+		// A durable row already owns this identity. Return the same typed
+		// conflict the manager would return, without attempting a duplicate
+		// insert that would be misreported as persistence failure.
+		return domain.Connection{}, configuration.ErrConfigSourceConflict
 	}
 	created := now.Format(time.RFC3339Nano)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO connections (id, kind, label, endpoint, source, source_snapshot_id, revision, retired_at, created_at, updated_at) VALUES (?, ?, ?, ?, 'api', ?, 'pending', NULL, ?, ?)`, draft.ID.String(), string(draft.Kind), draft.Label, draft.Endpoint, pendingSnapshot, created, created); err != nil {
@@ -802,13 +816,21 @@ func (persistence *sqliteIdempotencyPersistence) clock() func() time.Time {
 func sanitizeIdempotencyHeaders(input map[string][]string) map[string][]string {
 	result := make(map[string][]string)
 	for key, values := range input {
-		canonical := http.CanonicalHeaderKey(key)
+		canonical := canonicalIdempotencyHeader(key)
 		switch canonical {
 		case "Cache-Control", "Content-Type", "ETag", "Location", "Retry-After", "Vary":
-			result[canonical] = append([]string(nil), values...)
+			result[canonical] = append(result[canonical], values...)
 		}
 	}
 	return result
+}
+
+func canonicalIdempotencyHeader(key string) string {
+	key = strings.TrimSpace(key)
+	if strings.EqualFold(key, "etag") {
+		return "ETag"
+	}
+	return http.CanonicalHeaderKey(key)
 }
 
 func nullableString(value string) any {

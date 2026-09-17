@@ -161,6 +161,11 @@ func TestRunPersistsAPIConfigurationAndIdempotencyAcrossRestart(t *testing.T) {
 		cancelFirst()
 		t.Fatalf("create status = %d: %s", response.StatusCode, firstResponseBody)
 	}
+	firstETag := response.Header.Get("ETag")
+	if firstETag == "" {
+		cancelFirst()
+		t.Fatal("create response omitted ETag")
+	}
 	rootStatus, _, rootBody := httpJSON(t, firstAddress, http.MethodPost, "/api/v1/storage-roots", []byte(`{"id":"persisted-library","label":"Library","purpose":"library","path":"`+filepath.ToSlash(filepath.Join(dataDir, "library"))+`"}`), map[string]string{"Idempotency-Key": "persisted-root"})
 	if rootStatus != http.StatusCreated {
 		cancelFirst()
@@ -247,9 +252,9 @@ func TestRunPersistsAPIConfigurationAndIdempotencyAcrossRestart(t *testing.T) {
 		cancelSecond()
 		t.Fatal(readErr)
 	}
-	if replay.StatusCode != http.StatusCreated || !bytes.Equal(replayBody, firstResponseBody) {
+	if replay.StatusCode != http.StatusCreated || !bytes.Equal(replayBody, firstResponseBody) || replay.Header.Get("ETag") != firstETag {
 		cancelSecond()
-		t.Fatalf("durable replay = %d %q, want %d %q", replay.StatusCode, replayBody, http.StatusCreated, firstResponseBody)
+		t.Fatalf("durable replay = %d etag=%q body=%q, want %d etag=%q body=%q", replay.StatusCode, replay.Header.Get("ETag"), replayBody, http.StatusCreated, firstETag, firstResponseBody)
 	}
 	changedReplayBody := []byte(`{"id":"persisted-qbt","kind":"qbittorrent","label":"changed","endpoint":"http://qbt.test","credentials":{"kind":"api_key","apiKey":"synthetic-api-key"}}`)
 	changedReplayRequest, err := http.NewRequest(http.MethodPost, "http://"+secondAddress+"/api/v1/connections", bytes.NewReader(changedReplayBody))
@@ -472,6 +477,123 @@ func TestPublicSQLiteRollbackReleasePersistsCreatedAtAndAllowsRetry(t *testing.T
 	completed, found, err := idempotency.Load(context.Background(), "POST /api/v1/storage-roots", "sqlite-release")
 	if err != nil || !found || completed.State != transport.IdempotencyStateCompleted || !completed.Replayable {
 		t.Fatalf("completed SQLite retry record = %#v, found=%t, err=%v", completed, found, err)
+	}
+}
+
+func TestSQLiteRejectedConfigurationOutcomesStayRejectedAcrossFreshManager(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), databaseName)
+	store, err := storage.Open(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 9, 17, 10, 0, 0, 0, time.UTC)
+	manager, err := configuration.New(configuration.Options{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	configurationPersistence := newSQLiteConfigurationPersistence(store.DB(), func() time.Time { return now })
+	baseIdempotency := newSQLiteIdempotencyPersistence(store.DB(), func() time.Time { return now })
+	newServer := func(value *configuration.Manager, idempotency *transport.IdempotencyPersistence) *transport.Server {
+		server, serverErr := transport.New(transport.Options{
+			Configuration:            value,
+			ConfigurationPersistence: configurationPersistence,
+			IdempotencyPersistence:   idempotency,
+			Ready:                    true,
+			Now:                      func() time.Time { return now },
+		})
+		if serverErr != nil {
+			t.Fatal(serverErr)
+		}
+		return server
+	}
+	server := newServer(manager, baseIdempotency)
+	createBody := `{"id":"fresh-rejected","kind":"qbittorrent","label":"existing","endpoint":"http://qbt.test"}`
+	created := httptest.NewRecorder()
+	createRequest := httptest.NewRequest(http.MethodPost, "/api/v1/connections", strings.NewReader(createBody))
+	createRequest.Header.Set("Content-Type", "application/json")
+	createRequest.Header.Set("Idempotency-Key", "fresh-existing")
+	server.Handler().ServeHTTP(created, createRequest)
+	if created.Code != http.StatusCreated || created.Header().Get("ETag") == "" {
+		t.Fatalf("initial SQLite create = %d etag=%q: %s", created.Code, created.Header().Get("ETag"), created.Body.String())
+	}
+	initialETag := created.Header().Get("ETag")
+	patchBody := `{"label":"after"}`
+	patched := httptest.NewRecorder()
+	patchRequest := httptest.NewRequest(http.MethodPatch, "/api/v1/connections/fresh-rejected", strings.NewReader(patchBody))
+	patchRequest.Header.Set("Content-Type", "application/json")
+	patchRequest.Header.Set("Idempotency-Key", "fresh-advance")
+	patchRequest.Header.Set("If-Match", initialETag)
+	server.Handler().ServeHTTP(patched, patchRequest)
+	if patched.Code != http.StatusOK {
+		t.Fatalf("advance SQLite patch = %d: %s", patched.Code, patched.Body.String())
+	}
+	var releaseCalls atomic.Int32
+	var completionAttempts atomic.Int32
+	rejectingIdempotency := &transport.IdempotencyPersistence{
+		Load:    baseIdempotency.Load,
+		Reserve: baseIdempotency.Reserve,
+		Release: func(ctx context.Context, record transport.IdempotencyRecord) error {
+			releaseCalls.Add(1)
+			return baseIdempotency.Release(ctx, record)
+		},
+		Complete: func(context.Context, transport.IdempotencyRecord) error {
+			completionAttempts.Add(1)
+			return errors.New("synthetic completion outage")
+		},
+	}
+	rejectingServer := newServer(manager, rejectingIdempotency)
+	stale := httptest.NewRecorder()
+	staleRequest := httptest.NewRequest(http.MethodPatch, "/api/v1/connections/fresh-rejected", strings.NewReader(patchBody))
+	staleRequest.Header.Set("Content-Type", "application/json")
+	staleRequest.Header.Set("Idempotency-Key", "fresh-stale")
+	staleRequest.Header.Set("If-Match", initialETag)
+	rejectingServer.Handler().ServeHTTP(stale, staleRequest)
+	if stale.Code != http.StatusPreconditionFailed || !strings.Contains(stale.Body.String(), "precondition_failed") {
+		t.Fatalf("stale SQLite patch = %d: %s", stale.Code, stale.Body.String())
+	}
+	if completionAttempts.Load() != 0 || releaseCalls.Load() != 1 {
+		t.Fatalf("stale outcome completion=%d release=%d; want direct attempt release", completionAttempts.Load(), releaseCalls.Load())
+	}
+	duplicate := httptest.NewRecorder()
+	duplicateRequest := httptest.NewRequest(http.MethodPost, "/api/v1/connections", strings.NewReader(`{"id":"fresh-rejected","kind":"qbittorrent","label":"after","endpoint":"http://qbt.test"}`))
+	duplicateRequest.Header.Set("Content-Type", "application/json")
+	duplicateRequest.Header.Set("Idempotency-Key", "fresh-duplicate")
+	rejectingServer.Handler().ServeHTTP(duplicate, duplicateRequest)
+	if duplicate.Code != http.StatusConflict || !strings.Contains(duplicate.Body.String(), "configuration_conflict") {
+		t.Fatalf("duplicate SQLite create = %d: %s", duplicate.Code, duplicate.Body.String())
+	}
+	if completionAttempts.Load() != 0 || releaseCalls.Load() != 2 {
+		t.Fatalf("duplicate outcome completion=%d release=%d; want direct attempt release", completionAttempts.Load(), releaseCalls.Load())
+	}
+
+	state, err := loadAPIState(context.Background(), store, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	freshManager, err := configuration.New(configuration.Options{Now: func() time.Time { return now }, APIState: state})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer freshManager.Close()
+	freshServer := newServer(freshManager, baseIdempotency)
+	freshStale := httptest.NewRecorder()
+	freshStaleRequest := httptest.NewRequest(http.MethodPatch, "/api/v1/connections/fresh-rejected", strings.NewReader(patchBody))
+	freshStaleRequest.Header.Set("Content-Type", "application/json")
+	freshStaleRequest.Header.Set("Idempotency-Key", "fresh-stale")
+	freshStaleRequest.Header.Set("If-Match", initialETag)
+	freshServer.Handler().ServeHTTP(freshStale, freshStaleRequest)
+	if freshStale.Code != http.StatusPreconditionFailed || strings.Contains(freshStale.Body.String(), `"status":200`) {
+		t.Fatalf("fresh stale SQLite patch = %d: %s; rejected attempt must not recover as 200", freshStale.Code, freshStale.Body.String())
+	}
+	freshDuplicate := httptest.NewRecorder()
+	freshDuplicateRequest := httptest.NewRequest(http.MethodPost, "/api/v1/connections", strings.NewReader(`{"id":"fresh-rejected","kind":"qbittorrent","label":"after","endpoint":"http://qbt.test"}`))
+	freshDuplicateRequest.Header.Set("Content-Type", "application/json")
+	freshDuplicateRequest.Header.Set("Idempotency-Key", "fresh-duplicate")
+	freshServer.Handler().ServeHTTP(freshDuplicate, freshDuplicateRequest)
+	if freshDuplicate.Code != http.StatusConflict || strings.Contains(freshDuplicate.Body.String(), `"status":201`) {
+		t.Fatalf("fresh duplicate SQLite create = %d: %s; rejected attempt must not recover as 201", freshDuplicate.Code, freshDuplicate.Body.String())
 	}
 }
 

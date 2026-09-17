@@ -16,6 +16,7 @@ import (
 
 	api "github.com/guilycst/mastarr/internal/api/generated"
 	"github.com/guilycst/mastarr/internal/configuration"
+	"github.com/guilycst/mastarr/internal/credentials"
 	"github.com/guilycst/mastarr/internal/domain"
 )
 
@@ -123,6 +124,112 @@ func TestConfigurationConnectionETagAndIfMatch(t *testing.T) {
 	handler.ServeHTTP(getAfterWeak, httptest.NewRequest(http.MethodGet, "/api/v1/connections/qbt", nil))
 	if getAfterWeak.Code != http.StatusOK || strings.Contains(getAfterWeak.Body.String(), `"label":"weak"`) {
 		t.Fatalf("weak patch changed configuration: %d %s", getAfterWeak.Code, getAfterWeak.Body.String())
+	}
+}
+
+func TestDurableMutationsRequireAnExplicitRecoveryOwner(t *testing.T) {
+	store := newTestDurableIdempotency()
+	mutation := func(context.Context, api.CreateActionPlanRequestObject) (api.CreateActionPlanResponseObject, error) {
+		return nil, nil
+	}
+	if _, err := New(Options{
+		Dependencies:           &RouteDependencies{CreateActionPlan: mutation},
+		IdempotencyPersistence: store.persistence(),
+		Ready:                  true,
+	}); !errors.Is(err, ErrIdempotencyRecoveryRequired) {
+		t.Fatalf("durable mutation without owner = %v, want %v", err, ErrIdempotencyRecoveryRequired)
+	}
+	if _, err := New(Options{
+		Dependencies:           &RouteDependencies{CreateActionPlan: mutation},
+		IdempotencyPersistence: store.persistence(),
+		IdempotencyRecovery:    testPendingRecovery,
+		Ready:                  true,
+	}); err != nil {
+		t.Fatalf("durable mutation with owner = %v", err)
+	}
+	if _, err := New(Options{
+		Dependencies: &RouteDependencies{ListActionPlans: func(context.Context, api.ListActionPlansRequestObject) (api.ListActionPlansResponseObject, error) {
+			return nil, nil
+		}},
+		IdempotencyPersistence: store.persistence(),
+		Ready:                  true,
+	}); err != nil {
+		t.Fatalf("durable read dependency = %v", err)
+	}
+}
+
+func TestConfigurationRecoveryAuthenticatesManagedCredentialIdentity(t *testing.T) {
+	crypt, err := credentials.NewManager(bytes.Repeat([]byte{0x31}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := configuration.NewMemoryCredentialStore()
+	manager, err := configuration.New(configuration.Options{CredentialManager: crypt, CredentialStore: store})
+	if err != nil {
+		crypt.Close()
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	connection, err := manager.CreateConnection(context.Background(), configuration.ConnectionSpec{
+		ID:       "managed-recovery",
+		Kind:     domain.ConnectionQBittorrent,
+		Label:    "Managed",
+		Endpoint: "http://qbt.test",
+		Credentials: map[string]configuration.CredentialInput{
+			"apiKey": {Value: []byte("synthetic-api-key")},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := New(Options{Configuration: manager, ManagedCredentialIDs: []domain.ConfigID{connection.ID}, Now: time.Now, Ready: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovery := func(body string, method string) (IdempotencyRecord, bool) {
+		path := "/api/v1/connections/managed-recovery"
+		if method == http.MethodPost {
+			path = "/api/v1/connections"
+		}
+		result, ok, recoveryErr := server.recoverConfigurationIdempotency(context.Background(), IdempotencyRecoveryRequest{
+			Scope:   method + " " + path,
+			Key:     "credential-recovery",
+			Digest:  strings.Repeat("ab", 32),
+			Method:  method,
+			Path:    path,
+			IfMatch: quoteETagValue(connection.Revision),
+			Body:    []byte(body),
+			Record: IdempotencyRecord{
+				Scope:     method + " " + path,
+				Key:       "credential-recovery",
+				Digest:    strings.Repeat("ab", 32),
+				State:     IdempotencyStateReserved,
+				AttemptID: "attempt-credential",
+				CreatedAt: "2026-09-17T10:00:00Z",
+			},
+		})
+		if recoveryErr != nil {
+			t.Fatalf("credential recovery error = %v", recoveryErr)
+		}
+		return result, ok
+	}
+	createBody := `{"id":"managed-recovery","kind":"qbittorrent","label":"Managed","endpoint":"http://qbt.test","credentials":{"kind":"api_key","apiKey":"synthetic-api-key"}}`
+	created, ok := recovery(createBody, http.MethodPost)
+	if !ok || created.Status != http.StatusCreated || !created.Replayable {
+		t.Fatalf("managed create recovery = %#v, ok=%t; want exact identity", created, ok)
+	}
+	patchBody := `{"credentials":{"kind":"api_key","apiKey":"synthetic-api-key"}}`
+	patched, ok := recovery(patchBody, http.MethodPatch)
+	if !ok || patched.Status != http.StatusOK || !patched.Replayable {
+		t.Fatalf("managed patch recovery = %#v, ok=%t; want exact identity", patched, ok)
+	}
+	_, ok = recovery(strings.Replace(createBody, "synthetic-api-key", "wrong-api-key", 1), http.MethodPost)
+	if ok {
+		t.Fatal("managed credential mismatch recovered as successful create")
+	}
+	_, ok = recovery(strings.Replace(patchBody, "synthetic-api-key", "wrong-api-key", 1), http.MethodPatch)
+	if ok {
+		t.Fatal("managed credential mismatch recovered as successful patch")
 	}
 }
 
@@ -331,6 +438,7 @@ func TestDurableIdempotencyReservationSurvivesLostCompletion(t *testing.T) {
 			Ready:                  true,
 			Dependencies:           &RouteDependencies{CreateConnection: dependency},
 			IdempotencyPersistence: store.persistence(),
+			IdempotencyRecovery:    testPendingRecovery,
 		}
 	}
 	body := `{"id":"durable","kind":"qbittorrent","label":"durable","endpoint":"http://qbt.test"}`
@@ -426,6 +534,87 @@ func TestDurableIdempotencyRecoveryOwnerCompletesWithoutRedispatch(t *testing.T)
 	}
 	if got := recoveryCalls.Load(); got != 1 {
 		t.Fatalf("recovery calls = %d, want 1", got)
+	}
+}
+
+func TestBuiltInRejectedConfigurationOutcomeReleasesExactAttempt(t *testing.T) {
+	store := newTestDurableIdempotency()
+	store.failCompletion.Store(true)
+	now := time.Date(2026, 9, 17, 10, 0, 0, 0, time.UTC)
+	manager, err := configuration.New(configuration.Options{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	connection, err := manager.CreateConnection(context.Background(), configuration.ConnectionSpec{ID: "rejected-patch", Kind: domain.ConnectionQBittorrent, Label: "before", Endpoint: "http://qbt.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.UpdateConnection(context.Background(), connection.ID, connection.Revision, configuration.ConnectionPatch{Label: stringPtr("after")}); err != nil {
+		t.Fatal(err)
+	}
+	server, err := New(Options{Configuration: manager, IdempotencyPersistence: store.persistence(), Now: func() time.Time { return now }, Ready: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"label":"after"}`
+	request := func() *httptest.ResponseRecorder {
+		return doJSON(server.Handler(), http.MethodPatch, "/api/v1/connections/rejected-patch", body, map[string]string{
+			"Idempotency-Key": "stale-patch",
+			"If-Match":        quoteETagValue(connection.Revision),
+		})
+	}
+	first := request()
+	if first.Code != http.StatusPreconditionFailed || !strings.Contains(first.Body.String(), "precondition_failed") {
+		t.Fatalf("stale patch response = %d: %s", first.Code, first.Body.String())
+	}
+	store.mu.Lock()
+	released := cloneTestIdempotencyRecord(store.records["PATCH /api/v1/connections/rejected-patch\x00stale-patch"])
+	store.mu.Unlock()
+	if released.State != IdempotencyStateReleased || released.AttemptID == "" || released.CreatedAt == "" {
+		t.Fatalf("stale patch reservation = %#v; want exact released attempt", released)
+	}
+	store.failCompletion.Store(false)
+	second := request()
+	if second.Code != http.StatusPreconditionFailed || strings.Contains(second.Body.String(), "persistence_unavailable") {
+		t.Fatalf("stale patch retry = %d: %s; want rejection, never recovery success", second.Code, second.Body.String())
+	}
+}
+
+func TestBuiltInDuplicateCreateDoesNotRecoverAsCreated(t *testing.T) {
+	store := newTestDurableIdempotency()
+	store.failCompletion.Store(true)
+	now := time.Date(2026, 9, 17, 10, 0, 0, 0, time.UTC)
+	manager, err := configuration.New(configuration.Options{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	if _, err := manager.CreateConnection(context.Background(), configuration.ConnectionSpec{ID: "duplicate-create", Kind: domain.ConnectionQBittorrent, Label: "existing", Endpoint: "http://qbt.test"}); err != nil {
+		t.Fatal(err)
+	}
+	server, err := New(Options{Configuration: manager, IdempotencyPersistence: store.persistence(), Now: func() time.Time { return now }, Ready: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"id":"duplicate-create","kind":"qbittorrent","label":"existing","endpoint":"http://qbt.test"}`
+	request := func() *httptest.ResponseRecorder {
+		return doJSON(server.Handler(), http.MethodPost, "/api/v1/connections", body, map[string]string{"Idempotency-Key": "duplicate-create"})
+	}
+	first := request()
+	if first.Code != http.StatusConflict || !strings.Contains(first.Body.String(), "configuration_conflict") {
+		t.Fatalf("duplicate create response = %d: %s", first.Code, first.Body.String())
+	}
+	store.mu.Lock()
+	released := cloneTestIdempotencyRecord(store.records["POST /api/v1/connections\x00duplicate-create"])
+	store.mu.Unlock()
+	if released.State != IdempotencyStateReleased || released.AttemptID == "" {
+		t.Fatalf("duplicate create reservation = %#v; want exact released attempt", released)
+	}
+	store.failCompletion.Store(false)
+	second := request()
+	if second.Code != http.StatusConflict || strings.Contains(second.Body.String(), `"status":201`) {
+		t.Fatalf("duplicate create retry = %d: %s; want conflict, never recovery create", second.Code, second.Body.String())
 	}
 }
 
@@ -614,8 +803,8 @@ func TestDefaultPatchRecoveryRecognizesPostMutationRevision(t *testing.T) {
 				"Idempotency-Key": "patch-lost-" + testCase.name,
 				"If-Match":        ifMatch,
 			})
-			if second.Code != http.StatusOK || !strings.Contains(second.Body.String(), marker) {
-				t.Fatalf("read-back recovery = %d: %s", second.Code, second.Body.String())
+			if second.Code != http.StatusOK || !strings.Contains(second.Body.String(), marker) || second.Header().Get("ETag") != quoteETagValue(after) {
+				t.Fatalf("read-back recovery = %d etag=%q: %s; want etag %q", second.Code, second.Header().Get("ETag"), second.Body.String(), quoteETagValue(after))
 			}
 			final, err := testCase.read(reloaded)
 			if err != nil {
@@ -810,6 +999,7 @@ func TestKnownPreEffectRouteFailureReleasesDurableKey(t *testing.T) {
 			dispatches.Add(1)
 			return syntheticConnectionResponse("route-retry"), nil
 		}},
+		IdempotencyRecovery: testPendingRecovery,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -830,6 +1020,7 @@ func TestInjectedUnavailableRouteRemainsPending(t *testing.T) {
 		Dependencies: &RouteDependencies{CreateConnection: func(context.Context, api.CreateConnectionRequestObject) (api.CreateConnectionResponseObject, error) {
 			return nil, ErrNotReady
 		}},
+		IdempotencyRecovery: testPendingRecovery,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -911,7 +1102,7 @@ func TestDurableReservationSerializesConcurrentServers(t *testing.T) {
 		return syntheticConnectionResponse("race"), nil
 	}
 	options := func() Options {
-		return Options{Ready: true, Dependencies: &RouteDependencies{CreateConnection: dependency}, IdempotencyPersistence: store.persistence()}
+		return Options{Ready: true, Dependencies: &RouteDependencies{CreateConnection: dependency}, IdempotencyPersistence: store.persistence(), IdempotencyRecovery: testPendingRecovery}
 	}
 	firstServer, err := New(options())
 	if err != nil {
@@ -1074,6 +1265,10 @@ func cloneTestIdempotencyRecord(record IdempotencyRecord) IdempotencyRecord {
 
 func syntheticConnectionResponse(id string) api.CreateConnection201JSONResponse {
 	return api.CreateConnection201JSONResponse{Body: api.Connection{Id: id, Kind: api.ConnectionKindQbittorrent, Label: id, Endpoint: "http://qbt.test", Revision: "revision", CredentialState: api.ConnectionCredentialStateMissing, Health: api.ConnectionHealthUnknown}}
+}
+
+func testPendingRecovery(context.Context, IdempotencyRecoveryRequest) (IdempotencyRecord, bool, error) {
+	return IdempotencyRecord{}, false, nil
 }
 
 func doJSON(handler http.Handler, method, path, body string, headers map[string]string) *httptest.ResponseRecorder {

@@ -55,6 +55,11 @@ var (
 	ErrInvalidParameter    = errors.New("request parameter is invalid")
 	ErrConfigurationStore  = errors.New("configuration persistence is unavailable")
 	ErrIdempotencyStore    = errors.New("idempotency persistence is unavailable")
+	// ErrIdempotencyRecoveryRequired prevents a durable mutation from being
+	// assembled without a route-specific owner that can reconcile a lost
+	// completion.  A no-op owner would leave the reservation permanently
+	// pending, while the built-in owner only covers configuration routes.
+	ErrIdempotencyRecoveryRequired = errors.New("durable mutation recovery owner is required")
 )
 
 // Options controls one API server.  Configuration is optional so a process
@@ -200,6 +205,9 @@ func New(options Options) (*Server, error) {
 	if options.Dependencies != nil {
 		copyDependencies := *options.Dependencies
 		dependencies = &copyDependencies
+	}
+	if options.IdempotencyPersistence != nil && hasDurableMutationDependency(dependencies) && options.IdempotencyRecovery == nil {
+		return nil, ErrIdempotencyRecoveryRequired
 	}
 	server := &Server{
 		configuration:        options.Configuration,
@@ -1562,6 +1570,14 @@ func (server *Server) policy(next http.Handler) http.Handler {
 			replay(w, &entry)
 			return
 		}
+		if server.knownNoEffectConfigurationResponse(r.Method, r.URL.Path, entry) && server.releaseCurrentIdempotency(r.Context()) == nil {
+			// A built-in configuration precondition/conflict is an
+			// attempt-specific no-effect result. Release binds the exact digest and
+			// reservation attempt, so a later retry cannot enter the read-back
+			// recovery path and infer success from coincident state.
+			replay(w, &entry)
+			return
+		}
 		if persistence := server.idempotencyPersistence(); persistence != nil && persistence.Complete != nil {
 			if err := server.persistIdempotency(r.Context(), scope, idempotencyKey, digest, entry); err != nil {
 				writeProblem(w, r, err)
@@ -2123,6 +2139,68 @@ func (server *Server) knownPreEffectRouteFailure(method, path string, entry idem
 	return problem.Code == "service_unavailable" || problem.Code == "not_ready"
 }
 
+// knownNoEffectConfigurationResponse recognizes only deterministic failures
+// produced by the built-in configuration handlers.  These responses are
+// observed before a mutation can take effect: a stale If-Match is rejected by
+// the manager CAS, and a create conflict is rejected before insertion.  An
+// injected dependency is excluded because it may have performed an effect
+// before returning the same HTTP status.
+func (server *Server) knownNoEffectConfigurationResponse(method, path string, entry idempotencyEntry) bool {
+	if server == nil || !server.builtInConfigurationMutationRoute(method, path) {
+		return false
+	}
+	if entry.status != http.StatusPreconditionFailed && entry.status != http.StatusConflict {
+		return false
+	}
+	decoder := json.NewDecoder(bytes.NewReader(entry.body))
+	decoder.DisallowUnknownFields()
+	var problem api.Problem
+	if err := decoder.Decode(&problem); err != nil {
+		return false
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return false
+	}
+	switch {
+	case entry.status == http.StatusPreconditionFailed && problem.Code == "precondition_failed":
+		return method == http.MethodPatch || method == http.MethodDelete
+	case entry.status == http.StatusConflict && problem.Code == "configuration_conflict":
+		return method == http.MethodPost || method == http.MethodPatch || method == http.MethodDelete
+	default:
+		return false
+	}
+}
+
+func (server *Server) builtInConfigurationMutationRoute(method, path string) bool {
+	if server == nil {
+		return false
+	}
+	dependency := server.routeDependencies()
+	switch {
+	case method == http.MethodPost && path == "/api/v1/connections":
+		return dependency == nil || dependency.CreateConnection == nil
+	case method == http.MethodPatch && strings.HasPrefix(path, "/api/v1/connections/"):
+		return dependency == nil || dependency.PatchConnection == nil
+	case method == http.MethodDelete && strings.HasPrefix(path, "/api/v1/connections/"):
+		return dependency == nil || dependency.RetireConnection == nil
+	case method == http.MethodPost && path == "/api/v1/storage-roots":
+		return dependency == nil || dependency.CreateStorageRoot == nil
+	case method == http.MethodPatch && strings.HasPrefix(path, "/api/v1/storage-roots/"):
+		return dependency == nil || dependency.PatchStorageRoot == nil
+	case method == http.MethodDelete && strings.HasPrefix(path, "/api/v1/storage-roots/"):
+		return dependency == nil || dependency.RetireStorageRoot == nil
+	case method == http.MethodPost && path == "/api/v1/path-mappings":
+		return dependency == nil || dependency.CreatePathMapping == nil
+	case method == http.MethodPatch && strings.HasPrefix(path, "/api/v1/path-mappings/"):
+		return dependency == nil || dependency.PatchPathMapping == nil
+	case method == http.MethodDelete && strings.HasPrefix(path, "/api/v1/path-mappings/"):
+		return dependency == nil || dependency.RetirePathMapping == nil
+	default:
+		return false
+	}
+}
+
 // unassembledMutationRoute proves that the generated route returned before
 // invoking an application service. Injected dependencies are deliberately
 // excluded: a service may have performed an effect before returning a
@@ -2386,13 +2464,25 @@ func (server *Server) persistIdempotency(ctx context.Context, scope, key string,
 func sanitizeReplayHeaders(input http.Header) http.Header {
 	result := make(http.Header)
 	for key, values := range input {
-		canonical := http.CanonicalHeaderKey(key)
+		canonical := replayHeaderKey(key)
 		switch canonical {
 		case "Cache-Control", "Content-Type", "ETag", "Location", "Retry-After", "Vary":
-			result[canonical] = append([]string(nil), values...)
+			result[canonical] = append(result[canonical], values...)
 		}
 	}
 	return result
+}
+
+// replayHeaderKey keeps ETag's conventional spelling while normalizing the
+// other replay-safe headers with net/http's canonicalizer.  The standard
+// library canonicalizes ETag to Etag, which would otherwise miss the explicit
+// allowlist and silently drop the caller's next If-Match token.
+func replayHeaderKey(key string) string {
+	key = strings.TrimSpace(key)
+	if strings.EqualFold(key, "etag") {
+		return "ETag"
+	}
+	return http.CanonicalHeaderKey(key)
 }
 
 func stableIdempotencyResourceID(scope, key string) string {

@@ -195,6 +195,37 @@ type RouteDependencies struct {
 	GetReadyHealth              func(context.Context, api.GetReadyHealthRequestObject) (api.GetReadyHealthResponseObject, error)
 }
 
+// hasDurableMutationDependency reports whether the caller assembled any
+// application operation that can mutate durable state.  The built-in
+// configuration handlers have their own read-only recovery owner; injected
+// handlers must supply an owner through Options.IdempotencyRecovery before a
+// durable idempotency store is enabled.
+func hasDurableMutationDependency(dependency *RouteDependencies) bool {
+	if dependency == nil {
+		return false
+	}
+	return dependency.CreateActionPlan != nil ||
+		dependency.CreateActionPlanRevision != nil ||
+		dependency.CancelActionRun != nil ||
+		dependency.RequestActionReconciliation != nil ||
+		dependency.RequestActionRetry != nil ||
+		dependency.CreateConnectionCheck != nil ||
+		dependency.CreateConnection != nil ||
+		dependency.RetireConnection != nil ||
+		dependency.PatchConnection != nil ||
+		dependency.CreatePathMapping != nil ||
+		dependency.RetirePathMapping != nil ||
+		dependency.PatchPathMapping != nil ||
+		dependency.CreateReviewDecision != nil ||
+		dependency.CreateScan != nil ||
+		dependency.CancelScan != nil ||
+		dependency.CreateStorageRoot != nil ||
+		dependency.RetireStorageRoot != nil ||
+		dependency.PatchStorageRoot != nil ||
+		dependency.CreateWorkflowRun != nil ||
+		dependency.CancelWorkflowRun != nil
+}
+
 // routeDependencies returns the immutable dependency snapshot captured by New.
 func (server *Server) routeDependencies() *RouteDependencies {
 	if server == nil {
