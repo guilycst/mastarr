@@ -3804,18 +3804,19 @@
         "Correction round seven focused/repeated race tests, vet, module verification, product pre-commit and full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed.",
         "0770b38dc318c776ffb33ad4063c51c5b5416a58 independent C-04 correction round seven review receipt, integrated as 03cd48e81aabd5279bb9ea701e6cd6d027856624; R3f-d/R3g-b closed and R3g-c remains P1.",
         "Reviewer full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed; independent built-in owner-removal probe failed 20/20 ordinary and 10/10 race.",
-        "C-04 correction round eight dispatched from clean coordinator checkpoint d646d967b8375528ce707debbe461a815c38b29e; scope is R3g-c built-in configuration recovery-owner removal with durable persistence."
+        "C-04 correction round eight dispatched from clean coordinator checkpoint d646d967b8375528ce707debbe461a815c38b29e; scope is R3g-c built-in configuration recovery-owner removal with durable persistence.",
+        "b031416f27e6819d454d8ec419e7a4ffa4e8eb12 C-04 correction round eight product fixes built-in recovery-owner removal with durable persistence and adds no-injected-dependency setter regressions.",
+        "87d49e7cfee20fab62128b4f19e2d5a4fde76102 C-04 correction round eight handoff records R3g-c, exact owner/readiness behavior, checks and boundaries.",
+        "Correction round eight focused ordinary/race tests, full owned ordinary/race tests, vet, module verification, architecture, planning, product pre-commit and full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed."
       ],
       "review": {
-        "status": "changes_requested",
-        "decision": "changes_requested",
+        "status": "pending",
+        "decision": "pending",
         "reviewer": "/root/x05_reviewer",
-        "commit": "0770b38dc318c776ffb33ad4063c51c5b5416a58",
-        "findings": [
-          "R3g-c P1 built-in configuration recovery owner can be removed while durable persistence remains active; hasDurableMutationDependency ignores built-in handlers, leaving durable mutations without a recovery owner."
-        ],
-        "round": 7,
-        "correctionCommit": "23462380b004586c1e09794c937ae396ee18b394"
+        "commit": null,
+        "findings": [],
+        "round": 8,
+        "correctionCommit": "b031416f27e6819d454d8ec419e7a4ffa4e8eb12"
       },
       "dispatch": {
         "assignedAt": "2026-09-16",
@@ -3842,25 +3843,25 @@
           "generation/API/Vacuum/lint/architecture/planning/full offline guardrails",
           "Linux amd64/arm64 CGO-free builds"
         ],
-        "reviewPath": "docs/execution/handoffs/C-04-review-round7.md",
-        "handoffPath": "docs/execution/handoffs/C-04-correction-round7.md",
+        "reviewPath": "docs/execution/handoffs/C-04-review-round8.md",
+        "handoffPath": "docs/execution/handoffs/C-04-correction-round8.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "in_progress",
+        "status": "awaiting_review",
         "dependencyCommits": {
           "D-04": "036288114bcf303f98e0ee02e54ddce18384e504",
           "F-03": "b65f5d65d67e6fc823fbf54fa8ab4f2a4d17d191",
           "X-08": "8c770f779204a00c2d8cc6312a2c0fc04262ea35",
           "W-05": "ea3958b15508d13893b55674b59cfb0bf50d1ffe"
         },
-        "waitingOn": "/root/x05_implementer",
-        "waitingReason": "Implement correction round eight for R3g-c: built-in configuration mutations must keep an effective recovery owner whenever durable idempotency persistence is attached.",
+        "waitingOn": "/root/x05_reviewer",
+        "waitingReason": "C-04 correction round eight product and handoff are complete; independent review is required for R3g-c and all prior C-04 invariants.",
         "implementationCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
         "handoffCommit": "c46b84183f0723d0cbb439eb539cd600c235acf0",
         "reviewSourceCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
         "reviewRound": 7,
         "reviewCommit": "0770b38dc318c776ffb33ad4063c51c5b5416a58",
         "reviewIntegrationCommit": "03cd48e81aabd5279bb9ea701e6cd6d027856624",
-        "correctionStatus": "in_progress",
+        "correctionStatus": "awaiting_review",
         "correctionRound": 8,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "d646d967b8375528ce707debbe461a815c38b29e",
@@ -3870,13 +3871,14 @@
         "correctionReviewer": "/root/x05_reviewer",
         "priorReviewCommit": "8598d5619509706cac383697d22fe93345de1573",
         "priorReviewIntegrationCommit": "b75e14faa55f3826bc856a09660bb36239d44b0d",
-        "correctionImplementationCommit": null,
-        "correctionHandoffCommit": null,
-        "correctionReviewSourceCommit": null,
+        "correctionImplementationCommit": "b031416f27e6819d454d8ec419e7a4ffa4e8eb12",
+        "correctionHandoffCommit": "87d49e7cfee20fab62128b4f19e2d5a4fde76102",
+        "correctionReviewSourceCommit": "b031416f27e6819d454d8ec419e7a4ffa4e8eb12",
         "correctionReviewCommit": null,
         "correctionReviewIntegrationCommit": null,
         "correctionProductCommits": [
-          "23462380b004586c1e09794c937ae396ee18b394"
+          "23462380b004586c1e09794c937ae396ee18b394",
+          "b031416f27e6819d454d8ec419e7a4ffa4e8eb12"
         ],
         "correctionDispatchCommit": "d646d967b8375528ce707debbe461a815c38b29e"
       },
@@ -3963,9 +3965,11 @@
           "reviewer": "/root/x05_reviewer",
           "commit": null,
           "status": "pending",
-          "sourceCommit": null,
+          "sourceCommit": "b031416f27e6819d454d8ec419e7a4ffa4e8eb12",
           "receipt": "docs/execution/handoffs/C-04-review-round8.md",
-          "handoff": "docs/execution/handoffs/C-04-correction-round8.md"
+          "handoff": "docs/execution/handoffs/C-04-correction-round8.md",
+          "productCommit": "b031416f27e6819d454d8ec419e7a4ffa4e8eb12",
+          "handoffCommit": "87d49e7cfee20fab62128b4f19e2d5a4fde76102"
         }
       ]
     },
@@ -5896,7 +5900,7 @@
       ]
     }
   },
-  "nextAction": "C-04 correction round eight is dispatched from clean checkpoint d646d967b8375528ce707debbe461a815c38b29e; implementer owns R3g-c and reviewer round eight follows.",
+  "nextAction": "C-04 correction round eight product and handoff are recorded; dispatch independent review round eight for R3g-c and prior invariants.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
