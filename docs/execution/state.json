@@ -4184,7 +4184,9 @@
         "No mutations beyond rendering read-only inventory and matching views; review and workflow actions remain in later U-03.",
         "0e0e66d16c4211e20d4b773262165f7e5b4e3dc9 U-02 product adds normalized HTTP-only inventory reader, strict DTO conversion, bounded read-only handler and synthetic coverage.",
         "f832b664104f2f0d07523a15cf019bd87cbf793a U-02 handoff records delivered discoveries/media/download/descriptor list/detail views, provenance, unknown coverage, per-instance tracking, editable GET-only associations, exact checks and deferred browser integration.",
-        "c4ea224451e2fd96e6128745a82b2adc8a261106 independent U-02 round-one review requests corrections; focused/UI/race/vet/mod/tidy/generation/architecture/planning/Linux/full offline checks pass but R1-R5 remain."
+        "c4ea224451e2fd96e6128745a82b2adc8a261106 independent U-02 round-one review requests corrections; focused/UI/race/vet/mod/tidy/generation/architecture/planning/Linux/full offline checks pass but R1-R5 remain.",
+        "0da6087590d1cc4a426da9a449fa61ea3d4b913c U-02 correction round one product closes R1-R5: exact detail ID binding, complete draft round-trip, evidence rendering, valid option markup and nested semantic validation.",
+        "f8a087ce1a03b502b630fdd644d74fd72de423f5 U-02 correction handoff records focused/UI/race/vet/mod/generation/Vacuum/architecture/planning/full offline checks passing."
       ],
       "review": {
         "status": "changes_requested",
@@ -4227,9 +4229,9 @@
         "reviewPath": "docs/execution/handoffs/U-02-review-round1.md",
         "handoffPath": "docs/execution/handoffs/U-02.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "changes_requested",
-        "waitingOn": "/root/x05_implementer",
-        "waitingReason": "Independent review found three P1 and two P2 U-02 correctness gaps; correction round one is required before re-review.",
+        "status": "awaiting_review",
+        "waitingOn": "/root/x05_reviewer",
+        "waitingReason": "U-02 correction product and handoff are complete; independent review round two is required for R1-R5.",
         "dependencyCommits": {
           "U-01": "c2aa8a692e719d3e925f37c0d2b42357e86cce04"
         },
@@ -4239,7 +4241,7 @@
         "reviewRound": 1,
         "reviewCommit": "c4ea224451e2fd96e6128745a82b2adc8a261106",
         "reviewIntegrationCommit": "f35beea597e62490d13f269794b9774a0ec08a33",
-        "correctionStatus": "assigned",
+        "correctionStatus": "awaiting_review",
         "correctionRound": 1,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "f35beea597e62490d13f269794b9774a0ec08a33",
@@ -4247,17 +4249,19 @@
         "correctionReviewPath": "docs/execution/handoffs/U-02-review-round2.md",
         "correctionHandoffPath": "docs/execution/handoffs/U-02-correction-round1.md",
         "correctionReviewer": "/root/x05_reviewer",
-        "correctionImplementationCommit": null,
-        "correctionHandoffCommit": null,
-        "correctionReviewSourceCommit": null,
+        "correctionImplementationCommit": "0da6087590d1cc4a426da9a449fa61ea3d4b913c",
+        "correctionHandoffCommit": "f8a087ce1a03b502b630fdd644d74fd72de423f5",
+        "correctionReviewSourceCommit": "0da6087590d1cc4a426da9a449fa61ea3d4b913c",
         "correctionReviewCommit": null,
         "correctionReviewIntegrationCommit": null,
         "correctionDispatchCommit": "f35beea597e62490d13f269794b9774a0ec08a33",
-        "correctionProductCommits": []
+        "correctionProductCommits": [
+          "0da6087590d1cc4a426da9a449fa61ea3d4b913c"
+        ]
       },
-      "implementationCommit": "0e0e66d16c4211e20d4b773262165f7e5b4e3dc9",
-      "handoffCommit": "f832b664104f2f0d07523a15cf019bd87cbf793a",
-      "reviewSourceCommit": "0e0e66d16c4211e20d4b773262165f7e5b4e3dc9",
+      "implementationCommit": "0da6087590d1cc4a426da9a449fa61ea3d4b913c",
+      "handoffCommit": "f8a087ce1a03b502b630fdd644d74fd72de423f5",
+      "reviewSourceCommit": "0da6087590d1cc4a426da9a449fa61ea3d4b913c",
       "reviewHistory": [
         {
           "round": 1,
@@ -4268,7 +4272,21 @@
           "receipt": "docs/execution/handoffs/U-02-review-round1.md",
           "productCommit": "0e0e66d16c4211e20d4b773262165f7e5b4e3dc9",
           "handoffCommit": "f832b664104f2f0d07523a15cf019bd87cbf793a",
-          "integratedCommit": "f35beea597e62490d13f269794b9774a0ec08a33"
+          "integratedCommit": "f35beea597e62490d13f269794b9774a0ec08a33",
+          "correctionProductCommit": "0da6087590d1cc4a426da9a449fa61ea3d4b913c",
+          "correctionHandoffCommit": "f8a087ce1a03b502b630fdd644d74fd72de423f5"
+        },
+        {
+          "round": 2,
+          "reviewer": "/root/x05_reviewer",
+          "commit": null,
+          "status": "pending",
+          "sourceCommit": "0da6087590d1cc4a426da9a449fa61ea3d4b913c",
+          "receipt": "docs/execution/handoffs/U-02-review-round2.md",
+          "handoff": "docs/execution/handoffs/U-02-correction-round1.md",
+          "productCommit": "0da6087590d1cc4a426da9a449fa61ea3d4b913c",
+          "handoffCommit": "f8a087ce1a03b502b630fdd644d74fd72de423f5",
+          "priorReviewCommit": "c4ea224451e2fd96e6128745a82b2adc8a261106"
         }
       ]
     },
@@ -6116,7 +6134,7 @@
       ]
     }
   },
-  "nextAction": "U-02 review receipt c4ea224451e2fd96e6128745a82b2adc8a261106 is integrated at f35beea597e62490d13f269794b9774a0ec08a33; correction round one is assigned to /root/x05_implementer for R1-R5.",
+  "nextAction": "U-02 correction product 0da6087590d1cc4a426da9a449fa61ea3d4b913c and handoff f8a087ce1a03b502b630fdd644d74fd72de423f5 are recorded; dispatch independent review round two from this clean checkpoint.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
