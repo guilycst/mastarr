@@ -3797,7 +3797,8 @@
         "21c54c7a288eb984fd122f475c41df03fe6c6a23 C-04 correction round six handoff records owned paths, exact checks, route-owner boundary, and no schema/API/client changes.",
         "Correction round six product focused/repeated race tests, vet, module verification, Linux builds, and full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed.",
         "8598d5619509706cac383697d22fe93345de1573 independent C-04 correction round six review receipt; ETag, managed credential identity, ordinary rejected release, and constructor owner gate pass, R3f-d/R3g-b remain P1.",
-        "Reviewer full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed; real-SQLite marker-outage and late-persistence owner probes reproduced both findings under ordinary and race runs."
+        "Reviewer full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed; real-SQLite marker-outage and late-persistence owner probes reproduced both findings under ordinary and race runs.",
+        "C-04 correction round seven dispatch pinned to clean coordinator checkpoint ea4b5e24391dc1a00f443d7f93bd53003adeaafd; scope is durable marker-outage safety and atomic recovery-owner setter enforcement."
       ],
       "review": {
         "status": "changes_requested",
@@ -3838,7 +3839,7 @@
         "reviewPath": "docs/execution/handoffs/C-04-review-round4.md",
         "handoffPath": "docs/execution/handoffs/C-04-correction-round3.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "review_complete",
+        "status": "in_progress",
         "dependencyCommits": {
           "D-04": "036288114bcf303f98e0ee02e54ddce18384e504",
           "F-03": "b65f5d65d67e6fc823fbf54fa8ab4f2a4d17d191",
@@ -3846,31 +3847,29 @@
           "W-05": "ea3958b15508d13893b55674b59cfb0bf50d1ffe"
         },
         "waitingOn": "/root/x05_implementer",
-        "waitingReason": "Round-six review requests durable no-effect fencing when both markers fail and atomic recovery-owner enforcement across startup setters.",
+        "waitingReason": "Implement correction round seven for R3f-d/R3g-b, then provide product and handoff commits for independent review round seven.",
         "implementationCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
         "handoffCommit": "c46b84183f0723d0cbb439eb539cd600c235acf0",
         "reviewSourceCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
         "reviewRound": 3,
         "reviewCommit": "461b0c06b0a3094f5da28ca2920400b639e22a61",
         "reviewIntegrationCommit": "d593fd4",
-        "correctionStatus": "pending_dispatch",
-        "correctionRound": 5,
+        "correctionStatus": "in_progress",
+        "correctionRound": 6,
         "correctionOwner": "/root/x05_implementer",
-        "correctionBaseSha": "01f837a64ba4c48ff89a8a08962e703eababfdd6",
-        "correctionDispatchCheckpoint": "ecea16b62844083d06c7a491d7ccbfad12dcd89f",
-        "correctionReviewPath": "docs/execution/handoffs/C-04-review-round6.md",
-        "correctionHandoffPath": "docs/execution/handoffs/C-04-correction-round5.md",
+        "correctionBaseSha": "ea4b5e24391dc1a00f443d7f93bd53003adeaafd",
+        "correctionDispatchCheckpoint": "ea4b5e24391dc1a00f443d7f93bd53003adeaafd",
+        "correctionReviewPath": "docs/execution/handoffs/C-04-review-round7.md",
+        "correctionHandoffPath": "docs/execution/handoffs/C-04-correction-round6.md",
         "correctionReviewer": "/root/x05_reviewer",
-        "priorReviewCommit": "c5c1baf1b6511b28693b8e3758d6597d28bd50e1",
-        "priorReviewIntegrationCommit": "e52dde661391dd7792c9278b42e26be1a7cea9f9",
-        "correctionImplementationCommit": "52f3654cd0a669dbc3dc59f5187bec828616c34e",
-        "correctionHandoffCommit": "21c54c7a288eb984fd122f475c41df03fe6c6a23",
-        "correctionReviewSourceCommit": "52f3654cd0a669dbc3dc59f5187bec828616c34e",
+        "priorReviewCommit": "8598d5619509706cac383697d22fe93345de1573",
+        "priorReviewIntegrationCommit": "b75e14faa55f3826bc856a09660bb36239d44b0d",
+        "correctionImplementationCommit": null,
+        "correctionHandoffCommit": null,
+        "correctionReviewSourceCommit": null,
         "correctionReviewCommit": null,
         "correctionReviewIntegrationCommit": null,
-        "correctionProductCommits": [
-          "52f3654cd0a669dbc3dc59f5187bec828616c34e"
-        ]
+        "correctionProductCommits": []
       },
       "implementationCommit": "52f3654cd0a669dbc3dc59f5187bec828616c34e",
       "handoffCommit": "21c54c7a288eb984fd122f475c41df03fe6c6a23",
@@ -3937,6 +3936,14 @@
           "sourceCommit": "52f3654cd0a669dbc3dc59f5187bec828616c34e",
           "receipt": "docs/execution/handoffs/C-04-review-round6.md",
           "integratedCommit": "b75e14faa55f3826bc856a09660bb36239d44b0d"
+        },
+        {
+          "round": 7,
+          "reviewer": "/root/x05_reviewer",
+          "commit": null,
+          "status": "pending",
+          "sourceCommit": null,
+          "receipt": "docs/execution/handoffs/C-04-review-round7.md"
         }
       ]
     },
@@ -5867,7 +5874,7 @@
       ]
     }
   },
-  "nextAction": "Record C-04 round-six changes_requested receipt and dispatch correction round seven for marker-outage false recovery and setter invariant bypass.",
+  "nextAction": "C-04 correction round seven is dispatched from clean checkpoint ea4b5e24391dc1a00f443d7f93bd53003adeaafd; implementer owns R3f-d and R3g-b and reviewer round seven follows.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
