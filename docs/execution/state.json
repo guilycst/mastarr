@@ -4193,7 +4193,9 @@
         "a81e58c5fc5a97e8205dabaa071fdb3783c31f78 independent U-02 round-three review closes R2a/R5a/R5b but requests corrections for R2b, R5c and R5d; focused/race/vet/mod/generation/architecture/planning/Linux/full offline checks pass.",
         "d832964b35cf2cfe2adf2b39d91e62c2f46bd745 U-02 correction round three closes R2b, R5c and R5d with usable back links, collection-sized draft bounds and route-scoped fixed-field validation.",
         "90d6238dfd408f3e599d7450bb5bac6a300d17d9 U-02 correction round-three handoff records full form-boundary regressions, focused/UI/race/vet/mod/generation/Vacuum/architecture/planning/lint/full offline checks and Linux builds passing.",
-        "1683d40afd2c8364bab511f4009ebf609fe6be59 independent U-02 round-four review closes R2b/R5d but finds R5c-a: maximum accepted/rendered draft returns HTTP 431 at the real default Go server before the handler; focused/full checks otherwise pass."
+        "1683d40afd2c8364bab511f4009ebf609fe6be59 independent U-02 round-four review closes R2b/R5d but finds R5c-a: maximum accepted/rendered draft returns HTTP 431 at the real default Go server before the handler; focused/full checks otherwise pass.",
+        "6c3b1d819601fedd14b2c080b84bc5632e01b494 U-02 correction round four bounds forms to a transport-safe 257-file/33-candidate, 128-byte scalar and 768 KiB encoded-query contract; adds real default httptest server coverage.",
+        "0e96c0ec7d84bab3efcd566b6352ab65cf12a607 U-02 correction round-four handoff records R5c-a transport regression and focused/UI/race/vet/mod/generation/Vacuum/architecture/planning/lint/full offline checks plus Linux builds passing."
       ],
       "review": {
         "status": "changes_requested",
@@ -4232,9 +4234,9 @@
         "reviewPath": "docs/execution/handoffs/U-02-review-round1.md",
         "handoffPath": "docs/execution/handoffs/U-02.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "changes_requested",
-        "waitingOn": "/root/x05_implementer",
-        "waitingReason": "Round-four review found a P1 transport-boundary mismatch between accepted maximum drafts and the default production HTTP server; correction round four is required.",
+        "status": "awaiting_review",
+        "waitingOn": "/root/x05_reviewer",
+        "waitingReason": "U-02 correction round four product and handoff are complete; independent review round five is required for the transport-safe bounds.",
         "dependencyCommits": {
           "U-01": "c2aa8a692e719d3e925f37c0d2b42357e86cce04"
         },
@@ -4244,7 +4246,7 @@
         "reviewRound": 4,
         "reviewCommit": "1683d40afd2c8364bab511f4009ebf609fe6be59",
         "reviewIntegrationCommit": "063da25058ed690162c5b63e85db88706f81f658",
-        "correctionStatus": "assigned",
+        "correctionStatus": "awaiting_review",
         "correctionRound": 4,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "063da25058ed690162c5b63e85db88706f81f658",
@@ -4252,17 +4254,19 @@
         "correctionReviewPath": "docs/execution/handoffs/U-02-review-round5.md",
         "correctionHandoffPath": "docs/execution/handoffs/U-02-correction-round4.md",
         "correctionReviewer": "/root/x05_reviewer",
-        "correctionImplementationCommit": null,
-        "correctionHandoffCommit": null,
-        "correctionReviewSourceCommit": null,
+        "correctionImplementationCommit": "6c3b1d819601fedd14b2c080b84bc5632e01b494",
+        "correctionHandoffCommit": "0e96c0ec7d84bab3efcd566b6352ab65cf12a607",
+        "correctionReviewSourceCommit": "6c3b1d819601fedd14b2c080b84bc5632e01b494",
         "correctionReviewCommit": null,
         "correctionReviewIntegrationCommit": null,
         "correctionDispatchCommit": "063da25058ed690162c5b63e85db88706f81f658",
-        "correctionProductCommits": []
+        "correctionProductCommits": [
+          "6c3b1d819601fedd14b2c080b84bc5632e01b494"
+        ]
       },
-      "implementationCommit": "d832964b35cf2cfe2adf2b39d91e62c2f46bd745",
-      "handoffCommit": "90d6238dfd408f3e599d7450bb5bac6a300d17d9",
-      "reviewSourceCommit": "d832964b35cf2cfe2adf2b39d91e62c2f46bd745",
+      "implementationCommit": "6c3b1d819601fedd14b2c080b84bc5632e01b494",
+      "handoffCommit": "0e96c0ec7d84bab3efcd566b6352ab65cf12a607",
+      "reviewSourceCommit": "6c3b1d819601fedd14b2c080b84bc5632e01b494",
       "reviewHistory": [
         {
           "round": 1,
@@ -4334,9 +4338,13 @@
           "reviewer": "/root/x05_reviewer",
           "commit": null,
           "status": "pending",
-          "sourceCommit": null,
+          "sourceCommit": "6c3b1d819601fedd14b2c080b84bc5632e01b494",
           "receipt": "docs/execution/handoffs/U-02-review-round5.md",
-          "handoff": "docs/execution/handoffs/U-02-correction-round4.md"
+          "handoff": "docs/execution/handoffs/U-02-correction-round4.md",
+          "productCommit": "6c3b1d819601fedd14b2c080b84bc5632e01b494",
+          "handoffCommit": "0e96c0ec7d84bab3efcd566b6352ab65cf12a607",
+          "priorReviewCommit": "1683d40afd2c8364bab511f4009ebf609fe6be59",
+          "integratedCommit": null
         }
       ]
     },
@@ -6184,7 +6192,7 @@
       ]
     }
   },
-  "nextAction": "U-02 review round four receipt 1683d40afd2c8364bab511f4009ebf609fe6be59 is integrated at 063da25058ed690162c5b63e85db88706f81f658; correction round four is assigned to /root/x05_implementer for R5c-a transport bounds.",
+  "nextAction": "U-02 correction round four product 6c3b1d819601fedd14b2c080b84bc5632e01b494 and handoff 0e96c0ec7d84bab3efcd566b6352ab65cf12a607 are recorded; dispatch independent review round five from this clean checkpoint.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
