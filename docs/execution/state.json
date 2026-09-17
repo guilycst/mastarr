@@ -3754,7 +3754,15 @@
         "Dispatched from clean coordinator checkpoint 887e9ea2fa791720f9743d8a0ba89e1e49cb814b; dependencies D-04=036288114bcf303f98e0ee02e54ddce18384e504, F-03=b65f5d65d67e6fc823fbf54fa8ab4f2a4d17d191, X-08=8c770f779204a00c2d8cc6312a2c0fc04262ea35, W-05=ea3958b15508d13893b55674b59cfb0bf50d1ffe are approved and closed.",
         "Own only internal/transport/, cmd/mastarr/, and docs/execution/handoffs/C-04.md; generated API bindings, schemas, adapters, clients, UI, storage, and workflow packages remain outside this lane.",
         "Synthetic fixtures and local temporary SQLite only. No credentials, private service coordinates, live services, inventories, or media.",
-        "F-05 remains fail-closed for unsupported move/rename/permanent filesystem deletion; G-01 Arr native writes remain disabled; Seerr remains read-only."
+        "F-05 remains fail-closed for unsupported move/rename/permanent filesystem deletion; G-01 Arr native writes remain disabled; Seerr remains read-only.",
+        "9f1607a5ff4ea901249a8d50f90848d35035a064 C-04 product",
+        "c46b84183f0723d0cbb439eb539cd600c235acf0 C-04 handoff",
+        "GOWORK=off go test ./cmd/mastarr ./internal/transport",
+        "GOWORK=off go test -race ./cmd/mastarr ./internal/transport",
+        "GOWORK=off go vet ./cmd/mastarr ./internal/transport",
+        "GOWORK=off go mod verify",
+        "GOOS=linux GOARCH=amd64/arm64 CGO_ENABLED=0 GOWORK=off go build",
+        "GOWORK=off ./scripts/check-guardrails.sh --fast"
       ],
       "review": {
         "status": "pending",
@@ -3793,27 +3801,37 @@
         "reviewPath": "docs/execution/handoffs/C-04-review-round1.md",
         "handoffPath": "docs/execution/handoffs/C-04.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "in_progress",
+        "status": "review_pending",
         "dependencyCommits": {
           "D-04": "036288114bcf303f98e0ee02e54ddce18384e504",
           "F-03": "b65f5d65d67e6fc823fbf54fa8ab4f2a4d17d191",
           "X-08": "8c770f779204a00c2d8cc6312a2c0fc04262ea35",
           "W-05": "ea3958b15508d13893b55674b59cfb0bf50d1ffe"
         },
-        "waitingOn": "/root/x05_implementer",
-        "waitingReason": "bounded C-04 transport and startup implementation",
-        "implementationCommit": null,
-        "handoffCommit": null,
-        "reviewSourceCommit": null,
-        "reviewRound": 0,
+        "waitingOn": "/root/x05_reviewer",
+        "waitingReason": "independent C-04 review round 1",
+        "implementationCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
+        "handoffCommit": "c46b84183f0723d0cbb439eb539cd600c235acf0",
+        "reviewSourceCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
+        "reviewRound": 1,
         "reviewCommit": null,
         "reviewIntegrationCommit": null,
         "correctionStatus": null,
         "correctionRound": 0
       },
-      "implementationCommit": null,
-      "handoffCommit": null,
-      "reviewSourceCommit": null
+      "implementationCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
+      "handoffCommit": "c46b84183f0723d0cbb439eb539cd600c235acf0",
+      "reviewSourceCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
+      "reviewHistory": [
+        {
+          "round": 1,
+          "reviewer": "/root/x05_reviewer",
+          "commit": null,
+          "status": "pending",
+          "sourceCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
+          "receipt": "docs/execution/handoffs/C-04-review-round1.md"
+        }
+      ]
     },
     "U-00": {
       "status": "done",
@@ -5742,7 +5760,7 @@
       ]
     }
   },
-  "nextAction": "C-04 transport/startup implementation is dispatched from 887e9ea2fa791720f9743d8a0ba89e1e49cb814b to /root/x05_implementer. Await product and handoff commits, then queue independent review with /root/x05_reviewer; preserve F-05/G-01/Seerr gates.",
+  "nextAction": "C-04 product 9f1607a5ff4ea901249a8d50f90848d35035a064 and handoff c46b84183f0723d0cbb439eb539cd600c235acf0 are pushed from base 887e9ea2fa791720f9743d8a0ba89e1e49cb814b; independent review is queued with /root/x05_reviewer. Preserve F-05/G-01/Seerr gates and await receipt before integration.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
