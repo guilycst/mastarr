@@ -358,11 +358,11 @@ func (service *Service) Trash(ctx context.Context, request TrashRequest) (Result
 		if err := service.ensureEntryRequestMatches(existing, normalized, digest); err != nil {
 			return Result{}, err
 		}
-		if existing.State != "planned" {
-			return service.replayTrashResult(Result{Entry: existing})
-		}
-		// A planned entry has a durable purge record and can be resumed after a
-		// caller crash. Do not create another manifest or idempotency row.
+		// A durable planned entry already records an intent whose dispatch may
+		// have happened before the process stopped. Reconcile it through the
+		// read-only path; never dispatch the same intent a second time merely
+		// because the API request had no idempotency key.
+		return service.replayTrashResult(Result{Entry: existing})
 	} else if !errors.Is(getErr, ErrNotFound) {
 		return Result{}, getErr
 	}
@@ -503,6 +503,17 @@ func (service *Service) Purge(ctx context.Context, request PurgeRequest) (Result
 	if err != nil {
 		return Result{}, err
 	}
+	if hard {
+		// Both the first approved claim and an approved recovery claim must
+		// perform a fresh read-only reconciliation before deleting payload.
+		// This is also the explicit retry path after process loss.
+		if reconciled, reconcileErr := service.reconcileBeforePurgeDispatch(ctx, claim); reconcileErr != nil || !reconciled.Retryable {
+			if reconcileErr == nil {
+				reconcileErr = ErrHeld
+			}
+			return reconciled, reconcileErr
+		}
+	}
 	result, runErr := service.runPurge(ctx, claim)
 	if request.IdempotencyKey != "" {
 		runErr = errors.Join(runErr, service.saveIdempotency(ctx, "purge", request.IdempotencyKey, digest, entryID))
@@ -564,13 +575,31 @@ func (service *Service) Tick(ctx context.Context, limit int) (TickResult, error)
 			tick.Skipped++
 			continue
 		}
-		claim, claimErr := service.claim(ctx, record.TrashEntryID, Operation(record.Operation), false, nil)
+		var claim *sqlc.JanitorRecord
+		var claimErr error
+		var opErr error
+		if record.Operation == string(OperationPurge) && approvalBindingPresent(record) {
+			claim, claimErr = service.claimApprovedEarlyPurgeReconciliation(ctx, record, nil)
+		} else {
+			claim, claimErr = service.claim(ctx, record.TrashEntryID, Operation(record.Operation), false, nil)
+		}
 		if claimErr != nil {
 			tick.Skipped++
 			continue
 		}
+		if record.Operation == string(OperationPurge) && approvalBindingPresent(record) {
+			var reconciliation Result
+			reconciliation, opErr = service.reconcileBeforePurgeDispatch(ctx, claim)
+			if opErr != nil || !reconciliation.Retryable {
+				tick.Processed++
+				if reconciliation.Entry.State == "held" || errors.Is(opErr, ErrHeld) {
+					tick.Held++
+				}
+				tick.Results = append(tick.Results, reconciliation)
+				continue
+			}
+		}
 		var result Result
-		var opErr error
 		if claim.Operation == string(OperationPurge) {
 			result, opErr = service.runPurge(ctx, claim)
 		} else {
@@ -603,6 +632,99 @@ func (service *Service) Recover(ctx context.Context) (int, error) {
 	return len(recovered), nil
 }
 
+// reconcileBeforePurgeDispatch is the read-before-write boundary for an
+// approval-bound purge. The claim established a lease only; it does not prove
+// that the stored payload is still the approved object. A failed or ambiguous
+// read releases that lease back to durable reconciliation, retaining the
+// original attempt evidence so a later worker cannot blindly delete.
+func (service *Service) reconcileBeforePurgeDispatch(ctx context.Context, claim *sqlc.JanitorRecord) (Result, error) {
+	if claim == nil || claim.Operation != string(OperationPurge) {
+		return Result{}, fmt.Errorf("%w: purge reconciliation claim is invalid", ErrConflict)
+	}
+	reconciled, reconcileErr := service.Reconcile(ctx, claim.TrashEntryID, OperationPurge)
+	if reconcileErr == nil && reconciled.Retryable {
+		return reconciled, nil
+	}
+	if reconcileErr == nil {
+		reconcileErr = ErrHeld
+	}
+	releaseErr := service.releaseClaimForReconciliation(ctx, claim, reconciliationEvidence(reconciled))
+	latest, loadErr := service.loadEntry(persistenceContext(ctx), claim.TrashEntryID)
+	if loadErr == nil {
+		reconciled.Entry = latest
+	}
+	if loadErr != nil {
+		releaseErr = errors.Join(releaseErr, loadErr)
+	}
+	return reconciled, errors.Join(reconcileErr, releaseErr)
+}
+
+func reconciliationEvidence(result Result) []string {
+	evidence := append([]string(nil), result.Evidence...)
+	for _, effect := range result.Effects {
+		evidence = append(evidence, effect.Evidence...)
+	}
+	return evidence
+}
+
+// releaseClaimForReconciliation performs an owner/version-checked transition
+// from a claimed approved purge to reconciling. The migration trigger updates
+// the coupled action run and trash-entry lease in the same SQLite transaction.
+// Keeping this transition durable is what makes a lost response safe across a
+// fresh process.
+func (service *Service) releaseClaimForReconciliation(ctx context.Context, claim *sqlc.JanitorRecord, evidence []string) error {
+	if claim == nil || claim.Operation != string(OperationPurge) || !claim.ClaimedBy.Valid || claim.ClaimedBy.String != service.workerID {
+		return fmt.Errorf("%w: purge reconciliation lease is not owned", ErrClaimed)
+	}
+	now := service.now()
+	if now.IsZero() {
+		return ErrClock
+	}
+	outcome := appendReconciliationEvidence(claim.OutcomeJson, evidence)
+	err := service.withTx(ctx, func(tx *sql.Tx, queries *sqlc.Queries) error {
+		current, getErr := queries.GetJanitorRecord(ctx, &sqlc.GetJanitorRecordParams{TrashEntryID: claim.TrashEntryID, Operation: string(OperationPurge)})
+		if getErr != nil {
+			return getErr
+		}
+		if current.ID != claim.ID || current.Version != claim.Version || current.State != "running" || !current.ClaimedBy.Valid || current.ClaimedBy.String != service.workerID {
+			return ErrClaimed
+		}
+		if approvalBindingPresent(claim) {
+			approval, approvalErr := approvalFromJanitor(claim)
+			if approvalErr != nil {
+				return approvalErr
+			}
+			if matchErr := approvalMatchesJanitor(approval, current); matchErr != nil {
+				return matchErr
+			}
+		}
+		updated, updateErr := queries.UpdateJanitorRecord(ctx, &sqlc.UpdateJanitorRecordParams{
+			State:         "reconciling",
+			NextAttemptAt: nullableTime(true, now.Add(service.retryAfter)),
+			ClaimedBy:     sql.NullString{},
+			LeaseUntil:    sql.NullString{},
+			OutcomeJson:   outcome,
+			UpdatedAt:     formatTime(now),
+			ID:            claim.ID,
+			Version:       claim.Version,
+		})
+		if updateErr != nil {
+			return updateErr
+		}
+		if updated == nil {
+			return ErrClaimed
+		}
+		return nil
+	})
+	if errors.Is(err, ErrClaimed) || errors.Is(err, ErrConflict) {
+		return err
+	}
+	if err != nil {
+		return fmt.Errorf("%w: release purge reconciliation lease: %v", ErrStorage, safeError(err))
+	}
+	return nil
+}
+
 // Reconcile performs a read-only check of one operation's remaining targets.
 // It never guesses that a missing or replaced object was successfully
 // deleted/restored; callers can use Retry only after an unambiguous result.
@@ -622,6 +744,12 @@ func (service *Service) Reconcile(ctx context.Context, entryID string, operation
 	}
 	if err := service.validateEntryClock(entry); err != nil {
 		return resultForEntry(entry, "clock_unknown"), err
+	}
+	if record, recordErr := service.store.Queries().GetJanitorRecord(ctx, &sqlc.GetJanitorRecordParams{TrashEntryID: entryID, Operation: string(operation)}); recordErr == nil && outcomeHasUnresolvedScopeEvidence(record.OutcomeJson) {
+		// A scope-invalid effect is durable unresolved evidence. Even if the
+		// approved item is no longer present, a read of the remaining payload
+		// cannot prove what the extra/contradictory effect touched.
+		return Result{Entry: entry, Evidence: []string{"scope_evidence_requires_manual_review"}}, ErrHeld
 	}
 	effects := make([]ItemEffect, 0, len(entry.Items))
 	allSafe := true
@@ -812,8 +940,12 @@ func (service *Service) normalizeTrashRequest(request TrashRequest) (TrashReques
 	if len(flat) > service.maxItems {
 		return TrashRequest{}, nil, nil, "", "", fmt.Errorf("%w: flattened manifest item count", ErrInvalidRequest)
 	}
+	leafCount := 0
 	seen := make(map[string]struct{}, len(flat))
 	for _, entry := range flat {
+		if entry.Type != domain.ManifestDirectory {
+			leafCount++
+		}
 		key := string(entry.RootID) + "\x00" + entry.RelativePath
 		if _, exists := seen[key]; exists {
 			return TrashRequest{}, nil, nil, "", "", fmt.Errorf("%w: duplicate manifest path %q", ErrInvalidRequest, entry.RelativePath)
@@ -826,6 +958,9 @@ func (service *Service) normalizeTrashRequest(request TrashRequest) (TrashReques
 		if trashPath == entry.RelativePath || pathWithin(trashPath, entry.RelativePath) || pathWithin(entry.RelativePath, trashPath) {
 			return TrashRequest{}, nil, nil, "", "", fmt.Errorf("%w: trash destination overlaps source %q", ErrInvalidRequest, entry.RelativePath)
 		}
+	}
+	if leafCount == 0 {
+		return TrashRequest{}, nil, nil, "", "", fmt.Errorf("%w: manifest has no file or subtitle leaves", ErrInvalidRequest)
 	}
 	manifestJSON, err := json.Marshal(manifest)
 	if err != nil {
@@ -896,6 +1031,12 @@ func (service *Service) ensurePlannedEntry(ctx context.Context, entryID string, 
 			return err
 		}
 		for _, item := range flat {
+			// Directory rows are represented by their immutable expanded child
+			// scope. Persisting the directory root as an actionable item would
+			// leave it selected when a safe filesystem port reports each child.
+			if item.Type == domain.ManifestDirectory {
+				continue
+			}
 			itemID, idErr := domain.NewRuntimeID()
 			if idErr != nil {
 				return idErr
@@ -974,6 +1115,7 @@ func (service *Service) finalizeTrash(ctx context.Context, entryID string, effec
 			reason = "filesystem_trash_missing_affected_items"
 		}
 		if len(scopeIssues) > 0 {
+			effect.Evidence = append(effect.Evidence, "scope_unresolved")
 			effect.Evidence = append(effect.Evidence, scopeIssues...)
 		}
 		result, holdErr := service.finishTrashState(ctx, entry, matched, "held", reason, effect)
@@ -1185,16 +1327,40 @@ func (service *Service) claimApprovedEarlyPurge(ctx context.Context, entryID str
 	if err != nil {
 		return nil, err
 	}
+	janitor, err := service.store.Queries().GetJanitorRecord(ctx, &sqlc.GetJanitorRecordParams{TrashEntryID: entryID, Operation: string(OperationPurge)})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("%w: purge record is missing", ErrConflict)
+		}
+		return nil, fmt.Errorf("%w: read purge record: %v", ErrStorage, err)
+	}
+	if approvalBindingPresent(janitor) {
+		if err := approvalMatchesJanitor(approval, janitor); err != nil {
+			return nil, err
+		}
+		switch janitor.State {
+		case "reconciling":
+			return service.claimApprovedEarlyPurgeReconciliation(ctx, janitor, approval)
+		case "running":
+			return nil, ErrClaimed
+		default:
+			return nil, fmt.Errorf("%w: approved purge record is %s", ErrConflict, janitor.State)
+		}
+	}
+	// A fresh process may be retrying the same immutable approval after the
+	// running claim was recovered. The shared entry generation has advanced as
+	// part of that recovery; the approval-time version is checked by the
+	// reconciliation CAS below, not against the current projection here.
 	if approval.ApprovedEntryVersion != entry.Version {
 		return nil, fmt.Errorf("%w: approved trash entry version is stale", ErrConflict)
 	}
 	var claimed *sqlc.JanitorRecord
 	err = service.withTx(ctx, func(tx *sql.Tx, queries *sqlc.Queries) error {
-		janitor, getErr := queries.GetJanitorRecord(ctx, &sqlc.GetJanitorRecordParams{TrashEntryID: entryID, Operation: string(OperationPurge)})
+		current, getErr := queries.GetJanitorRecord(ctx, &sqlc.GetJanitorRecordParams{TrashEntryID: entryID, Operation: string(OperationPurge)})
 		if getErr != nil {
 			return getErr
 		}
-		if janitor.ApprovalPlanID.Valid || janitor.State != "queued" {
+		if approvalBindingPresent(current) || current.State != "queued" {
 			return fmt.Errorf("%w: purge record is already bound or claimed", ErrConflict)
 		}
 		claimed, err = queries.ClaimApprovedEarlyPurge(ctx, &sqlc.ClaimApprovedEarlyPurgeParams{
@@ -1231,6 +1397,96 @@ func (service *Service) claimApprovedEarlyPurge(ctx context.Context, entryID str
 			return nil, fmt.Errorf("%w: exact early purge approval claim rejected", ErrConflict)
 		}
 		return nil, fmt.Errorf("%w: approved early purge claim: %v", ErrStorage, safeError(err))
+	}
+	return claimed, nil
+}
+
+func approvalBindingPresent(record *sqlc.JanitorRecord) bool {
+	if record == nil {
+		return false
+	}
+	return record.ApprovalPlanID.Valid || record.ApprovalPlanRevision.Valid || record.ApprovalPlanDigest.Valid || record.ApprovalDecisionID.Valid || record.ApprovalActionRunID.Valid || record.ApprovedEntryVersion.Valid || record.ApprovalActionRunVersion.Valid
+}
+
+func approvalFromJanitor(record *sqlc.JanitorRecord) (*EarlyPurgeApproval, error) {
+	if record == nil || !approvalBindingPresent(record) || !record.ApprovalPlanID.Valid || !record.ApprovalPlanRevision.Valid || !record.ApprovalPlanDigest.Valid || !record.ApprovalDecisionID.Valid || !record.ApprovalActionRunID.Valid || !record.ApprovedEntryVersion.Valid || !record.ApprovalActionRunVersion.Valid {
+		return nil, fmt.Errorf("%w: stored early purge approval binding is incomplete", ErrConflict)
+	}
+	approval := &EarlyPurgeApproval{
+		PlanID:               record.ApprovalPlanID.String,
+		PlanRevision:         record.ApprovalPlanRevision.Int64,
+		PlanDigest:           record.ApprovalPlanDigest.String,
+		DecisionID:           record.ApprovalDecisionID.String,
+		ActionRunID:          record.ApprovalActionRunID.String,
+		ApprovedEntryVersion: record.ApprovedEntryVersion.Int64,
+		ActionRunVersion:     record.ApprovalActionRunVersion.Int64,
+	}
+	if err := validateEarlyPurgeApproval(approval); err != nil {
+		return nil, err
+	}
+	return approval, nil
+}
+
+func approvalMatchesJanitor(approval *EarlyPurgeApproval, record *sqlc.JanitorRecord) error {
+	if err := validateEarlyPurgeApproval(approval); err != nil {
+		return err
+	}
+	stored, err := approvalFromJanitor(record)
+	if err != nil {
+		return err
+	}
+	if *stored != *approval {
+		return fmt.Errorf("%w: approved purge binding differs from durable record", ErrConflict)
+	}
+	return nil
+}
+
+// claimApprovedEarlyPurgeReconciliation reacquires the exact immutable
+// approval binding after startup/lease recovery. This CAS only establishes a
+// bounded read-only reconciliation lease; callers must perform a fresh
+// Reconcile before dispatching any payload mutation.
+func (service *Service) claimApprovedEarlyPurgeReconciliation(ctx context.Context, record *sqlc.JanitorRecord, requested *EarlyPurgeApproval) (*sqlc.JanitorRecord, error) {
+	if record == nil || record.State != "reconciling" || record.Operation != string(OperationPurge) {
+		return nil, fmt.Errorf("%w: approved purge is not reconciling", ErrConflict)
+	}
+	approval, err := approvalFromJanitor(record)
+	if err != nil {
+		return nil, err
+	}
+	if requested != nil {
+		if err := approvalMatchesJanitor(requested, record); err != nil {
+			return nil, err
+		}
+	}
+	now := service.now()
+	if now.IsZero() {
+		return nil, ErrClock
+	}
+	leaseUntil := now.Add(service.leaseDuration)
+	claimed, err := service.store.Queries().ClaimApprovedEarlyPurgeReconciliation(ctx, &sqlc.ClaimApprovedEarlyPurgeReconciliationParams{
+		WorkerID:                 sql.NullString{String: service.workerID, Valid: true},
+		LeaseUntil:               sql.NullString{String: formatTime(leaseUntil), Valid: true},
+		Now:                      formatTime(now),
+		ID:                       record.ID,
+		Version:                  record.Version,
+		TrashEntryID:             record.TrashEntryID,
+		ApprovalPlanID:           sql.NullString{String: approval.PlanID, Valid: true},
+		ApprovalPlanRevision:     sql.NullInt64{Int64: approval.PlanRevision, Valid: true},
+		ApprovalPlanDigest:       sql.NullString{String: approval.PlanDigest, Valid: true},
+		ApprovalDecisionID:       sql.NullString{String: approval.DecisionID, Valid: true},
+		ApprovalActionRunID:      sql.NullString{String: approval.ActionRunID, Valid: true},
+		ApprovedEntryVersion:     sql.NullInt64{Int64: approval.ApprovedEntryVersion, Valid: true},
+		ApprovalActionRunVersion: sql.NullInt64{Int64: approval.ActionRunVersion, Valid: true},
+	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("%w: exact approved purge reconciliation claim rejected", ErrConflict)
+		}
+		message := strings.ToLower(err.Error())
+		if strings.Contains(message, "approval") || strings.Contains(message, "reconcil") || strings.Contains(message, "generation") || strings.Contains(message, "fence") {
+			return nil, fmt.Errorf("%w: exact approved purge reconciliation claim rejected", ErrConflict)
+		}
+		return nil, fmt.Errorf("%w: approved purge reconciliation claim: %v", ErrStorage, safeError(err))
 	}
 	return claimed, nil
 }
@@ -1283,10 +1539,15 @@ func (service *Service) runPurge(ctx context.Context, claim *sqlc.JanitorRecord)
 		expected := manifestFromItem(item, observation.ObservedAt)
 		effect, actionErr := service.action.Delete(ctx, ports.FilesystemDeleteRequest{Files: []domain.FileManifestEntry{expected}})
 		matchedItems, scopeIssues := validateAffectedSet([]Item{item}, effect.Affected, OperationPurge)
-		matchedThis := matchedItems[item.ID]
 		if len(scopeIssues) > 0 {
+			effect.Evidence = append(effect.Evidence, "scope_unresolved")
 			effect.Evidence = append(effect.Evidence, scopeIssues...)
 		}
+		// A returned error, invalid outcome, or any scope issue means the
+		// affected set is unresolved. Even an exact item in an
+		// exact-plus-foreign response must remain non-terminal until a
+		// later read-only reconciliation proves the whole effect safe.
+		matchedThis := actionErr == nil && effect.Outcome.Valid() && len(scopeIssues) == 0 && matchedItems[item.ID]
 		if matchedThis {
 			matched[item.ID] = true
 			effects = append(effects, ItemEffect{ItemID: item.ID, Path: item.TrashRelativePath, Operation: OperationPurge, State: "purged", Outcome: effect.Outcome, ObservedAt: effect.ObservedAt, Evidence: append([]string{"payload_delete"}, effect.Evidence...)})
@@ -1363,6 +1624,7 @@ func (service *Service) runRestore(ctx context.Context, claim *sqlc.JanitorRecor
 		matchedItems, scopeIssues := validateAffectedSet([]Item{item}, effect.Affected, OperationRestore)
 		matched := matchedItems[item.ID]
 		if len(scopeIssues) > 0 {
+			effect.Evidence = append(effect.Evidence, "scope_unresolved")
 			effect.Evidence = append(effect.Evidence, scopeIssues...)
 		}
 		if actionErr != nil || !matched || !effect.Outcome.Valid() || len(scopeIssues) > 0 {
@@ -2126,6 +2388,92 @@ func outcomeJSON(operation Operation, state, reason string, evidence any, effect
 	}
 	encoded, _ := json.Marshal(value)
 	return string(encoded)
+}
+
+// appendReconciliationEvidence augments a durable outcome without replacing
+// the original handler evidence. Outcomes are JSON envelopes owned by this
+// package; invalid historical JSON is retained as an opaque prior value and
+// cannot be mistaken for a clean result.
+func appendReconciliationEvidence(raw string, evidence []string) string {
+	var value map[string]any
+	if err := json.Unmarshal([]byte(raw), &value); err != nil || value == nil {
+		value = map[string]any{
+			"operation":    OperationPurge,
+			"state":        "reconciling",
+			"priorOutcome": raw,
+		}
+	}
+	if state, ok := value["state"]; ok && state != "reconciling" {
+		value["priorState"] = state
+	}
+	value["state"] = "reconciling"
+	if len(evidence) == 0 {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return outcomeJSON(OperationPurge, "reconciling", "reconciliation evidence unavailable", nil, raw)
+		}
+		return string(encoded)
+	}
+	seen := make(map[string]struct{}, len(evidence))
+	merged := make([]string, 0, len(evidence))
+	if previous, ok := value["reconciliationEvidence"].([]any); ok {
+		for _, item := range previous {
+			text, ok := item.(string)
+			if !ok || text == "" {
+				continue
+			}
+			if _, exists := seen[text]; !exists {
+				seen[text] = struct{}{}
+				merged = append(merged, text)
+			}
+		}
+	}
+	for _, item := range evidence {
+		if item == "" {
+			continue
+		}
+		if _, exists := seen[item]; !exists {
+			seen[item] = struct{}{}
+			merged = append(merged, item)
+		}
+	}
+	value["reconciliationEvidence"] = merged
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return outcomeJSON(OperationPurge, "reconciling", "reconciliation evidence unavailable", evidence, raw)
+	}
+	return string(encoded)
+}
+
+func outcomeHasUnresolvedScopeEvidence(raw string) bool {
+	if strings.TrimSpace(raw) == "" {
+		return false
+	}
+	var value any
+	if json.Unmarshal([]byte(raw), &value) != nil {
+		return false
+	}
+	return containsOutcomeString(value, "scope_unresolved")
+}
+
+func containsOutcomeString(value any, target string) bool {
+	switch typed := value.(type) {
+	case string:
+		return typed == target
+	case []any:
+		for _, item := range typed {
+			if containsOutcomeString(item, target) {
+				return true
+			}
+		}
+	case map[string]any:
+		for _, item := range typed {
+			if containsOutcomeString(item, target) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func effectOutcomeJSON(operation Operation, state, reason string, effects []ItemEffect, effect any) string {
