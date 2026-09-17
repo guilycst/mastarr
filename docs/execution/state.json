@@ -3580,18 +3580,17 @@
         "W-05 correction round five dispatched from state checkpoint 6c3428bd70e089db705ae8d393f5a8aeb6de5743 to /root/x05_implementer. Scope is R3d/R3e only: stale terminal item hold and durable action/reconciliation evidence merge; no schema/API/adapter/client/worker changes.",
         "W-05 correction round five product 73c55183faef67d20286b7656886b3e672cf8ef9 and handoff e65b3603821154df77790845e7d6b4bd14cce58c complete from dispatch checkpoint 6c3428bd70e089db705ae8d393f5a8aeb6de5743; R3d stale-terminal hold and R3e lossless evidence regressions, focused/race/root/vet/mod checks and full offline CI guardrails passed.",
         "Independent W-05 correction round-six receipt 5a1240f66c7c5f7614b34750f90c60f5d3bd4397 integrated as e574abf: R3d/R3e closed, R3f remains blocking; recursive-history probe reproduced depth 127 and 967-to-125808-byte growth after 128 unchanged observations, while full offline CI guardrails passed.",
-        "W-05 correction round six dispatched from state checkpoint 40a8955f4f721fa5ad37efa5a34bb860f487c15b to /root/x05_implementer. Scope is R3f only: bound reconciliation history while retaining immutable action result, item outcomes and exact unresolved scope evidence; no schema/API/adapter/client/worker changes."
+        "W-05 correction round six dispatched from state checkpoint 40a8955f4f721fa5ad37efa5a34bb860f487c15b to /root/x05_implementer. Scope is R3f only: bound reconciliation history while retaining immutable action result, item outcomes and exact unresolved scope evidence; no schema/API/adapter/client/worker changes.",
+        "W-05 correction round six product 3f2d4e9e13540f21474a68f1d4d729ba232f3f50 and handoff 3ce4caefe4ce9f6f1b65c64bfb4f89b4cfc3f65e complete from dispatch checkpoint 40a8955f4f721fa5ad37efa5a34bb860f487c15b; R3f bounded reconciliation history regression, focused/race and full offline CI guardrails passed."
       ],
       "review": {
-        "status": "changes_requested",
-        "decision": "changes_requested",
+        "status": "pending",
+        "decision": "pending",
         "reviewer": "/root/x05_reviewer",
-        "commit": "5a1240f66c7c5f7614b34750f90c60f5d3bd4397",
-        "findings": [
-          "R3f P2: unchanged planned-trash reconciliations recursively embed the complete current journal as priorOutcome, growing without a bound (967 to 125,808 bytes and depth 127 after 128 observations), so periodic Tick can exhaust durable state/resource limits."
-        ],
-        "round": 6,
-        "integratedCommit": "e574abf"
+        "commit": null,
+        "findings": [],
+        "round": 7,
+        "integratedCommit": null
       },
       "dispatch": {
         "assignedAt": "2026-09-16",
@@ -3621,7 +3620,7 @@
         "reviewPath": "docs/execution/handoffs/W-05-review-round7.md",
         "handoffPath": "docs/execution/handoffs/W-05-correction-round6.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "in_progress",
+        "status": "review_pending",
         "dependencyCommits": {
           "W-04-product": "780c00e92498660c08b6ac67259bbb4147c58531",
           "W-04-review": "2aef896fd5d3e10dcefc80f8f5a094852d73fd27",
@@ -3632,15 +3631,15 @@
           "G-01": "Arr native registration/import writes remain blocked; this lane must not bypass that gate.",
           "X-14": "qBittorrent removal remains metadata-only with deleteFiles=false; stop and read-back are required before payload mutation."
         },
-        "waitingOn": "/root/x05_implementer",
-        "waitingReason": "W-05 correction round six implementation for R3f bounded reconciliation history",
+        "waitingOn": "/root/x05_reviewer",
+        "waitingReason": "independent review of W-05 correction round six",
         "implementationCommit": "37ecdde36b56a6cd3d7d147cd8af1b49eba3f45a",
         "handoffCommit": "91038f799d894b58d1c7f149606ac2c686515beb",
-        "reviewSourceCommit": "73c55183faef67d20286b7656886b3e672cf8ef9",
-        "reviewRound": 6,
+        "reviewSourceCommit": "3f2d4e9e13540f21474a68f1d4d729ba232f3f50",
+        "reviewRound": 7,
         "reviewCommit": null,
         "reviewIntegrationCommit": null,
-        "correctionStatus": "in_progress",
+        "correctionStatus": "review_pending",
         "correctionRound": 6,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "40a8955f4f721fa5ad37efa5a34bb860f487c15b",
@@ -3650,9 +3649,9 @@
         "correctionReviewer": "/root/x05_reviewer",
         "priorReviewCommit": "5a1240f66c7c5f7614b34750f90c60f5d3bd4397",
         "priorReviewIntegrationCommit": "e574abf",
-        "correctionImplementationCommit": null,
-        "correctionHandoffCommit": null,
-        "correctionReviewSourceCommit": null,
+        "correctionImplementationCommit": "3f2d4e9e13540f21474a68f1d4d729ba232f3f50",
+        "correctionHandoffCommit": "3ce4caefe4ce9f6f1b65c64bfb4f89b4cfc3f65e",
+        "correctionReviewSourceCommit": "3f2d4e9e13540f21474a68f1d4d729ba232f3f50",
         "priorCorrectionRound": 5,
         "priorCorrectionImplementationCommit": "73c55183faef67d20286b7656886b3e672cf8ef9",
         "priorCorrectionHandoffCommit": "e65b3603821154df77790845e7d6b4bd14cce58c"
@@ -3730,6 +3729,14 @@
           "findings": [
             "R3f P2: unchanged planned-trash reconciliations recursively embed the complete current journal as priorOutcome, growing without a bound (967 to 125,808 bytes and depth 127 after 128 observations), so periodic Tick can exhaust durable state/resource limits."
           ]
+        },
+        {
+          "round": 7,
+          "reviewer": "/root/x05_reviewer",
+          "commit": null,
+          "status": "review_pending",
+          "sourceCommit": "3f2d4e9e13540f21474a68f1d4d729ba232f3f50",
+          "receipt": "docs/execution/handoffs/W-05-review-round7.md"
         }
       ],
       "implementationCommit": "37ecdde36b56a6cd3d7d147cd8af1b49eba3f45a",
@@ -5671,7 +5678,7 @@
       ]
     }
   },
-  "nextAction": "W-05 correction round six is dispatched from 40a8955f4f721fa5ad37efa5a34bb860f487c15b; await product and handoff commits for R3f, then queue independent review round seven.",
+  "nextAction": "W-05 correction round six product 3f2d4e9e13540f21474a68f1d4d729ba232f3f50 and handoff 3ce4caefe4ce9f6f1b65c64bfb4f89b4cfc3f65e are ready for independent review. Await the exact round-seven receipt, then integrate it before any next feature dispatch.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
