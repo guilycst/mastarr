@@ -219,7 +219,10 @@ func newDetailWriter(w http.ResponseWriter, title, route string, query queryStat
 func (p *detailWriter) start(heading string) {
 	p.pageWriter.start()
 	p.text("<main id=\"inventory-content\" aria-labelledby=\"inventory-title\"><p><a href=\"")
-	p.value("/" + p.route + p.query.encoded(true))
+	// Detail-only draft fields belong to this detail flow. The list parser
+	// intentionally rejects them, so the back link carries only the route's
+	// validated list filters and pagination context.
+	p.value("/" + p.route + p.query.listEncoded(p.route))
 	p.text("\">Back to ")
 	p.value(titleForRoute(p.route, false))
 	p.text("</a></p><h1 id=\"inventory-title\">")

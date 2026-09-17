@@ -30,13 +30,23 @@ const (
 	MaxProvenance        = 100
 	MaxTracking          = 200
 	MaxAssociationInputs = 256
+	// MaxDynamicDetailInputs is the largest number of dynamic controls a
+	// supported discovery can render: every accepted file has seven
+	// association fields and every accepted candidate has eight fields.
+	// Keeping this derived from the renderer's collection limits prevents a
+	// valid generated form from exceeding the parser's aggregate bound.
+	MaxDynamicDetailInputs = MaxFilesPerDiscovery*7 + MaxCandidates*8
 	// MaxCandidateEpisodesLength covers every non-negative int on supported
 	// Go targets, plus separators, for a candidate with the maximum accepted
 	// episode count. Candidate episode drafts therefore do not inherit the
 	// shorter scalar query bound.
 	MaxCandidateEpisodesLength = MaxAssociationInputs*20 + (MaxAssociationInputs - 1)
-	MaxQueryValues             = 512
-	MaxRenderedTextLength      = 240
+	MaxQueryValues             = MaxDynamicDetailInputs + 16
+	// MaxQueryRawLength bounds the encoded URL as well as its decoded field
+	// count. It is intentionally larger than the largest supported generated
+	// form because URL escaping can expand otherwise valid draft values.
+	MaxQueryRawLength     = 8 << 20
+	MaxRenderedTextLength = 240
 )
 
 // ErrorKind identifies a sanitized inventory read failure.
@@ -581,7 +591,7 @@ func parseRoute(rawPath string) (route, id string, detail, ok bool) {
 }
 
 func parseQuery(raw, route string, detail bool, defaultSize, maxSize int) (queryState, error) {
-	if len(raw) > MaxCursorLength+MaxQueryValues*MaxInputLength {
+	if len(raw) > MaxQueryRawLength {
 		return queryState{}, errors.New("query too large")
 	}
 	values, err := url.ParseQuery(raw)
@@ -623,7 +633,7 @@ func parseQuery(raw, route string, detail bool, defaultSize, maxSize int) (query
 			continue
 		}
 		if key == "rootId" {
-			if !validIdentity(value) {
+			if !validConfigID(value) {
 				return queryState{}, errors.New("root identity invalid")
 			}
 			state.RootID = value
@@ -631,7 +641,7 @@ func parseQuery(raw, route string, detail bool, defaultSize, maxSize int) (query
 			continue
 		}
 		if key == "connectionId" {
-			if !validIdentity(value) {
+			if !validConfigID(value) {
 				return queryState{}, errors.New("connection identity invalid")
 			}
 			state.ConnectionID = value
@@ -654,14 +664,14 @@ func parseQuery(raw, route string, detail bool, defaultSize, maxSize int) (query
 				return queryState{}, errors.New("dynamic detail input not valid for route")
 			}
 			dynamic, ok := parseDynamicDetailKey(key)
-			if !ok || dynamic.index >= MaxAssociationInputs {
+			if !ok || dynamic.index >= maxDynamicDetailIndex(dynamic.family) {
 				return queryState{}, errors.New("dynamic detail input invalid")
 			}
 			if err := validateDynamicDetailValue(dynamic, value); err != nil {
 				return queryState{}, err
 			}
 			detailInputCount++
-			if detailInputCount > MaxAssociationInputs {
+			if detailInputCount > MaxQueryValues {
 				return queryState{}, errors.New("too many detail inputs")
 			}
 			state.Values[key] = value
@@ -670,12 +680,12 @@ func parseQuery(raw, route string, detail bool, defaultSize, maxSize int) (query
 		if detail && isMalformedDynamicDetailKey(key) {
 			return queryState{}, errors.New("dynamic detail input invalid")
 		}
-		if detail && allowedDetailInput(key) {
+		if detail && allowedDetailInputForRoute(route, key) {
 			if err := validateFixedDetailValue(key, value); err != nil {
 				return queryState{}, err
 			}
 			detailInputCount++
-			if detailInputCount > MaxAssociationInputs {
+			if detailInputCount > MaxQueryValues {
 				return queryState{}, errors.New("too many detail inputs")
 			}
 			state.Values[key] = value
@@ -704,8 +714,25 @@ func allowedDetailInput(key string) bool {
 			return true
 		}
 	}
-	_, ok := parseDynamicDetailKey(key)
-	return ok
+	return false
+}
+
+func allowedDetailInputForRoute(route, key string) bool {
+	// Discovery detail drafts are indexed by the response's files and
+	// candidates. The other detail pages have no such fixed fields. Media is
+	// the only route with a fixed draft vocabulary.
+	return route == "media" && allowedDetailInput(key)
+}
+
+func maxDynamicDetailIndex(family string) int {
+	switch family {
+	case "association":
+		return MaxFilesPerDiscovery
+	case "candidate":
+		return MaxCandidates
+	default:
+		return 0
+	}
 }
 
 type dynamicDetailKey struct {
@@ -782,11 +809,23 @@ func isCandidateEpisodesKey(key string) bool {
 }
 
 func validateFixedDetailValue(key, value string) error {
-	if !validBounded(value, MaxInputLength, true) {
-		return errors.New("detail input invalid")
-	}
-	if key == "kind" && value != "" && !validKind(value) {
-		return errors.New("kind invalid")
+	switch key {
+	case "subtitleForced", "subtitleSDH":
+		if value != "" && value != "true" && value != "false" {
+			return errors.New("detail boolean invalid")
+		}
+	case "kind":
+		if value != "" && !validKind(value) {
+			return errors.New("kind invalid")
+		}
+	case "providerId":
+		if !validOptionalIdentity(value) {
+			return errors.New("provider identity invalid")
+		}
+	default:
+		if !validBounded(value, MaxInputLength, true) {
+			return errors.New("detail input invalid")
+		}
 	}
 	return nil
 }
@@ -977,6 +1016,29 @@ func (q queryState) encoded(keepDetail bool) string {
 			continue
 		}
 		values.Set(key, value)
+	}
+	encoded := values.Encode()
+	if encoded == "" {
+		return ""
+	}
+	return "?" + encoded
+}
+
+func (q queryState) listEncoded(route string) string {
+	values := url.Values{}
+	for key, value := range q.Values {
+		allowed := key == "cursor" || key == "limit"
+		switch route {
+		case "discoveries":
+			allowed = allowed || key == "rootId"
+		case "media":
+			allowed = allowed || key == "kind"
+		case "downloads":
+			allowed = allowed || key == "connectionId"
+		}
+		if allowed {
+			values.Set(key, value)
+		}
 	}
 	encoded := values.Encode()
 	if encoded == "" {

@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -816,6 +818,213 @@ func TestDynamicDraftKeysAreStrictAndBoundToEvidence(t *testing.T) {
 	NewHandler(fake).ServeHTTP(valid, httptest.NewRequest(http.MethodGet, "/discoveries/discovery-dynamic?candidate-0-kind=episode&candidate-0-episodes=1%2C2&association-0-role=video", nil))
 	if valid.Code != http.StatusOK {
 		t.Fatalf("valid dynamic draft status = %d; body=%s", valid.Code, valid.Body.String())
+	}
+}
+
+func TestDetailBackLinksFollowUsableListRoutes(t *testing.T) {
+	now := time.Date(2026, 9, 17, 15, 0, 0, 0, time.UTC)
+	discovery := Discovery{
+		ID:         "discovery-back-link",
+		ObservedAt: now,
+		Readiness:  "ready",
+		Files:      []File{{RootID: "root-a", RelativePath: "Show/E01.mkv", Type: "file", Role: "video", Size: 1}},
+		Candidates: []Candidate{{Title: "Episode", Kind: "episode"}},
+	}
+	media := Media{ID: "media-back-link", Kind: "movie", ProviderID: "tmdb:1", ObservedAt: now, Tracking: []Tracking{}}
+	fake := &fakeReader{
+		discoveries:   map[string]Discovery{discovery.ID: discovery},
+		discoveryPage: DiscoveryPage{Items: []Discovery{discovery}, Page: fixturePage(now)},
+		media:         map[string]Media{media.ID: media},
+		mediaPage:     MediaPage{Items: []Media{media}, Page: fixturePage(now)},
+	}
+	tests := []struct {
+		name  string
+		route string
+		query string
+		want  map[string]string
+		omit  []string
+	}{
+		{
+			name:  "discovery candidate and association drafts",
+			route: "/discoveries/" + discovery.ID,
+			query: "rootId=root-a&limit=7&cursor=cursor-list&association-0-role=video&candidate-0-title=Draft",
+			want:  map[string]string{"rootId": "root-a", "limit": "7", "cursor": "cursor-list"},
+			omit:  []string{"association-0-role", "candidate-0-title"},
+		},
+		{
+			name:  "media identity draft",
+			route: "/media/" + media.ID,
+			query: "kind=anime&limit=8&cursor=cursor-media&identity=Draft&providerId=tmdb%3A2&selection=episode-1&subtitleForced=true",
+			want:  map[string]string{"kind": "anime", "limit": "8", "cursor": "cursor-media"},
+			omit:  []string{"identity", "providerId", "selection", "subtitleForced"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			NewHandler(fake).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, tc.route+"?"+tc.query, nil))
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("detail status = %d; body=%s", recorder.Code, recorder.Body.String())
+			}
+			back := detailBackURL(t, recorder.Body.String())
+			for key, want := range tc.want {
+				if got := back.Query().Get(key); got != want {
+					t.Fatalf("back query %s = %q, want %q; URL=%s", key, got, want, back)
+				}
+			}
+			for _, key := range tc.omit {
+				if value := back.Query().Get(key); value != "" {
+					t.Fatalf("detail-only key %s leaked into list URL with value %q: %s", key, value, back)
+				}
+			}
+			follow := httptest.NewRecorder()
+			NewHandler(fake).ServeHTTP(follow, httptest.NewRequest(http.MethodGet, back.String(), nil))
+			if follow.Code != http.StatusOK {
+				t.Fatalf("generated back URL %s was not usable: status=%d body=%s", back, follow.Code, follow.Body.String())
+			}
+		})
+	}
+}
+
+func detailBackURL(t *testing.T, body string) *url.URL {
+	t.Helper()
+	marker := `<main id="inventory-content" aria-labelledby="inventory-title"><p><a href="`
+	start := strings.Index(body, marker)
+	if start < 0 {
+		t.Fatalf("detail back link was not rendered: %s", body)
+	}
+	start += len(marker)
+	end := strings.IndexByte(body[start:], '"')
+	if end < 0 {
+		t.Fatalf("detail back link has no closing quote: %s", body)
+	}
+	href := html.UnescapeString(body[start : start+end])
+	parsed, err := url.Parse(href)
+	if err != nil {
+		t.Fatalf("parse generated back URL %q: %v", href, err)
+	}
+	return parsed
+}
+
+func TestMaximumRenderedCollectionsAcceptFullDraftSubmission(t *testing.T) {
+	now := time.Date(2026, 9, 17, 15, 20, 0, 0, time.UTC)
+	files := make([]File, MaxAssociationInputs+1)
+	for index := range files {
+		files[index] = File{
+			RootID:       "root-a",
+			RelativePath: fmt.Sprintf("Show/%03d.mkv", index),
+			Type:         "file",
+			Role:         "video",
+			Size:         1,
+			FileIdentity: fmt.Sprintf("inode-%d", index),
+		}
+	}
+	candidates := make([]Candidate, MaxCandidates/3)
+	for index := range candidates {
+		provider := fmt.Sprintf("tvdb:%d", index+1)
+		candidates[index] = Candidate{Title: fmt.Sprintf("Episode %d", index+1), Kind: "episode", ProviderID: provider}
+	}
+	discovery := Discovery{ID: "discovery-collections", ObservedAt: now, Readiness: "ready", Files: files, Candidates: candidates}
+	fake := &fakeReader{discoveries: map[string]Discovery{discovery.ID: discovery}}
+	handler := NewHandler(fake)
+	initial := httptest.NewRecorder()
+	handler.ServeHTTP(initial, httptest.NewRequest(http.MethodGet, "/discoveries/"+discovery.ID+"?rootId=root-a&limit=7&cursor=cursor-list", nil))
+	if initial.Code != http.StatusOK {
+		t.Fatalf("initial maximum collection status = %d; body=%s", initial.Code, initial.Body.String())
+	}
+	if !strings.Contains(initial.Body.String(), `name="association-256-role"`) || !strings.Contains(initial.Body.String(), `name="candidate-32-title"`) {
+		t.Fatalf("initial response did not render the last collection indexes: %s", initial.Body.String())
+	}
+
+	values := url.Values{}
+	values.Set("rootId", "root-a")
+	values.Set("limit", "7")
+	values.Set("cursor", "cursor-list")
+	for index := range files {
+		prefix := fmt.Sprintf("association-%d-", index)
+		values.Set(prefix+"identity", fmt.Sprintf("draft-file-%d", index))
+		values.Set(prefix+"episode", strconv.Itoa(index+1))
+		values.Set(prefix+"language", "en")
+		values.Set(prefix+"pair", fmt.Sprintf("pair-%d", index))
+		values.Set(prefix+"forced", "false")
+		values.Set(prefix+"sdh", "false")
+		values.Set(prefix+"role", "video")
+	}
+	for index := range candidates {
+		prefix := fmt.Sprintf("candidate-%d-", index)
+		values.Set(prefix+"title", fmt.Sprintf("Draft candidate %d", index))
+		values.Set(prefix+"provider", fmt.Sprintf("tvdb:%d", index+1000))
+		values.Set(prefix+"external", fmt.Sprintf("episode-%d", index+1000))
+		values.Set(prefix+"kind", "episode")
+		values.Set(prefix+"season", "1")
+		values.Set(prefix+"episodes", "1,2")
+		values.Set(prefix+"year", "2026")
+		values.Set(prefix+"score", "0.9137")
+	}
+	reload := httptest.NewRecorder()
+	handler.ServeHTTP(reload, httptest.NewRequest(http.MethodGet, "/discoveries/"+discovery.ID+"?"+values.Encode(), nil))
+	if reload.Code != http.StatusOK {
+		t.Fatalf("full draft submission status = %d; body length=%d body=%s", reload.Code, reload.Body.Len(), reload.Body.String())
+	}
+	body := reload.Body.String()
+	for _, expected := range []string{
+		`name="association-256-identity" value="draft-file-256"`,
+		`name="association-256-role" value="video"`,
+		`name="candidate-32-title" value="Draft candidate 32"`,
+		`name="candidate-32-score" value="0.9137"`,
+		`name="rootId" value="root-a"`,
+		`name="limit" value="7"`,
+		`name="cursor" value="cursor-list"`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("full draft response lost %q: %s", expected, body)
+		}
+	}
+	if strings.Index(body, `name="association-255-identity"`) >= strings.Index(body, `name="association-256-identity"`) {
+		t.Fatalf("association controls are not stable at the collection boundary")
+	}
+	if strings.Index(body, `name="candidate-31-title"`) >= strings.Index(body, `name="candidate-32-title"`) {
+		t.Fatalf("candidate controls are not stable at the collection boundary")
+	}
+}
+
+func TestFixedDetailDraftVocabularyIsRouteScopedAndValidated(t *testing.T) {
+	now := time.Date(2026, 9, 17, 15, 40, 0, 0, time.UTC)
+	fake := &fakeReader{
+		downloads:   map[string]Download{"download-fixed": {ID: "download-fixed", ConnectionID: "qbit-a", State: "complete", ObservedAt: now}},
+		descriptors: map[string]Descriptor{"descriptor-fixed": {ID: "descriptor-fixed", Type: "torrent", Size: 1, Digest: "sha256:1", Availability: "available", CapturedAt: now}},
+		media:       map[string]Media{"media-fixed": {ID: "media-fixed", Kind: "movie", ProviderID: "tmdb:1", ObservedAt: now, Tracking: []Tracking{}}},
+	}
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{name: "download identity", path: "/downloads/download-fixed?identity=draft"},
+		{name: "download episode", path: "/downloads/download-fixed?episode=1"},
+		{name: "descriptor selection", path: "/descriptors/descriptor-fixed?selection=one"},
+		{name: "descriptor subtitle flag", path: "/descriptors/descriptor-fixed?subtitleForced=true"},
+		{name: "descriptor kind", path: "/descriptors/descriptor-fixed?kind=movie"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			NewHandler(fake).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, tc.path, nil))
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d; body=%s", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+
+	for _, query := range []string{"subtitleForced=maybe", "subtitleSDH=1", "providerId=tmdb%3A1%2Fforeign"} {
+		recorder := httptest.NewRecorder()
+		NewHandler(fake).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/media/media-fixed?"+query, nil))
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("invalid media detail query %q status = %d; body=%s", query, recorder.Code, recorder.Body.String())
+		}
+	}
+	recorder := httptest.NewRecorder()
+	NewHandler(fake).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/media/media-fixed?identity=draft&providerId=tmdb%3A2&subtitleForced=false&kind=anime", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("valid media detail draft status = %d; body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 
