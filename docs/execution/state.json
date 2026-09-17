@@ -4061,8 +4061,7 @@
         "0ddb7fc75b00ec296879efca8f2b46720a81b56b U-01 handoff records owned paths, UI-only boundary, frozen ui module limitation, checks and deferred browser/full-CI evidence.",
         "9ada4806d49bb3da71e0c8e3c1e50fdc98c2f5a6 independent U-01 round-one review receipt, integrated as 7ef11c3072769c04ecd2679b373a08fcfc6df46; five P2 findings remain.",
         "Reviewer full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed; UI tests/race/vet/mod, generation, architecture, planning, metadata/header probes and Linux builds passed while findings remain.",
-        "9ada4806d49bb3da71e0c8e3c1e50fdc98c2f5a6 independent U-01 round-one review receipt, integrated as 7ef11c3072769c04ecd2679b373a08fcfc6df46; five P2 findings remain.",
-        "Reviewer full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed; UI tests/race/vet/mod, generation, architecture, planning, metadata/header probes and Linux builds passed while findings remain."
+        "U-01 correction round two dispatched from clean coordinator checkpoint 84e5aaca09e9d69fd5edc307d7294a48d528b895; worker owns R1-R4 UI behavior and coordinator owns the separate UI module metadata normalization for R5."
       ],
       "review": {
         "status": "changes_requested",
@@ -4112,8 +4111,8 @@
         "handoffPath": "docs/execution/handoffs/U-01.md",
         "nextReviewer": "/root/x05_reviewer",
         "status": "in_progress",
-        "waitingOn": "/root",
-        "waitingReason": "Round-one review is integrated with five P2 UI findings; coordinator is recording them and will normalize UI module metadata before correction round two.",
+        "waitingOn": "/root/x05_implementer",
+        "waitingReason": "Implement correction round two for R1-R4; coordinator will normalize ui module metadata for R5 before review.",
         "dependencyCommits": {
           "U-00": "508d88ef7e11d115d004cd48dae8bb9b2bb7608c",
           "C-03": "8c9bf9a6277e068f9ae6b859fab2c5f7aa4890a1",
@@ -4125,20 +4124,21 @@
         "reviewRound": 1,
         "reviewCommit": "9ada4806d49bb3da71e0c8e3c1e50fdc98c2f5a6",
         "reviewIntegrationCommit": "7ef11c3072769c04ecd2679b373a08fcfc6df46",
-        "correctionStatus": null,
-        "correctionRound": 0,
-        "correctionOwner": null,
-        "correctionBaseSha": null,
-        "correctionDispatchCheckpoint": null,
-        "correctionReviewPath": null,
-        "correctionHandoffPath": null,
-        "correctionReviewer": null,
+        "correctionStatus": "in_progress",
+        "correctionRound": 2,
+        "correctionOwner": "/root/x05_implementer",
+        "correctionBaseSha": "84e5aaca09e9d69fd5edc307d7294a48d528b895",
+        "correctionDispatchCheckpoint": "84e5aaca09e9d69fd5edc307d7294a48d528b895",
+        "correctionReviewPath": "docs/execution/handoffs/U-01-review-round2.md",
+        "correctionHandoffPath": "docs/execution/handoffs/U-01-correction-round2.md",
+        "correctionReviewer": "/root/x05_reviewer",
         "correctionImplementationCommit": null,
         "correctionHandoffCommit": null,
         "correctionReviewSourceCommit": null,
         "correctionReviewCommit": null,
         "correctionReviewIntegrationCommit": null,
-        "correctionProductCommits": []
+        "correctionProductCommits": [],
+        "correctionDispatchCommit": "84e5aaca09e9d69fd5edc307d7294a48d528b895"
       },
       "reviewHistory": [
         {
@@ -4151,6 +4151,15 @@
           "productCommit": "2f86d298d890e466334ecaa6d0bd92dc4d50f64f",
           "handoffCommit": "0ddb7fc75b00ec296879efca8f2b46720a81b56b",
           "integratedCommit": "7ef11c3072769c04ecd2679b373a08fcfc6df46"
+        },
+        {
+          "round": 2,
+          "reviewer": "/root/x05_reviewer",
+          "commit": null,
+          "status": "pending",
+          "sourceCommit": null,
+          "receipt": "docs/execution/handoffs/U-01-review-round2.md",
+          "handoff": "docs/execution/handoffs/U-01-correction-round2.md"
         }
       ]
     },
@@ -6006,7 +6015,7 @@
       ]
     }
   },
-  "nextAction": "U-01 review round one is recorded and integrated; normalize the UI module metadata, then dispatch correction round two for the remaining shell/config/readiness findings.",
+  "nextAction": "U-01 correction round two is dispatched from clean checkpoint 84e5aaca09e9d69fd5edc307d7294a48d528b895; normalize ui module metadata, then implement R1-R4 fixes and review.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
