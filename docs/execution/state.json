@@ -3792,7 +3792,10 @@
         "c5c1baf1b6511b28693b8e3758d6597d28bd50e1 independent C-04 correction round five review receipt; R3d/R3e and narrow R3f/R3g paths closed, R3f-a/R3f-b/R3f-c/R3g-a remain P1.",
         "Reviewer full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed; real-SQLite fresh-manager and race probes reproduced false-success recovery and missing ETag.",
         "C-04 correction round six dispatch pinned to clean coordinator checkpoint fc2e848caf87fd370b821cbfddc863b69d611852; scope is false-success recovery fencing, ETag replay preservation, and production terminal recovery ownership.",
-        "C-04 correction round six product base corrected to exact clean dispatch checkpoint ecea16b62844083d06c7a491d7ccbfad12dcd89f; no product files changed."
+        "C-04 correction round six product base corrected to exact clean dispatch checkpoint ecea16b62844083d06c7a491d7ccbfad12dcd89f; no product files changed.",
+        "52f3654cd0a669dbc3dc59f5187bec828616c34e C-04 correction round six product fixes attempt-specific built-in no-effect release, managed credential read-back, ETag replay preservation, and durable mutation owner construction guard.",
+        "21c54c7a288eb984fd122f475c41df03fe6c6a23 C-04 correction round six handoff records owned paths, exact checks, route-owner boundary, and no schema/API/client changes.",
+        "Correction round six product focused/repeated race tests, vet, module verification, Linux builds, and full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed."
       ],
       "review": {
         "status": "changes_requested",
@@ -3835,41 +3838,43 @@
         "reviewPath": "docs/execution/handoffs/C-04-review-round4.md",
         "handoffPath": "docs/execution/handoffs/C-04-correction-round3.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "in_progress",
+        "status": "review_pending",
         "dependencyCommits": {
           "D-04": "036288114bcf303f98e0ee02e54ddce18384e504",
           "F-03": "b65f5d65d67e6fc823fbf54fa8ab4f2a4d17d191",
           "X-08": "8c770f779204a00c2d8cc6312a2c0fc04262ea35",
           "W-05": "ea3958b15508d13893b55674b59cfb0bf50d1ffe"
         },
-        "waitingOn": "/root/x05_implementer",
-        "waitingReason": "Implement correction round five for R3f-a/R3f-b/R3f-c/R3g-a, then provide product and handoff commits for independent review round six.",
+        "waitingOn": "/root/x05_reviewer",
+        "waitingReason": "Independent review round six of correction product and handoff is pending.",
         "implementationCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
         "handoffCommit": "c46b84183f0723d0cbb439eb539cd600c235acf0",
         "reviewSourceCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
         "reviewRound": 3,
         "reviewCommit": "461b0c06b0a3094f5da28ca2920400b639e22a61",
         "reviewIntegrationCommit": "d593fd4",
-        "correctionStatus": "in_progress",
+        "correctionStatus": "review_pending",
         "correctionRound": 5,
         "correctionOwner": "/root/x05_implementer",
-        "correctionBaseSha": "ecea16b62844083d06c7a491d7ccbfad12dcd89f",
+        "correctionBaseSha": "01f837a64ba4c48ff89a8a08962e703eababfdd6",
         "correctionDispatchCheckpoint": "ecea16b62844083d06c7a491d7ccbfad12dcd89f",
         "correctionReviewPath": "docs/execution/handoffs/C-04-review-round6.md",
         "correctionHandoffPath": "docs/execution/handoffs/C-04-correction-round5.md",
         "correctionReviewer": "/root/x05_reviewer",
         "priorReviewCommit": "c5c1baf1b6511b28693b8e3758d6597d28bd50e1",
         "priorReviewIntegrationCommit": "e52dde661391dd7792c9278b42e26be1a7cea9f9",
-        "correctionImplementationCommit": null,
-        "correctionHandoffCommit": null,
-        "correctionReviewSourceCommit": null,
+        "correctionImplementationCommit": "52f3654cd0a669dbc3dc59f5187bec828616c34e",
+        "correctionHandoffCommit": "21c54c7a288eb984fd122f475c41df03fe6c6a23",
+        "correctionReviewSourceCommit": "52f3654cd0a669dbc3dc59f5187bec828616c34e",
         "correctionReviewCommit": null,
         "correctionReviewIntegrationCommit": null,
-        "correctionProductCommits": []
+        "correctionProductCommits": [
+          "52f3654cd0a669dbc3dc59f5187bec828616c34e"
+        ]
       },
-      "implementationCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
-      "handoffCommit": "c46b84183f0723d0cbb439eb539cd600c235acf0",
-      "reviewSourceCommit": "9337475cceaee1c2401b8baaa05f45f40e0789ed",
+      "implementationCommit": "52f3654cd0a669dbc3dc59f5187bec828616c34e",
+      "handoffCommit": "21c54c7a288eb984fd122f475c41df03fe6c6a23",
+      "reviewSourceCommit": "52f3654cd0a669dbc3dc59f5187bec828616c34e",
       "reviewHistory": [
         {
           "round": 1,
@@ -3929,7 +3934,7 @@
           "reviewer": "/root/x05_reviewer",
           "commit": null,
           "status": "pending",
-          "sourceCommit": null,
+          "sourceCommit": "52f3654cd0a669dbc3dc59f5187bec828616c34e",
           "receipt": "docs/execution/handoffs/C-04-review-round6.md"
         }
       ]
@@ -5861,7 +5866,7 @@
       ]
     }
   },
-  "nextAction": "C-04 correction round six is dispatched from clean checkpoint ecea16b62844083d06c7a491d7ccbfad12dcd89f; implementer owns the four round-five P1 corrections and reviewer round six follows.",
+  "nextAction": "C-04 correction round six product 52f3654cd0a669dbc3dc59f5187bec828616c34e and handoff 21c54c7a288eb984fd122f475c41df03fe6c6a23 are recorded; independent review round six is pending.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
