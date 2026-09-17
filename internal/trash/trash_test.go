@@ -104,6 +104,7 @@ type fakeAction struct {
 	trashEffect   ports.FilesystemEffect
 	deleteEffect  ports.FilesystemEffect
 	restoreEffect ports.FilesystemEffect
+	trashRequests []ports.FilesystemTrashRequest
 	callOrder     []string
 	deleteBlock   <-chan struct{}
 }
@@ -124,10 +125,11 @@ func (action *fakeAction) Rename(context.Context, ports.FilesystemRenameRequest)
 	return ports.FilesystemEffect{}, ErrUnsupported
 }
 
-func (action *fakeAction) Trash(context.Context, ports.FilesystemTrashRequest) (ports.FilesystemEffect, error) {
+func (action *fakeAction) Trash(_ context.Context, request ports.FilesystemTrashRequest) (ports.FilesystemEffect, error) {
 	action.mu.Lock()
 	action.trashCalls++
 	action.callOrder = append(action.callOrder, "trash")
+	action.trashRequests = append(action.trashRequests, ports.FilesystemTrashRequest{Files: cloneManifest(request.Files), Retention: request.Retention})
 	effect, err := action.trashEffect, action.trashErr
 	action.mu.Unlock()
 	return effect, err

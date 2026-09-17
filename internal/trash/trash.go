@@ -738,7 +738,11 @@ func (service *Service) ReconcileTrash(ctx context.Context, entryID string) (Res
 	if entry.State == "trashed" {
 		return alreadySatisfiedResult(entry, "trash_already_materialized"), nil
 	}
-	if entry.State != "planned" {
+	heldRetry, heldRetryErr := service.isHeldTrashRetry(ctx, entry)
+	if heldRetryErr != nil {
+		return Result{Entry: entry}, heldRetryErr
+	}
+	if entry.State != "planned" && !heldRetry {
 		return resultForEntry(entry, "trash_reconciliation_not_planned"), fmt.Errorf("%w: trash entry is %s", ErrConflict, entry.State)
 	}
 	if entry.ActiveOperation == operationTrash || entry.ActiveOperation == OperationPurge {
@@ -771,10 +775,22 @@ func (service *Service) ReconcileTrash(ctx context.Context, entryID string) (Res
 	result := Result{Entry: entry, Effects: effects, Evidence: append([]string(nil), reconciliation.Evidence...)}
 	switch reconciliation.Disposition {
 	case TrashOnly:
+		if heldRetry && outcomeHasUnresolvedScopeEvidenceForEntry(service, ctx, entry.ID) {
+			result.Evidence = append(result.Evidence, "trash_scope_requires_manual_review")
+			return result, ErrHeld
+		}
 		result.Outcome = domain.OutcomeAlreadySatisfied
 		result.Evidence = append(result.Evidence, "trash_materialized_by_readback")
 		return result, nil
 	case TrashSourceOnly:
+		if heldRetry && outcomeHasUnresolvedScopeEvidenceForEntry(service, ctx, entry.ID) {
+			result.Evidence = append(result.Evidence, "trash_scope_requires_manual_review")
+			return result, ErrHeld
+		}
+		if len(pendingTrashItems(entry)) == 0 {
+			result.Evidence = append(result.Evidence, "trash_retry_has_no_pending_items")
+			return result, ErrHeld
+		}
 		result.Retryable = true
 		result.Evidence = append(result.Evidence, "trash_retry_requires_explicit_authorization")
 		return result, ErrUncertain
@@ -782,6 +798,42 @@ func (service *Service) ReconcileTrash(ctx context.Context, entryID string) (Res
 		result.Evidence = append(result.Evidence, "trash_reconciliation_requires_review")
 		return result, ErrHeld
 	}
+}
+
+// isHeldTrashRetry identifies the only held state that the trash
+// reconciliation endpoint may inspect: a previous explicit retry whose
+// durable outcome is the trash operation. Other held states belong to the
+// normal trash/purge lifecycle and must remain behind their own review path.
+func (service *Service) isHeldTrashRetry(ctx context.Context, entry Entry) (bool, error) {
+	if entry.State != "held" || !strings.HasPrefix(entry.HoldReason, "trash_retry") {
+		return false, nil
+	}
+	record, err := service.store.Queries().GetJanitorRecord(ctx, &sqlc.GetJanitorRecordParams{TrashEntryID: entry.ID, Operation: string(OperationPurge)})
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, fmt.Errorf("%w: held trash retry journal is missing", ErrCorrupt)
+	}
+	if err != nil {
+		return false, fmt.Errorf("%w: get held trash retry journal: %v", ErrStorage, err)
+	}
+	if outcomeOperation(record.OutcomeJson) != OperationTrash {
+		return false, nil
+	}
+	return true, nil
+}
+
+func outcomeOperation(raw string) Operation {
+	var envelope struct {
+		Operation Operation `json:"operation"`
+	}
+	if json.Unmarshal([]byte(raw), &envelope) != nil {
+		return ""
+	}
+	return envelope.Operation
+}
+
+func outcomeHasUnresolvedScopeEvidenceForEntry(service *Service, ctx context.Context, entryID string) bool {
+	record, err := service.store.Queries().GetJanitorRecord(ctx, &sqlc.GetJanitorRecordParams{TrashEntryID: entryID, Operation: string(OperationPurge)})
+	return err == nil && outcomeHasUnresolvedScopeEvidence(record.OutcomeJson)
 }
 
 // RetryTrash is the separately authorized mutation path for a planned intent.
@@ -821,6 +873,8 @@ func (service *Service) observePlannedTrash(ctx context.Context, entry Entry) (t
 		return reconciliation, effects
 	}
 	states := make([]TrashReconciliationState, 0, len(entry.Items))
+	observedStates := make([]TrashReconciliationState, 0, len(entry.Items))
+	allMaterialized := true
 	for _, item := range entry.Items {
 		originalTarget := domain.FileTarget{RootID: item.RootID, RelativePath: item.OriginalRelativePath}
 		trashTarget := domain.FileTarget{RootID: item.RootID, RelativePath: item.TrashRelativePath}
@@ -900,20 +954,94 @@ func (service *Service) observePlannedTrash(ctx context.Context, entry Entry) (t
 			observation.Evidence = append(observation.Evidence, "directory_leaf")
 			itemEffect.Evidence = append(itemEffect.Evidence, "directory_leaf")
 		}
-		states = append(states, observation.State)
+		observedStates = append(observedStates, observation.State)
+		// A previously matched retry item is already terminal only when the
+		// exact trash object remains present and the source is absent. Keep that
+		// observation in the evidence, but do not make it a pending retry
+		// target. Any other observation for a terminal row must still block
+		// finalization: it proves that the durable item state is stale.
+		if isPendingTrashItem(item) || observation.State != TrashOnly {
+			states = append(states, observation.State)
+		}
+		if isPendingTrashItem(item) {
+			allMaterialized = false
+		}
 		reconciliation.Items = append(reconciliation.Items, observation)
 		effects = append(effects, itemEffect)
 	}
-	reconciliation.Disposition = classifyTrashReconciliation(states)
+	if allMaterialized && len(states) == 0 {
+		reconciliation.Disposition = TrashOnly
+	} else {
+		reconciliation.Disposition = classifyTrashReconciliation(states)
+	}
 	reconciliation.Evidence = []string{"trash_reconciliation_observed"}
 	if reconciliation.Disposition == TrashPartial && containsDirectoryEvidence(reconciliation.Items) {
 		reconciliation.Disposition = TrashPartialDirectory
 	}
-	for _, state := range states {
+	for _, state := range observedStates {
 		reconciliation.Evidence = append(reconciliation.Evidence, "trash_state:"+string(state))
 	}
 	sort.Strings(reconciliation.Evidence)
 	return reconciliation, effects
+}
+
+func isPendingTrashItem(item Item) bool {
+	if item.Type == domain.ManifestDirectory {
+		return false
+	}
+	switch item.State {
+	case "trashed", "purged", "restored":
+		return false
+	default:
+		return true
+	}
+}
+
+func pendingTrashItems(entry Entry) []Item {
+	items := make([]Item, 0, len(entry.Items))
+	for _, item := range entry.Items {
+		if isPendingTrashItem(item) {
+			items = append(items, item)
+		}
+	}
+	return items
+}
+
+// manifestForTrashItems reconstructs an exact leaf manifest from the
+// immutable stored manifest and the durable per-item selection. A retry must
+// submit only unresolved items; reusing the original root or full manifest
+// could repeat an already-materialized item or widen the mutation scope.
+func manifestForTrashItems(entry Entry, items []Item) ([]domain.FileManifestEntry, error) {
+	flat := make([]domain.FileManifestEntry, 0, len(entry.Manifest))
+	for _, manifestEntry := range entry.Manifest {
+		if err := flattenManifest(manifestEntry, &flat); err != nil {
+			return nil, fmt.Errorf("%w: flatten retry manifest: %v", ErrCorrupt, err)
+		}
+	}
+	byPath := make(map[string]domain.FileManifestEntry, len(flat))
+	for _, manifestEntry := range flat {
+		if manifestEntry.Type == domain.ManifestDirectory {
+			continue
+		}
+		key := string(manifestEntry.RootID) + "\x00" + manifestEntry.RelativePath
+		if _, exists := byPath[key]; exists {
+			return nil, fmt.Errorf("%w: duplicate retry manifest path %q", ErrCorrupt, manifestEntry.RelativePath)
+		}
+		byPath[key] = manifestEntry
+	}
+	result := make([]domain.FileManifestEntry, 0, len(items))
+	for _, item := range items {
+		key := string(item.RootID) + "\x00" + item.OriginalRelativePath
+		manifestEntry, ok := byPath[key]
+		if !ok || manifestEntry.Type != item.Type || manifestEntry.Size != item.Size || manifestEntry.Digest != item.Digest || manifestEntry.FileIdentity != item.FileIdentity {
+			return nil, fmt.Errorf("%w: retry item %s is not bound to the stored manifest", ErrCorrupt, item.ID)
+		}
+		result = append(result, manifestEntry)
+	}
+	if len(result) == 0 {
+		return nil, fmt.Errorf("%w: retry manifest has no pending items", ErrConflict)
+	}
+	return result, nil
 }
 
 func classifyTrashReconciliation(states []TrashReconciliationState) TrashReconciliationState {
@@ -969,27 +1097,31 @@ func isDirectoryLeaf(manifest []domain.FileManifestEntry, relativePath string) b
 }
 
 func (service *Service) persistTrashReconciliation(ctx context.Context, entry Entry, reconciliation trashReconciliation, effects []ItemEffect, now time.Time) error {
-	state := "pending"
-	if reconciliation.Disposition == TrashOnly {
-		state = "materialized"
-	} else if reconciliation.Disposition != TrashSourceOnly {
-		state = "held"
-	}
-	outcome, err := encodeTrashReconciliation(reconciliation, state)
-	if err != nil {
-		return fmt.Errorf("%w: encode trash reconciliation: %v", ErrStorage, err)
-	}
 	return service.withTx(persistenceContext(ctx), func(tx *sql.Tx, queries *sqlc.Queries) error {
 		current, getErr := queries.GetTrashEntry(ctx, entry.ID)
 		if getErr != nil {
 			return getErr
 		}
-		if current.Version != entry.Version || current.State != "planned" || current.ActiveOperation.Valid {
+		if current.Version != entry.Version || current.ActiveOperation.Valid || current.State != "planned" && current.State != "held" {
 			return ErrClaimed
 		}
 		janitor, getErr := queries.GetJanitorRecord(ctx, &sqlc.GetJanitorRecordParams{TrashEntryID: entry.ID, Operation: string(OperationPurge)})
 		if getErr != nil {
 			return getErr
+		}
+		priorScope := outcomeHasUnresolvedScopeEvidence(janitor.OutcomeJson)
+		if priorScope {
+			reconciliation.Evidence = appendUniqueString(reconciliation.Evidence, "scope_unresolved")
+		}
+		state := "pending"
+		if reconciliation.Disposition == TrashOnly && !priorScope {
+			state = "materialized"
+		} else if reconciliation.Disposition != TrashSourceOnly {
+			state = "held"
+		}
+		heldReason := "trash_reconciliation:" + string(reconciliation.Disposition)
+		if current.State == "held" && strings.HasPrefix(entry.HoldReason, "trash_retry") {
+			heldReason = entry.HoldReason
 		}
 		if reconciliation.Disposition == TrashOnly {
 			for _, itemEffect := range effects {
@@ -1000,17 +1132,29 @@ func (service *Service) persistTrashReconciliation(ctx context.Context, entry En
 					return updateErr
 				}
 			}
-			updated, updateErr := tx.ExecContext(ctx, `UPDATE trash_entries SET state = 'trashed', trashed_at = ?, expires_at = ?, hold_reason = NULL, version = version + 1, updated_at = ? WHERE id = ? AND version = ? AND state = 'planned' AND active_operation IS NULL`, formatTime(now), formatTime(now.Add(entry.Retention)), formatTime(now), entry.ID, entry.Version)
-			if updateErr != nil {
-				return updateErr
-			}
-			if affected, affectedErr := updated.RowsAffected(); affectedErr != nil {
-				return affectedErr
-			} else if affected != 1 {
-				return ErrClaimed
+			if state == "materialized" {
+				updated, updateErr := tx.ExecContext(ctx, `UPDATE trash_entries SET state = 'trashed', trashed_at = ?, expires_at = ?, hold_reason = NULL, version = version + 1, updated_at = ? WHERE id = ? AND version = ? AND state IN ('planned', 'held') AND active_operation IS NULL`, formatTime(now), formatTime(now.Add(entry.Retention)), formatTime(now), entry.ID, entry.Version)
+				if updateErr != nil {
+					return updateErr
+				}
+				if affected, affectedErr := updated.RowsAffected(); affectedErr != nil {
+					return affectedErr
+				} else if affected != 1 {
+					return ErrClaimed
+				}
+			} else {
+				updated, updateErr := tx.ExecContext(ctx, `UPDATE trash_entries SET state = 'held', hold_reason = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ? AND state IN ('planned', 'held') AND active_operation IS NULL`, heldReason, formatTime(now), entry.ID, entry.Version)
+				if updateErr != nil {
+					return updateErr
+				}
+				if affected, affectedErr := updated.RowsAffected(); affectedErr != nil {
+					return affectedErr
+				} else if affected != 1 {
+					return ErrClaimed
+				}
 			}
 		} else if reconciliation.Disposition != TrashSourceOnly {
-			updated, updateErr := tx.ExecContext(ctx, `UPDATE trash_entries SET state = 'held', hold_reason = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ? AND state = 'planned' AND active_operation IS NULL`, "trash_reconciliation:"+string(reconciliation.Disposition), formatTime(now), entry.ID, entry.Version)
+			updated, updateErr := tx.ExecContext(ctx, `UPDATE trash_entries SET state = 'held', hold_reason = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ? AND state IN ('planned', 'held') AND active_operation IS NULL`, heldReason, formatTime(now), entry.ID, entry.Version)
 			if updateErr != nil {
 				return updateErr
 			}
@@ -1019,6 +1163,10 @@ func (service *Service) persistTrashReconciliation(ctx context.Context, entry En
 			} else if affected != 1 {
 				return ErrClaimed
 			}
+		}
+		outcome, err := encodeTrashReconciliation(reconciliation, state, effects)
+		if err != nil {
+			return fmt.Errorf("%w: encode trash reconciliation: %v", ErrStorage, err)
 		}
 		_, updateErr := queries.UpdateJanitorRecord(ctx, &sqlc.UpdateJanitorRecordParams{
 			State:         stateForTrashReconciliation(state, janitor.State),
@@ -1041,7 +1189,7 @@ func stateForTrashReconciliation(reconciliationState, current string) string {
 	return reconciliationState
 }
 
-func encodeTrashReconciliation(reconciliation trashReconciliation, state string) (string, error) {
+func encodeTrashReconciliation(reconciliation trashReconciliation, state string, effects []ItemEffect) (string, error) {
 	value := map[string]any{
 		"operation":   OperationTrash,
 		"state":       state,
@@ -1052,11 +1200,23 @@ func encodeTrashReconciliation(reconciliation trashReconciliation, state string)
 	if len(reconciliation.Evidence) > 0 {
 		value["evidence"] = reconciliation.Evidence
 	}
+	if len(effects) > 0 {
+		value["effects"] = effects
+	}
 	encoded, err := json.Marshal(value)
 	if err != nil {
 		return "", err
 	}
 	return string(encoded), nil
+}
+
+func appendUniqueString(values []string, value string) []string {
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
 }
 
 func (service *Service) listPlannedTrashEntries(ctx context.Context, limit int) ([]string, error) {
@@ -1087,10 +1247,11 @@ func (service *Service) recoverExpiredPlannedTrashClaim(ctx context.Context, now
 		return ErrClock
 	}
 	// The frozen storage schema permits only purge/restore in active_operation.
-	// A planned trash retry therefore uses the purge slot as an entry-scoped
-	// lease while its janitor row remains queued. Planned entries cannot be
-	// claimed by the ordinary purge path, so this slot remains unambiguous.
-	_, err := service.store.DB().ExecContext(ctx, `UPDATE trash_entries SET active_operation = NULL, operation_claimed_by = NULL, operation_lease_until = NULL, version = version + 1, updated_at = ? WHERE state = 'planned' AND active_operation = 'purge' AND (operation_lease_until IS NULL OR operation_lease_until <= ?)`, formatTime(now), formatTime(now))
+	// A planned or held trash retry uses the purge slot as an entry-scoped
+	// lease while its janitor row stores the trash operation. The ordinary
+	// purge path never claims these states, so an expired retry lease can be
+	// cleared safely for a fresh read-only reconciliation.
+	_, err := service.store.DB().ExecContext(ctx, `UPDATE trash_entries SET active_operation = NULL, operation_claimed_by = NULL, operation_lease_until = NULL, version = version + 1, updated_at = ? WHERE state IN ('planned', 'held') AND active_operation = 'purge' AND (operation_lease_until IS NULL OR operation_lease_until <= ?)`, formatTime(now), formatTime(now))
 	if err != nil {
 		return fmt.Errorf("%w: recover planned trash lease: %v", ErrStorage, err)
 	}
@@ -1110,19 +1271,25 @@ func (service *Service) claimPlannedTrash(ctx context.Context, entryID string) (
 		if err != nil {
 			return err
 		}
-		if row.State != "planned" || row.ActiveOperation.Valid {
+		if row.State != "planned" && row.State != "held" || row.ActiveOperation.Valid {
 			return ErrClaimed
 		}
 		janitor, err := queries.GetJanitorRecord(ctx, &sqlc.GetJanitorRecordParams{TrashEntryID: entryID, Operation: string(OperationPurge)})
 		if err != nil {
 			return err
 		}
-		if janitor.State != "queued" || approvalBindingPresent(janitor) {
+		if approvalBindingPresent(janitor) {
+			return ErrClaimed
+		}
+		if row.State == "planned" && janitor.State != "queued" {
+			return ErrClaimed
+		}
+		if row.State == "held" && (janitor.State != "held" || outcomeOperation(janitor.OutcomeJson) != OperationTrash || outcomeHasUnresolvedScopeEvidence(janitor.OutcomeJson)) {
 			return ErrClaimed
 		}
 		// Store the trash retry lease in the existing purge operation slot; the
 		// database CHECK constraint intentionally has no third operation value.
-		updated, err := tx.ExecContext(ctx, `UPDATE trash_entries SET active_operation = 'purge', operation_claimed_by = ?, operation_lease_until = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ? AND state = 'planned' AND active_operation IS NULL`, service.workerID, formatTime(leaseUntil), formatTime(now), entryID, row.Version)
+		updated, err := tx.ExecContext(ctx, `UPDATE trash_entries SET active_operation = 'purge', operation_claimed_by = ?, operation_lease_until = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ? AND state IN ('planned', 'held') AND active_operation IS NULL`, service.workerID, formatTime(leaseUntil), formatTime(now), entryID, row.Version)
 		if err != nil {
 			return err
 		}
@@ -1160,10 +1327,15 @@ func (service *Service) dispatchPlannedTrash(ctx context.Context, claim Entry) (
 	if err := service.validateContext(ctx); err != nil {
 		return Result{Entry: claim}, err
 	}
-	if claim.State != "planned" || claim.ActiveOperation != OperationPurge || claim.ClaimedBy != service.workerID {
+	if (claim.State != "planned" && claim.State != "held") || claim.ActiveOperation != OperationPurge || claim.ClaimedBy != service.workerID {
 		return Result{Entry: claim}, ErrClaimed
 	}
-	if err := service.preflightSource(ctx, claim.Manifest); err != nil {
+	pending := pendingTrashItems(claim)
+	manifest, manifestErr := manifestForTrashItems(claim, pending)
+	if manifestErr != nil {
+		return service.finishClaimedTrash(ctx, claim, ports.FilesystemEffect{}, manifestErr)
+	}
+	if err := service.preflightSource(ctx, manifest); err != nil {
 		return service.finishClaimedTrash(ctx, claim, ports.FilesystemEffect{}, err)
 	}
 	if claim.Client != nil {
@@ -1183,7 +1355,7 @@ func (service *Service) dispatchPlannedTrash(ctx context.Context, claim Entry) (
 	if err := service.validateContext(ctx); err != nil {
 		return service.finishClaimedTrash(ctx, claim, ports.FilesystemEffect{}, err)
 	}
-	effect, actionErr := service.action.Trash(ctx, ports.FilesystemTrashRequest{Files: claim.Manifest, Retention: claim.Retention})
+	effect, actionErr := service.action.Trash(ctx, ports.FilesystemTrashRequest{Files: manifest, Retention: claim.Retention})
 	result, finishErr := service.finishClaimedTrash(ctx, claim, effect, actionErr)
 	return result, errors.Join(actionErr, finishErr)
 }
@@ -1193,11 +1365,18 @@ func (service *Service) finishClaimedTrash(ctx context.Context, claim Entry, eff
 	if loadErr != nil {
 		return Result{}, loadErr
 	}
-	if entry.State != "planned" || entry.ActiveOperation != OperationPurge || entry.ClaimedBy != service.workerID {
+	if (entry.State != "planned" && entry.State != "held") || entry.ActiveOperation != OperationPurge || entry.ClaimedBy != service.workerID {
 		return Result{Entry: entry}, ErrClaimed
 	}
-	matched, scopeIssues := validateAffectedSet(entry.Items, effect.Affected, operationTrash)
-	complete := actionErr == nil && effect.Outcome.Valid() && len(effect.Affected) > 0 && len(scopeIssues) == 0 && len(matched) == len(entry.Items)
+	pending := pendingTrashItems(entry)
+	matched, scopeIssues := validateAffectedSet(pending, effect.Affected, operationTrash)
+	terminalMatched := make(map[string]bool, len(matched))
+	if effect.Outcome.Valid() {
+		for itemID := range matched {
+			terminalMatched[itemID] = true
+		}
+	}
+	complete := actionErr == nil && effect.Outcome.Valid() && len(effect.Affected) > 0 && len(scopeIssues) == 0 && len(matched) == len(pending)
 	now := service.now()
 	if now.IsZero() {
 		return Result{Entry: entry}, ErrClock
@@ -1208,9 +1387,12 @@ func (service *Service) finishClaimedTrash(ctx context.Context, claim Entry, eff
 		state = "trashed"
 		reason = "trash_retry_completed"
 	}
+	hardScope := hasHardTrashScopeIssue(scopeIssues)
 	if len(scopeIssues) > 0 {
-		effect.Evidence = append(effect.Evidence, "scope_unresolved")
 		effect.Evidence = append(effect.Evidence, scopeIssues...)
+	}
+	if hardScope {
+		effect.Evidence = appendUniqueString(effect.Evidence, "scope_unresolved")
 	}
 	if actionErr != nil {
 		reason = "trash_retry: " + safeError(actionErr)
@@ -1219,13 +1401,28 @@ func (service *Service) finishClaimedTrash(ctx context.Context, claim Entry, eff
 	} else if !effect.Outcome.Valid() {
 		reason = "trash_retry_invalid_effect"
 	}
-	effects := make([]ItemEffect, 0, len(entry.Items))
-	if complete {
-		for _, item := range entry.Items {
-			effects = append(effects, ItemEffect{ItemID: item.ID, Path: item.TrashRelativePath, Operation: OperationTrash, State: "trashed", Outcome: effect.Outcome, ObservedAt: effect.ObservedAt, Evidence: append([]string{"trash_retry"}, effect.Evidence...)})
+	effects := make([]ItemEffect, 0, len(pending)+1)
+	observedAt := effect.ObservedAt
+	if observedAt.IsZero() {
+		observedAt = now
+		effect.ObservedAt = observedAt
+	}
+	for _, item := range pending {
+		itemEffect := ItemEffect{ItemID: item.ID, Path: item.OriginalRelativePath, Operation: OperationTrash, State: "pending", Outcome: "", ObservedAt: observedAt, Evidence: []string{"trash_retry_pending"}}
+		if terminalMatched[item.ID] {
+			itemEffect.Path = item.TrashRelativePath
+			itemEffect.State = "trashed"
+			itemEffect.Outcome = effect.Outcome
+			itemEffect.Evidence = append([]string{"trash_retry"}, effect.Evidence...)
+		} else {
+			itemEffect.Evidence = append(itemEffect.Evidence, trashScopeEvidenceForItem(item.ID, item.OriginalRelativePath, item.TrashRelativePath, scopeIssues)...)
 		}
-	} else if len(effect.Affected) > 0 || len(scopeIssues) > 0 {
-		effects = append(effects, ItemEffect{Operation: OperationTrash, State: "unknown", Outcome: effect.Outcome, ObservedAt: effect.ObservedAt, Evidence: append([]string{"trash_retry_uncertain"}, effect.Evidence...)})
+		effects = append(effects, itemEffect)
+	}
+	if hardScope {
+		// Keep the exact per-item matches above while retaining a separate
+		// aggregate marker for foreign, duplicate, or contradictory reports.
+		effects = append(effects, ItemEffect{Operation: OperationTrash, State: "unknown", Outcome: effect.Outcome, ObservedAt: observedAt, Evidence: append([]string{"trash_retry_scope_unresolved"}, effect.Evidence...)})
 	}
 	outcome := effectOutcomeJSON(OperationTrash, state, reason, effects, effect)
 	resultErr := service.withTx(persistenceContext(ctx), func(tx *sql.Tx, queries *sqlc.Queries) error {
@@ -1233,16 +1430,16 @@ func (service *Service) finishClaimedTrash(ctx context.Context, claim Entry, eff
 		if err != nil {
 			return err
 		}
-		if current.Version != entry.Version || current.State != "planned" || !current.ActiveOperation.Valid || current.ActiveOperation.String != string(OperationPurge) || !current.OperationClaimedBy.Valid || current.OperationClaimedBy.String != service.workerID {
+		if current.Version != entry.Version || current.State != "planned" && current.State != "held" || !current.ActiveOperation.Valid || current.ActiveOperation.String != string(OperationPurge) || !current.OperationClaimedBy.Valid || current.OperationClaimedBy.String != service.workerID {
 			return ErrClaimed
 		}
-		if complete {
-			for _, item := range entry.Items {
-				if _, err := tx.ExecContext(ctx, `UPDATE trash_items SET state = 'trashed', trashed_at = ? WHERE id = ? AND entry_id = ? AND state = 'selected'`, formatTime(now), item.ID, entry.ID); err != nil {
-					return err
-				}
+		for itemID := range terminalMatched {
+			if _, err := tx.ExecContext(ctx, `UPDATE trash_items SET state = 'trashed', trashed_at = ? WHERE id = ? AND entry_id = ? AND state = 'selected'`, formatTime(now), itemID, entry.ID); err != nil {
+				return err
 			}
-			updated, err := tx.ExecContext(ctx, `UPDATE trash_entries SET state = 'trashed', trashed_at = ?, expires_at = ?, hold_reason = NULL, active_operation = NULL, operation_claimed_by = NULL, operation_lease_until = NULL, version = version + 1, updated_at = ? WHERE id = ? AND version = ? AND state = 'planned' AND active_operation = 'purge' AND operation_claimed_by = ?`, formatTime(now), formatTime(now.Add(entry.Retention)), formatTime(now), entry.ID, entry.Version, service.workerID)
+		}
+		if complete {
+			updated, err := tx.ExecContext(ctx, `UPDATE trash_entries SET state = 'trashed', trashed_at = ?, expires_at = ?, hold_reason = NULL, active_operation = NULL, operation_claimed_by = NULL, operation_lease_until = NULL, version = version + 1, updated_at = ? WHERE id = ? AND version = ? AND state IN ('planned', 'held') AND active_operation = 'purge' AND operation_claimed_by = ?`, formatTime(now), formatTime(now.Add(entry.Retention)), formatTime(now), entry.ID, entry.Version, service.workerID)
 			if err != nil {
 				return err
 			}
@@ -1252,7 +1449,7 @@ func (service *Service) finishClaimedTrash(ctx context.Context, claim Entry, eff
 				return ErrClaimed
 			}
 		} else {
-			updated, err := tx.ExecContext(ctx, `UPDATE trash_entries SET state = 'held', hold_reason = ?, active_operation = NULL, operation_claimed_by = NULL, operation_lease_until = NULL, version = version + 1, updated_at = ? WHERE id = ? AND version = ? AND state = 'planned' AND active_operation = 'purge' AND operation_claimed_by = ?`, reason, formatTime(now), entry.ID, entry.Version, service.workerID)
+			updated, err := tx.ExecContext(ctx, `UPDATE trash_entries SET state = 'held', hold_reason = ?, active_operation = NULL, operation_claimed_by = NULL, operation_lease_until = NULL, version = version + 1, updated_at = ? WHERE id = ? AND version = ? AND state IN ('planned', 'held') AND active_operation = 'purge' AND operation_claimed_by = ?`, reason, formatTime(now), entry.ID, entry.Version, service.workerID)
 			if err != nil {
 				return err
 			}
@@ -1280,6 +1477,27 @@ func (service *Service) finishClaimedTrash(ctx context.Context, claim Entry, eff
 	}
 	result.Evidence = append(result.Evidence, "trash_retry_held")
 	return result, errors.Join(ErrHeld, resultErr)
+}
+
+func hasHardTrashScopeIssue(issues []string) bool {
+	for _, issue := range issues {
+		for _, prefix := range []string{"affected_foreign:", "affected_ambiguous:", "affected_duplicate:", "affected_identity_changed:"} {
+			if strings.HasPrefix(issue, prefix) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func trashScopeEvidenceForItem(itemID, originalPath, trashPath string, issues []string) []string {
+	result := make([]string, 0, 2)
+	for _, issue := range issues {
+		if issue == "affected_missing:"+itemID || strings.HasSuffix(issue, ":"+originalPath) || strings.HasSuffix(issue, ":"+trashPath) {
+			result = append(result, issue)
+		}
+	}
+	return result
 }
 
 func stateForTrashRetry(state string) string {
