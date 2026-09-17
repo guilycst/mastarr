@@ -3568,21 +3568,17 @@
         "Correction round one dispatched from state checkpoint a0f6d9d1548d233cc5f59f806ed5cb2540ed1ae3 to /root/x05_implementer for R1-R4: bind HardDelete to immutable approved early-purge claims, reject foreign/duplicate/contradictory affected evidence, keep held/failed replay non-success, and merge rather than overwrite client stop evidence. Add synthetic regressions and preserve F-05/G-01 gates.",
         "W-05 correction round one product 2f843b3e678d86e9300ce60f48f31e3c87f18791 and handoff c8c862f92e32dc894f5273e657323720af777694 complete from dispatch checkpoint c436ce2abe6c16f72227bd6b5c307c106b09ef5e; R1-R4 regressions, focused/race/vet/root checks and fast guardrails passed, ready for independent correction review.",
         "Independent W-05 correction round-two receipt 5954ee826f56a1f9558417fdde614b62387a1ae0 integrated as 118720ddf571698c5403bfb58558bbc56b3d201f: changes requested for R1a/R2a/R3a/R2b; exact ordinary and race probes reproduced all four findings, and full offline guardrails passed.",
-        "W-05 correction round two dispatched from state checkpoint 8df72860d4ef56e69393753a3814c288bb9860d2 to /root/x05_implementer. Scope is R1a approval-bound early-purge recovery, R2a unresolved foreign-effect retention, R3a planned replay read-only reconciliation, and R2b exact directory bookkeeping; product paths remain internal/trash/ with synthetic regressions and no schema/API/adapters/clients changes."
+        "W-05 correction round two dispatched from state checkpoint 8df72860d4ef56e69393753a3814c288bb9860d2 to /root/x05_implementer. Scope is R1a approval-bound early-purge recovery, R2a unresolved foreign-effect retention, R3a planned replay read-only reconciliation, and R2b exact directory bookkeeping; product paths remain internal/trash/ with synthetic regressions and no schema/API/adapters/clients changes.",
+        "W-05 correction round two product 730b3774fb412c2d9dcecce5a5dec292d11f63eb and handoff daa7df6d2612439b07556e9e776e1dd4a17f0983 complete from dispatch checkpoint 8df72860d4ef56e69393753a3814c288bb9860d2; R1a/R2a/R3a/R2b regressions, focused/race/vet/root checks and fast guardrails passed. Full aggregate race and cross-build remain coordinator/reviewer gates."
       ],
       "review": {
-        "status": "changes_requested",
-        "decision": "changes_requested",
+        "status": "pending",
+        "decision": "pending",
         "reviewer": "/root/x05_reviewer",
-        "commit": "5954ee826f56a1f9558417fdde614b62387a1ae0",
-        "findings": [
-          "R1a P1: approved early purge cannot recover after process loss; ClaimApprovedEarlyPurgeReconciliation is never called and a fresh Tick/Purge/Retry cannot resume the immutable approval-bound action.",
-          "R2a P1: foreign purge effects can be recorded as purged, then reconciled and terminalized as success without retaining or rechecking the unresolved foreign effect.",
-          "R3a P1: replaying an existing planned trash entry without an idempotency key dispatches FilesystemActionPort.Trash again instead of requiring read-only reconciliation.",
-          "R2b P2: directory manifests skip directory items during affected-set validation and lifecycle bookkeeping, leaving selected directory rows after child effects complete."
-        ],
-        "round": 2,
-        "integratedCommit": "118720ddf571698c5403bfb58558bbc56b3d201f"
+        "commit": null,
+        "findings": [],
+        "round": 3,
+        "integratedCommit": null
       },
       "dispatch": {
         "assignedAt": "2026-09-16",
@@ -3612,7 +3608,7 @@
         "reviewPath": "docs/execution/handoffs/W-05-review-round3.md",
         "handoffPath": "docs/execution/handoffs/W-05-correction-round2.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "in_progress",
+        "status": "review_pending",
         "dependencyCommits": {
           "W-04-product": "780c00e92498660c08b6ac67259bbb4147c58531",
           "W-04-review": "2aef896fd5d3e10dcefc80f8f5a094852d73fd27",
@@ -3623,15 +3619,15 @@
           "G-01": "Arr native registration/import writes remain blocked; this lane must not bypass that gate.",
           "X-14": "qBittorrent removal remains metadata-only with deleteFiles=false; stop and read-back are required before payload mutation."
         },
-        "waitingOn": "/root/x05_implementer",
-        "waitingReason": "W-05 correction round two implementation for independent review findings R1a/R2a/R3a/R2b",
+        "waitingOn": "/root/x05_reviewer",
+        "waitingReason": "independent review of W-05 correction round two",
         "implementationCommit": "37ecdde36b56a6cd3d7d147cd8af1b49eba3f45a",
         "handoffCommit": "91038f799d894b58d1c7f149606ac2c686515beb",
-        "reviewSourceCommit": "2f843b3e678d86e9300ce60f48f31e3c87f18791",
-        "reviewRound": 2,
+        "reviewSourceCommit": "730b3774fb412c2d9dcecce5a5dec292d11f63eb",
+        "reviewRound": 3,
         "reviewCommit": null,
         "reviewIntegrationCommit": null,
-        "correctionStatus": "in_progress",
+        "correctionStatus": "review_pending",
         "correctionRound": 2,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "8df72860d4ef56e69393753a3814c288bb9860d2",
@@ -3641,9 +3637,9 @@
         "correctionReviewer": "/root/x05_reviewer",
         "priorReviewCommit": "5954ee826f56a1f9558417fdde614b62387a1ae0",
         "priorReviewIntegrationCommit": "118720ddf571698c5403bfb58558bbc56b3d201f",
-        "correctionImplementationCommit": null,
-        "correctionHandoffCommit": null,
-        "correctionReviewSourceCommit": null,
+        "correctionImplementationCommit": "730b3774fb412c2d9dcecce5a5dec292d11f63eb",
+        "correctionHandoffCommit": "daa7df6d2612439b07556e9e776e1dd4a17f0983",
+        "correctionReviewSourceCommit": "730b3774fb412c2d9dcecce5a5dec292d11f63eb",
         "priorCorrectionRound": 1,
         "priorCorrectionImplementationCommit": "2f843b3e678d86e9300ce60f48f31e3c87f18791",
         "priorCorrectionHandoffCommit": "c8c862f92e32dc894f5273e657323720af777694"
@@ -3672,6 +3668,14 @@
             "R3a P1: replaying an existing planned trash entry without an idempotency key dispatches FilesystemActionPort.Trash again instead of requiring read-only reconciliation.",
             "R2b P2: directory manifests skip directory items during affected-set validation and lifecycle bookkeeping, leaving selected directory rows after child effects complete."
           ]
+        },
+        {
+          "round": 3,
+          "reviewer": "/root/x05_reviewer",
+          "commit": null,
+          "status": "review_pending",
+          "sourceCommit": "730b3774fb412c2d9dcecce5a5dec292d11f63eb",
+          "receipt": "docs/execution/handoffs/W-05-review-round3.md"
         }
       ],
       "implementationCommit": "37ecdde36b56a6cd3d7d147cd8af1b49eba3f45a",
@@ -5613,7 +5617,7 @@
       ]
     }
   },
-  "nextAction": "W-05 correction round two is dispatched from 8df72860d4ef56e69393753a3814c288bb9860d2; await product and handoff commits, then queue independent review round three from the exact product SHA.",
+  "nextAction": "W-05 correction round two product 730b3774fb412c2d9dcecce5a5dec292d11f63eb and handoff daa7df6d2612439b07556e9e776e1dd4a17f0983 are ready for independent review. Await the exact round-three receipt, then integrate it before any next feature dispatch.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
