@@ -4189,19 +4189,20 @@
         "f8a087ce1a03b502b630fdd644d74fd72de423f5 U-02 correction handoff records focused/UI/race/vet/mod/generation/Vacuum/architecture/planning/full offline checks passing.",
         "f9b4765d5e749232b9ccd237beb3984fc3986672 independent U-02 round-two review closes prior R1-R5 but requests corrections for R2a, R5a and R5b; focused/race/vet/mod/generation/architecture/planning/Linux/full offline checks pass.",
         "6bd6c9c188074ec8c5e05b33f3723f39aad16927 U-02 correction round two fixes R2a, R5a and R5b: field-specific candidate episode/score round-trip, coverage window retention/validation, and strict dynamic draft grammar/index binding.",
-        "55c957eec5d2f7c68ca5eb25b5043f82522f6471 U-02 correction round-two handoff records focused/UI/race/vet/mod/generation/Vacuum/architecture/planning/lint/full offline checks and Linux builds passing."
+        "55c957eec5d2f7c68ca5eb25b5043f82522f6471 U-02 correction round-two handoff records focused/UI/race/vet/mod/generation/Vacuum/architecture/planning/lint/full offline checks and Linux builds passing.",
+        "a81e58c5fc5a97e8205dabaa071fdb3783c31f78 independent U-02 round-three review closes R2a/R5a/R5b but requests corrections for R2b, R5c and R5d; focused/race/vet/mod/generation/architecture/planning/Linux/full offline checks pass."
       ],
       "review": {
         "status": "changes_requested",
         "decision": "changes_requested",
         "reviewer": "/root/x05_reviewer",
-        "commit": "f9b4765d5e749232b9ccd237beb3984fc3986672",
+        "commit": "a81e58c5fc5a97e8205dabaa071fdb3783c31f78",
         "findings": [
-          "R2a P1 valid 256-episode season candidate drafts exceed the generic 240-byte input limit and cannot round-trip; candidate scores are rounded from observed precision.",
-          "R5a P2 Coverage startedAt/completedAt are discarded and present zero timestamps are accepted.",
-          "R5b P2 malformed, unknown and out-of-range dynamic candidate/association query controls are accepted and persisted as hidden state."
+          "R2b P1 detail back links retain draft keys on list routes that reject them, so generated detail links return 400.",
+          "R5c P1 valid returned file/candidate collections can emit more controls than parser index, field-count and query limits accept.",
+          "R5d P2 fixed authority-shaped draft fields are accepted and persisted on unrelated descriptor/download detail routes."
         ],
-        "round": 2
+        "round": 3
       },
       "dispatch": {
         "assignedAt": "2026-09-17",
@@ -4230,35 +4231,33 @@
         "reviewPath": "docs/execution/handoffs/U-02-review-round1.md",
         "handoffPath": "docs/execution/handoffs/U-02.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "awaiting_review",
-        "waitingOn": "/root/x05_reviewer",
-        "waitingReason": "U-02 correction round two product and handoff are complete; independent review round three is required for R2a, R5a and R5b.",
+        "status": "changes_requested",
+        "waitingOn": "/root/x05_implementer",
+        "waitingReason": "Round-three review found two P1 and one P2 generated-form/query-boundary gaps; correction round three is required before re-review.",
         "dependencyCommits": {
           "U-01": "c2aa8a692e719d3e925f37c0d2b42357e86cce04"
         },
         "implementationCommit": "0e0e66d16c4211e20d4b773262165f7e5b4e3dc9",
         "handoffCommit": "f832b664104f2f0d07523a15cf019bd87cbf793a",
         "reviewSourceCommit": "0e0e66d16c4211e20d4b773262165f7e5b4e3dc9",
-        "reviewRound": 2,
-        "reviewCommit": "f9b4765d5e749232b9ccd237beb3984fc3986672",
-        "reviewIntegrationCommit": "a2501e5b18f8f7aaedc0fd20c747cee7730f703b",
-        "correctionStatus": "awaiting_review",
-        "correctionRound": 2,
+        "reviewRound": 3,
+        "reviewCommit": "a81e58c5fc5a97e8205dabaa071fdb3783c31f78",
+        "reviewIntegrationCommit": "a5aa88b0adcc1171e10d9e8cd0015d501468b007",
+        "correctionStatus": "assigned",
+        "correctionRound": 3,
         "correctionOwner": "/root/x05_implementer",
-        "correctionBaseSha": "a2501e5b18f8f7aaedc0fd20c747cee7730f703b",
-        "correctionDispatchCheckpoint": "a2501e5b18f8f7aaedc0fd20c747cee7730f703b",
-        "correctionReviewPath": "docs/execution/handoffs/U-02-review-round3.md",
-        "correctionHandoffPath": "docs/execution/handoffs/U-02-correction-round2.md",
+        "correctionBaseSha": "a5aa88b0adcc1171e10d9e8cd0015d501468b007",
+        "correctionDispatchCheckpoint": "a5aa88b0adcc1171e10d9e8cd0015d501468b007",
+        "correctionReviewPath": "docs/execution/handoffs/U-02-review-round4.md",
+        "correctionHandoffPath": "docs/execution/handoffs/U-02-correction-round3.md",
         "correctionReviewer": "/root/x05_reviewer",
-        "correctionImplementationCommit": "6bd6c9c188074ec8c5e05b33f3723f39aad16927",
-        "correctionHandoffCommit": "55c957eec5d2f7c68ca5eb25b5043f82522f6471",
-        "correctionReviewSourceCommit": "6bd6c9c188074ec8c5e05b33f3723f39aad16927",
+        "correctionImplementationCommit": null,
+        "correctionHandoffCommit": null,
+        "correctionReviewSourceCommit": null,
         "correctionReviewCommit": null,
         "correctionReviewIntegrationCommit": null,
-        "correctionDispatchCommit": "a2501e5b18f8f7aaedc0fd20c747cee7730f703b",
-        "correctionProductCommits": [
-          "6bd6c9c188074ec8c5e05b33f3723f39aad16927"
-        ]
+        "correctionDispatchCommit": "a5aa88b0adcc1171e10d9e8cd0015d501468b007",
+        "correctionProductCommits": []
       },
       "implementationCommit": "6bd6c9c188074ec8c5e05b33f3723f39aad16927",
       "handoffCommit": "55c957eec5d2f7c68ca5eb25b5043f82522f6471",
@@ -4298,15 +4297,29 @@
         {
           "round": 3,
           "reviewer": "/root/x05_reviewer",
-          "commit": null,
-          "status": "pending",
+          "commit": "a81e58c5fc5a97e8205dabaa071fdb3783c31f78",
+          "status": "changes_requested",
           "sourceCommit": "6bd6c9c188074ec8c5e05b33f3723f39aad16927",
           "receipt": "docs/execution/handoffs/U-02-review-round3.md",
           "handoff": "docs/execution/handoffs/U-02-correction-round2.md",
           "productCommit": "6bd6c9c188074ec8c5e05b33f3723f39aad16927",
           "handoffCommit": "55c957eec5d2f7c68ca5eb25b5043f82522f6471",
           "priorReviewCommit": "f9b4765d5e749232b9ccd237beb3984fc3986672",
-          "integratedCommit": null
+          "integratedCommit": "a5aa88b0adcc1171e10d9e8cd0015d501468b007",
+          "findings": [
+            "R2b P1 detail back links retain draft keys on list routes that reject them, so generated detail links return 400.",
+            "R5c P1 valid returned file/candidate collections can emit more controls than parser index, field-count and query limits accept.",
+            "R5d P2 fixed authority-shaped draft fields are accepted and persisted on unrelated descriptor/download detail routes."
+          ]
+        },
+        {
+          "round": 4,
+          "reviewer": "/root/x05_reviewer",
+          "commit": null,
+          "status": "pending",
+          "sourceCommit": null,
+          "receipt": "docs/execution/handoffs/U-02-review-round4.md",
+          "handoff": "docs/execution/handoffs/U-02-correction-round3.md"
         }
       ]
     },
@@ -6154,7 +6167,7 @@
       ]
     }
   },
-  "nextAction": "U-02 correction round two product 6bd6c9c188074ec8c5e05b33f3723f39aad16927 and handoff 55c957eec5d2f7c68ca5eb25b5043f82522f6471 are recorded; dispatch independent review round three from this clean checkpoint.",
+  "nextAction": "U-02 review round three receipt a81e58c5fc5a97e8205dabaa071fdb3783c31f78 is integrated at a5aa88b0adcc1171e10d9e8cd0015d501468b007; correction round three is assigned to /root/x05_implementer for R2b, R5c and R5d.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
