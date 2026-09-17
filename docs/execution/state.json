@@ -4181,7 +4181,9 @@
         "Own only ui/internal/inventory/ and docs/execution/handoffs/U-02.md; do not edit shared API, state, or other UI lanes.",
         "UI remains an HTTP-only BFF: use the generated UI client and frozen API contract; no root internals, database, storage, upstream clients, media mounts or safety decisions.",
         "Synthetic fixtures only. Preserve provenance, unknown coverage, download-client metadata, per-instance tracking, editable identity/episode/subtitle associations, pagination and deep-link input state.",
-        "No mutations beyond rendering read-only inventory and matching views; review and workflow actions remain in later U-03."
+        "No mutations beyond rendering read-only inventory and matching views; review and workflow actions remain in later U-03.",
+        "0e0e66d16c4211e20d4b773262165f7e5b4e3dc9 U-02 product adds normalized HTTP-only inventory reader, strict DTO conversion, bounded read-only handler and synthetic coverage.",
+        "f832b664104f2f0d07523a15cf019bd87cbf793a U-02 handoff records delivered discoveries/media/download/descriptor list/detail views, provenance, unknown coverage, per-instance tracking, editable GET-only associations, exact checks and deferred browser integration."
       ],
       "review": null,
       "dispatch": {
@@ -4211,19 +4213,22 @@
         "reviewPath": "docs/execution/handoffs/U-02-review-round1.md",
         "handoffPath": "docs/execution/handoffs/U-02.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "assigned",
-        "waitingOn": "/root/x05_implementer",
-        "waitingReason": "U-02 implementation and handoff are required before independent review.",
+        "status": "awaiting_review",
+        "waitingOn": "/root/x05_reviewer",
+        "waitingReason": "U-02 product and handoff are complete; independent review is required before integration.",
         "dependencyCommits": {
           "U-01": "c2aa8a692e719d3e925f37c0d2b42357e86cce04"
         },
-        "implementationCommit": null,
-        "handoffCommit": null,
-        "reviewSourceCommit": null,
-        "reviewRound": 0,
+        "implementationCommit": "0e0e66d16c4211e20d4b773262165f7e5b4e3dc9",
+        "handoffCommit": "f832b664104f2f0d07523a15cf019bd87cbf793a",
+        "reviewSourceCommit": "0e0e66d16c4211e20d4b773262165f7e5b4e3dc9",
+        "reviewRound": 1,
         "reviewCommit": null,
         "reviewIntegrationCommit": null
-      }
+      },
+      "implementationCommit": "0e0e66d16c4211e20d4b773262165f7e5b4e3dc9",
+      "handoffCommit": "f832b664104f2f0d07523a15cf019bd87cbf793a",
+      "reviewSourceCommit": "0e0e66d16c4211e20d4b773262165f7e5b4e3dc9"
     },
     "U-03": {
       "status": "planned",
@@ -6069,7 +6074,7 @@
       ]
     }
   },
-  "nextAction": "U-02 is dispatched to /root/x05_implementer from clean checkpoint c2aa8a692e719d3e925f37c0d2b42357e86cce04; await the inventory and matching views handoff before independent review.",
+  "nextAction": "U-02 product and handoff are recorded at 0e0e66d16c4211e20d4b773262165f7e5b4e3dc9 and f832b664104f2f0d07523a15cf019bd87cbf793a; dispatch independent review round one for the inventory views.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
