@@ -58,10 +58,26 @@ var (
 // can expose health while its durable dependencies are still starting.
 type Options struct {
 	Configuration *configuration.Manager
-	Now           func() time.Time
-	Ready         bool
-	AllowedOrigin string
-	MaxBodyBytes  int64
+	// Dependencies is the explicit application-service assembly for generated
+	// routes. Nil fields remain unavailable until their owning service is
+	// wired; transport never manufactures an authoritative empty response.
+	Dependencies *RouteDependencies
+	// ConfigurationPersistence wraps a configuration mutation and its manager
+	// call in the storage-owned transaction. The callback receives a context
+	// carrying the transaction so managed credential envelopes and their parent
+	// row can commit together.
+	ConfigurationPersistence *ConfigurationPersistence
+	// IdempotencyPersistence retains successful mutation records across process
+	// restarts. A nil value keeps the transport usable for in-memory tests while
+	// production startup supplies the durable implementation.
+	IdempotencyPersistence *IdempotencyPersistence
+	// ManagedCredentialIDs contains only stable connection IDs whose encrypted
+	// fields are owned by the API. It is metadata, never credential material.
+	ManagedCredentialIDs []domain.ConfigID
+	Now                  func() time.Time
+	Ready                bool
+	AllowedOrigin        string
+	MaxBodyBytes         int64
 
 	// MaxManifestBytes and MaxManifestEntries are applied to request bodies
 	// before generated decoding.  They remain independent from the body limit
@@ -71,20 +87,24 @@ type Options struct {
 }
 
 // Server implements api.StrictServerInterface and is wrapped by the strict
-// generated net/http adapter.  The embedded fallback gives every documented
-// route a deliberate response while assembled application services can be
-// added one at a time without changing the wire boundary.
+// generated net/http adapter. Every route is explicitly assembled through
+// RouteDependencies; the built-in configuration and health services are the
+// only defaults supplied by this package.
 type Server struct {
-	strictFallback
-
-	configurationMu    sync.RWMutex
-	configuration      *configuration.Manager
-	now                func() time.Time
-	allowedOrigin      string
-	maxBodyBytes       int64
-	maxManifestBytes   int64
-	maxManifestEntries int
-	ready              atomic.Bool
+	configurationMu      sync.RWMutex
+	configuration        *configuration.Manager
+	dependencies         *RouteDependencies
+	persistenceMu        sync.RWMutex
+	configurationStore   *ConfigurationPersistence
+	idempotencyStore     *IdempotencyPersistence
+	managedCredentialMu  sync.RWMutex
+	managedCredentialIDs map[domain.ConfigID]struct{}
+	now                  func() time.Time
+	allowedOrigin        string
+	maxBodyBytes         int64
+	maxManifestBytes     int64
+	maxManifestEntries   int
+	ready                atomic.Bool
 
 	idempotencyMu sync.Mutex
 	idempotency   map[string]idempotencyEntry
@@ -129,15 +149,29 @@ func New(options Options) (*Server, error) {
 		}
 		options.AllowedOrigin = origin
 	}
+	var dependencies *RouteDependencies
+	if options.Dependencies != nil {
+		copyDependencies := *options.Dependencies
+		dependencies = &copyDependencies
+	}
 	server := &Server{
-		configuration:      options.Configuration,
-		now:                options.Now,
-		allowedOrigin:      options.AllowedOrigin,
-		maxBodyBytes:       options.MaxBodyBytes,
-		maxManifestBytes:   options.MaxManifestBytes,
-		maxManifestEntries: options.MaxManifestEntries,
-		idempotency:        make(map[string]idempotencyEntry),
-		pending:            make(map[string]*idempotencyPending),
+		configuration:        options.Configuration,
+		dependencies:         dependencies,
+		configurationStore:   cloneConfigurationPersistence(options.ConfigurationPersistence),
+		idempotencyStore:     cloneIdempotencyPersistence(options.IdempotencyPersistence),
+		managedCredentialIDs: make(map[domain.ConfigID]struct{}, len(options.ManagedCredentialIDs)),
+		now:                  options.Now,
+		allowedOrigin:        options.AllowedOrigin,
+		maxBodyBytes:         options.MaxBodyBytes,
+		maxManifestBytes:     options.MaxManifestBytes,
+		maxManifestEntries:   options.MaxManifestEntries,
+		idempotency:          make(map[string]idempotencyEntry),
+		pending:              make(map[string]*idempotencyPending),
+	}
+	for _, id := range options.ManagedCredentialIDs {
+		if id.Valid() {
+			server.managedCredentialIDs[id] = struct{}{}
+		}
 	}
 	server.ready.Store(options.Ready)
 	return server, nil
@@ -167,6 +201,89 @@ func (server *Server) configurationManager() *configuration.Manager {
 	server.configurationMu.RLock()
 	defer server.configurationMu.RUnlock()
 	return server.configuration
+}
+
+// SetConfigurationPersistence publishes the durable configuration transaction
+// seam after SQLite startup has completed. The value is copied so callers can
+// safely reuse or discard their assembly struct.
+func (server *Server) SetConfigurationPersistence(persistence *ConfigurationPersistence) {
+	if server == nil {
+		return
+	}
+	server.persistenceMu.Lock()
+	server.configurationStore = cloneConfigurationPersistence(persistence)
+	server.persistenceMu.Unlock()
+}
+
+func (server *Server) configurationPersistence() *ConfigurationPersistence {
+	if server == nil {
+		return nil
+	}
+	server.persistenceMu.RLock()
+	defer server.persistenceMu.RUnlock()
+	return server.configurationStore
+}
+
+// SetIdempotencyPersistence publishes the durable idempotency repository
+// after storage startup. Existing in-flight requests continue to use the
+// copied repository safely; production callers set it before readiness.
+func (server *Server) SetIdempotencyPersistence(persistence *IdempotencyPersistence) {
+	if server == nil {
+		return
+	}
+	server.persistenceMu.Lock()
+	server.idempotencyStore = cloneIdempotencyPersistence(persistence)
+	server.persistenceMu.Unlock()
+}
+
+func (server *Server) idempotencyPersistence() *IdempotencyPersistence {
+	if server == nil {
+		return nil
+	}
+	server.persistenceMu.RLock()
+	defer server.persistenceMu.RUnlock()
+	return server.idempotencyStore
+}
+
+// SetManagedCredentialIDs updates redacted credential ownership metadata after
+// startup has loaded durable API state. IDs are copied and no secret material
+// crosses this boundary.
+func (server *Server) SetManagedCredentialIDs(ids []domain.ConfigID) {
+	if server == nil {
+		return
+	}
+	values := make(map[domain.ConfigID]struct{}, len(ids))
+	for _, id := range ids {
+		if id.Valid() {
+			values[id] = struct{}{}
+		}
+	}
+	server.managedCredentialMu.Lock()
+	server.managedCredentialIDs = values
+	server.managedCredentialMu.Unlock()
+}
+
+func (server *Server) hasManagedCredentials(id domain.ConfigID) bool {
+	if server == nil {
+		return false
+	}
+	server.managedCredentialMu.RLock()
+	defer server.managedCredentialMu.RUnlock()
+	_, exists := server.managedCredentialIDs[id]
+	return exists
+}
+
+func (server *Server) setManagedCredential(id domain.ConfigID, managed bool) {
+	if server == nil || !id.Valid() {
+		return
+	}
+	server.managedCredentialMu.Lock()
+	defer server.managedCredentialMu.Unlock()
+	if managed {
+		server.managedCredentialIDs[id] = struct{}{}
+		return
+	}
+	delete(server.managedCredentialIDs, id)
 }
 
 // SetReady publishes the process readiness transition after migrations,
@@ -204,7 +321,10 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // GetLiveHealth reports process liveness and intentionally does not depend on
 // migrations, the key, or upstream availability.
-func (server *Server) GetLiveHealth(ctx context.Context, _ api.GetLiveHealthRequestObject) (api.GetLiveHealthResponseObject, error) {
+func (server *Server) GetLiveHealth(ctx context.Context, request api.GetLiveHealthRequestObject) (api.GetLiveHealthResponseObject, error) {
+	if dependency := server.routeDependencies(); dependency != nil && dependency.GetLiveHealth != nil {
+		return dependency.GetLiveHealth(ctx, request)
+	}
 	if err := contextError(ctx); err != nil {
 		return nil, err
 	}
@@ -215,7 +335,10 @@ func (server *Server) GetLiveHealth(ctx context.Context, _ api.GetLiveHealthRequ
 }
 
 // GetReadyHealth reports the startup barrier separately from liveness.
-func (server *Server) GetReadyHealth(ctx context.Context, _ api.GetReadyHealthRequestObject) (api.GetReadyHealthResponseObject, error) {
+func (server *Server) GetReadyHealth(ctx context.Context, request api.GetReadyHealthRequestObject) (api.GetReadyHealthResponseObject, error) {
+	if dependency := server.routeDependencies(); dependency != nil && dependency.GetReadyHealth != nil {
+		return dependency.GetReadyHealth(ctx, request)
+	}
 	if err := contextError(ctx); err != nil {
 		return nil, err
 	}
@@ -232,14 +355,17 @@ func (server *Server) GetReadyHealth(ctx context.Context, _ api.GetReadyHealthRe
 }
 
 // GetConfiguration returns only the effective non-secret snapshot.
-func (server *Server) GetConfiguration(ctx context.Context, _ api.GetConfigurationRequestObject) (api.GetConfigurationResponseObject, error) {
+func (server *Server) GetConfiguration(ctx context.Context, request api.GetConfigurationRequestObject) (api.GetConfigurationResponseObject, error) {
+	if dependency := server.routeDependencies(); dependency != nil && dependency.GetConfiguration != nil {
+		return dependency.GetConfiguration(ctx, request)
+	}
 	snapshot, err := server.snapshot(ctx)
 	if err != nil {
 		return nil, err
 	}
 	etag := quoteETag(snapshot.Source.Revision)
 	return api.GetConfiguration200JSONResponse{
-		Body:    apiConfiguration(snapshot),
+		Body:    server.apiConfiguration(snapshot),
 		Headers: api.GetConfiguration200ResponseHeaders{CacheControl: stringPtr("no-store"), ETag: &etag},
 	}, nil
 }
@@ -248,6 +374,9 @@ func (server *Server) GetConfiguration(ctx context.Context, _ api.GetConfigurati
 // is rejected until a durable cursor service is wired; an empty response is
 // never used to imply that a later page does not exist.
 func (server *Server) ListConnections(ctx context.Context, request api.ListConnectionsRequestObject) (api.ListConnectionsResponseObject, error) {
+	if dependency := server.routeDependencies(); dependency != nil && dependency.ListConnections != nil {
+		return dependency.ListConnections(ctx, request)
+	}
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
@@ -268,13 +397,16 @@ func (server *Server) ListConnections(ctx context.Context, request api.ListConne
 	}
 	now := server.now().UTC()
 	return api.ListConnections200JSONResponse{
-		Body:    api.ConnectionList{Items: mapConnections(items), Page: api.Page{Coverage: []api.Coverage{}, ObservedAt: now}},
+		Body:    api.ConnectionList{Items: server.mapConnections(items), Page: api.Page{Coverage: []api.Coverage{}, ObservedAt: now}},
 		Headers: api.ListConnections200ResponseHeaders{CacheControl: stringPtr("no-store")},
 	}, nil
 }
 
 // GetConnection returns one source-aware configuration record.
 func (server *Server) GetConnection(ctx context.Context, request api.GetConnectionRequestObject) (api.GetConnectionResponseObject, error) {
+	if dependency := server.routeDependencies(); dependency != nil && dependency.GetConnection != nil {
+		return dependency.GetConnection(ctx, request)
+	}
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
@@ -284,11 +416,14 @@ func (server *Server) GetConnection(ctx context.Context, request api.GetConnecti
 		return nil, err
 	}
 	etag := quoteETag(connection.Revision)
-	return api.GetConnection200JSONResponse{Body: mapConnection(connection), Headers: api.GetConnection200ResponseHeaders{CacheControl: stringPtr("no-store"), ETag: &etag}}, nil
+	return api.GetConnection200JSONResponse{Body: server.mapConnection(connection), Headers: api.GetConnection200ResponseHeaders{CacheControl: stringPtr("no-store"), ETag: &etag}}, nil
 }
 
 // CreateConnection persists an API-owned, encrypted-credential connection.
 func (server *Server) CreateConnection(ctx context.Context, request api.CreateConnectionRequestObject) (api.CreateConnectionResponseObject, error) {
+	if dependency := server.routeDependencies(); dependency != nil && dependency.CreateConnection != nil {
+		return dependency.CreateConnection(ctx, request)
+	}
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
@@ -301,18 +436,24 @@ func (server *Server) CreateConnection(ctx context.Context, request api.CreateCo
 		return nil, err
 	}
 	defer cleanup()
-	connection, err := manager.CreateConnection(ctx, spec)
+	connection, err := server.createConnection(ctx, spec)
 	if err != nil {
 		return nil, err
 	}
+	if len(spec.Credentials) != 0 {
+		server.setManagedCredential(connection.ID, true)
+	}
 	etag := quoteETag(connection.Revision)
 	location := "/api/v1/connections/" + url.PathEscape(connection.ID.String())
-	return api.CreateConnection201JSONResponse{Body: mapConnection(connection), Headers: api.CreateConnection201ResponseHeaders{CacheControl: stringPtr("no-store"), ETag: &etag, Location: &location}}, nil
+	return api.CreateConnection201JSONResponse{Body: server.mapConnection(connection), Headers: api.CreateConnection201ResponseHeaders{CacheControl: stringPtr("no-store"), ETag: &etag, Location: &location}}, nil
 }
 
 // PatchConnection applies the generated If-Match value to the configuration
 // manager's revision CAS.
 func (server *Server) PatchConnection(ctx context.Context, request api.PatchConnectionRequestObject) (api.PatchConnectionResponseObject, error) {
+	if dependency := server.routeDependencies(); dependency != nil && dependency.PatchConnection != nil {
+		return dependency.PatchConnection(ctx, request)
+	}
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
@@ -325,22 +466,36 @@ func (server *Server) PatchConnection(ctx context.Context, request api.PatchConn
 		return nil, err
 	}
 	defer cleanup()
-	connection, err := manager.PatchConnection(ctx, domain.ConfigID(request.ConnectionId), normalizeETag(string(request.Params.IfMatch)), patch)
+	expectedRevision, err := strongETag(string(request.Params.IfMatch))
 	if err != nil {
 		return nil, err
 	}
+	connection, err := server.updateConnection(ctx, manager, domain.ConfigID(request.ConnectionId), expectedRevision, patch)
+	if err != nil {
+		return nil, err
+	}
+	if patch.Credentials != nil {
+		server.setManagedCredential(connection.ID, len(patch.Credentials) != 0)
+	}
 	etag := quoteETag(connection.Revision)
-	return api.PatchConnection200JSONResponse{Body: mapConnection(connection), Headers: api.PatchConnection200ResponseHeaders{CacheControl: stringPtr("no-store"), ETag: &etag}}, nil
+	return api.PatchConnection200JSONResponse{Body: server.mapConnection(connection), Headers: api.PatchConnection200ResponseHeaders{CacheControl: stringPtr("no-store"), ETag: &etag}}, nil
 }
 
 // RetireConnection preserves the configuration tombstone and requires the
 // exact revision supplied by If-Match.
 func (server *Server) RetireConnection(ctx context.Context, request api.RetireConnectionRequestObject) (api.RetireConnectionResponseObject, error) {
+	if dependency := server.routeDependencies(); dependency != nil && dependency.RetireConnection != nil {
+		return dependency.RetireConnection(ctx, request)
+	}
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
 	}
-	err := manager.RetireConnection(ctx, domain.ConfigID(request.ConnectionId), normalizeETag(string(request.Params.IfMatch)))
+	expectedRevision, err := strongETag(string(request.Params.IfMatch))
+	if err != nil {
+		return nil, err
+	}
+	err = server.retireConnection(ctx, manager, domain.ConfigID(request.ConnectionId), expectedRevision)
 	if err != nil {
 		return nil, err
 	}
@@ -348,6 +503,9 @@ func (server *Server) RetireConnection(ctx context.Context, request api.RetireCo
 }
 
 func (server *Server) ListStorageRoots(ctx context.Context, request api.ListStorageRootsRequestObject) (api.ListStorageRootsResponseObject, error) {
+	if dependency := server.routeDependencies(); dependency != nil && dependency.ListStorageRoots != nil {
+		return dependency.ListStorageRoots(ctx, request)
+	}
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
@@ -370,6 +528,9 @@ func (server *Server) ListStorageRoots(ctx context.Context, request api.ListStor
 }
 
 func (server *Server) GetStorageRoot(ctx context.Context, request api.GetStorageRootRequestObject) (api.GetStorageRootResponseObject, error) {
+	if dependency := server.routeDependencies(); dependency != nil && dependency.GetStorageRoot != nil {
+		return dependency.GetStorageRoot(ctx, request)
+	}
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
@@ -383,6 +544,9 @@ func (server *Server) GetStorageRoot(ctx context.Context, request api.GetStorage
 }
 
 func (server *Server) CreateStorageRoot(ctx context.Context, request api.CreateStorageRootRequestObject) (api.CreateStorageRootResponseObject, error) {
+	if dependency := server.routeDependencies(); dependency != nil && dependency.CreateStorageRoot != nil {
+		return dependency.CreateStorageRoot(ctx, request)
+	}
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
@@ -390,7 +554,8 @@ func (server *Server) CreateStorageRoot(ctx context.Context, request api.CreateS
 	if request.Body == nil {
 		return nil, ErrInvalidJSON
 	}
-	root, err := manager.CreateStorageRoot(ctx, configuration.StorageRootSpec{ID: domain.ConfigID(request.Body.Id), Label: request.Body.Label, Purpose: domain.StoragePurpose(request.Body.Purpose), Path: request.Body.Path})
+	spec := configuration.StorageRootSpec{ID: domain.ConfigID(request.Body.Id), Label: request.Body.Label, Purpose: domain.StoragePurpose(request.Body.Purpose), Path: request.Body.Path}
+	root, err := server.createStorageRoot(ctx, manager, spec)
 	if err != nil {
 		return nil, err
 	}
@@ -400,6 +565,9 @@ func (server *Server) CreateStorageRoot(ctx context.Context, request api.CreateS
 }
 
 func (server *Server) PatchStorageRoot(ctx context.Context, request api.PatchStorageRootRequestObject) (api.PatchStorageRootResponseObject, error) {
+	if dependency := server.routeDependencies(); dependency != nil && dependency.PatchStorageRoot != nil {
+		return dependency.PatchStorageRoot(ctx, request)
+	}
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
@@ -409,7 +577,11 @@ func (server *Server) PatchStorageRoot(ctx context.Context, request api.PatchSto
 	}
 	body := request.Body
 	patch := configuration.StorageRootPatch{Label: body.Label, Path: body.Path, WatchEnabled: body.WatchEnabled, WatchIntervalSeconds: body.WatchIntervalSeconds}
-	root, err := manager.PatchStorageRoot(ctx, domain.ConfigID(request.StorageRootId), normalizeETag(string(request.Params.IfMatch)), patch)
+	expectedRevision, err := strongETag(string(request.Params.IfMatch))
+	if err != nil {
+		return nil, err
+	}
+	root, err := server.updateStorageRoot(ctx, manager, domain.ConfigID(request.StorageRootId), expectedRevision, patch)
 	if err != nil {
 		return nil, err
 	}
@@ -418,11 +590,18 @@ func (server *Server) PatchStorageRoot(ctx context.Context, request api.PatchSto
 }
 
 func (server *Server) RetireStorageRoot(ctx context.Context, request api.RetireStorageRootRequestObject) (api.RetireStorageRootResponseObject, error) {
+	if dependency := server.routeDependencies(); dependency != nil && dependency.RetireStorageRoot != nil {
+		return dependency.RetireStorageRoot(ctx, request)
+	}
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
 	}
-	err := manager.RetireStorageRoot(ctx, domain.ConfigID(request.StorageRootId), normalizeETag(string(request.Params.IfMatch)))
+	expectedRevision, err := strongETag(string(request.Params.IfMatch))
+	if err != nil {
+		return nil, err
+	}
+	err = server.retireStorageRoot(ctx, manager, domain.ConfigID(request.StorageRootId), expectedRevision)
 	if err != nil {
 		return nil, err
 	}
@@ -430,6 +609,9 @@ func (server *Server) RetireStorageRoot(ctx context.Context, request api.RetireS
 }
 
 func (server *Server) ListPathMappings(ctx context.Context, request api.ListPathMappingsRequestObject) (api.ListPathMappingsResponseObject, error) {
+	if dependency := server.routeDependencies(); dependency != nil && dependency.ListPathMappings != nil {
+		return dependency.ListPathMappings(ctx, request)
+	}
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
@@ -452,6 +634,9 @@ func (server *Server) ListPathMappings(ctx context.Context, request api.ListPath
 }
 
 func (server *Server) GetPathMapping(ctx context.Context, request api.GetPathMappingRequestObject) (api.GetPathMappingResponseObject, error) {
+	if dependency := server.routeDependencies(); dependency != nil && dependency.GetPathMapping != nil {
+		return dependency.GetPathMapping(ctx, request)
+	}
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
@@ -465,6 +650,9 @@ func (server *Server) GetPathMapping(ctx context.Context, request api.GetPathMap
 }
 
 func (server *Server) CreatePathMapping(ctx context.Context, request api.CreatePathMappingRequestObject) (api.CreatePathMappingResponseObject, error) {
+	if dependency := server.routeDependencies(); dependency != nil && dependency.CreatePathMapping != nil {
+		return dependency.CreatePathMapping(ctx, request)
+	}
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
@@ -473,7 +661,8 @@ func (server *Server) CreatePathMapping(ctx context.Context, request api.CreateP
 		return nil, ErrInvalidJSON
 	}
 	body := request.Body
-	mapping, err := manager.CreatePathMapping(ctx, configuration.PathMappingSpec{ID: domain.ConfigID(body.Id), ConnectionID: domain.ConfigID(body.ConnectionId), SourcePrefix: body.SourcePrefix, RootID: domain.ConfigID(body.RootId), DestinationPrefix: body.DestinationPrefix})
+	spec := configuration.PathMappingSpec{ID: domain.ConfigID(body.Id), ConnectionID: domain.ConfigID(body.ConnectionId), SourcePrefix: body.SourcePrefix, RootID: domain.ConfigID(body.RootId), DestinationPrefix: body.DestinationPrefix}
+	mapping, err := server.createPathMapping(ctx, manager, spec)
 	if err != nil {
 		return nil, err
 	}
@@ -483,6 +672,9 @@ func (server *Server) CreatePathMapping(ctx context.Context, request api.CreateP
 }
 
 func (server *Server) PatchPathMapping(ctx context.Context, request api.PatchPathMappingRequestObject) (api.PatchPathMappingResponseObject, error) {
+	if dependency := server.routeDependencies(); dependency != nil && dependency.PatchPathMapping != nil {
+		return dependency.PatchPathMapping(ctx, request)
+	}
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
@@ -491,7 +683,11 @@ func (server *Server) PatchPathMapping(ctx context.Context, request api.PatchPat
 		return nil, ErrInvalidJSON
 	}
 	patch := configuration.PathMappingPatch{SourcePrefix: request.Body.SourcePrefix, DestinationPrefix: request.Body.DestinationPrefix}
-	mapping, err := manager.PatchPathMapping(ctx, domain.ConfigID(request.PathMappingId), normalizeETag(string(request.Params.IfMatch)), patch)
+	expectedRevision, err := strongETag(string(request.Params.IfMatch))
+	if err != nil {
+		return nil, err
+	}
+	mapping, err := server.updatePathMapping(ctx, manager, domain.ConfigID(request.PathMappingId), expectedRevision, patch)
 	if err != nil {
 		return nil, err
 	}
@@ -500,15 +696,132 @@ func (server *Server) PatchPathMapping(ctx context.Context, request api.PatchPat
 }
 
 func (server *Server) RetirePathMapping(ctx context.Context, request api.RetirePathMappingRequestObject) (api.RetirePathMappingResponseObject, error) {
+	if dependency := server.routeDependencies(); dependency != nil && dependency.RetirePathMapping != nil {
+		return dependency.RetirePathMapping(ctx, request)
+	}
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
 	}
-	err := manager.RetirePathMapping(ctx, domain.ConfigID(request.PathMappingId), normalizeETag(string(request.Params.IfMatch)))
+	expectedRevision, err := strongETag(string(request.Params.IfMatch))
+	if err != nil {
+		return nil, err
+	}
+	err = server.retirePathMapping(ctx, manager, domain.ConfigID(request.PathMappingId), expectedRevision)
 	if err != nil {
 		return nil, err
 	}
 	return api.RetirePathMapping204Response{}, nil
+}
+
+func (server *Server) createConnection(ctx context.Context, spec configuration.ConnectionSpec) (domain.Connection, error) {
+	manager := server.configurationManager()
+	if manager == nil {
+		return domain.Connection{}, ErrNotReady
+	}
+	mutate := func(mutationCtx context.Context) (domain.Connection, error) {
+		return manager.CreateConnection(mutationCtx, spec)
+	}
+	if persistence := server.configurationPersistence(); persistence != nil && persistence.CreateConnection != nil {
+		draft := domain.Connection{
+			ID:       spec.ID,
+			Kind:     spec.Kind,
+			Label:    spec.Label,
+			Endpoint: spec.Endpoint,
+			Source: domain.SourceMetadata{
+				Source:       domain.SourceAPI,
+				Editable:     true,
+				DocumentID:   "api",
+				Revision:     "pending",
+				StartupAt:    server.now().UTC(),
+				ReloadPolicy: domain.ReloadOnRestart,
+			},
+		}
+		return persistence.CreateConnection(ctx, draft, mutate)
+	}
+	return mutate(ctx)
+}
+
+func (server *Server) updateConnection(ctx context.Context, manager *configuration.Manager, id domain.ConfigID, expectedRevision string, patch configuration.ConnectionPatch) (domain.Connection, error) {
+	mutate := func(mutationCtx context.Context) (domain.Connection, error) {
+		return manager.PatchConnection(mutationCtx, id, expectedRevision, patch)
+	}
+	if persistence := server.configurationPersistence(); persistence != nil && persistence.UpdateConnection != nil {
+		return persistence.UpdateConnection(ctx, id, expectedRevision, mutate)
+	}
+	return mutate(ctx)
+}
+
+func (server *Server) retireConnection(ctx context.Context, manager *configuration.Manager, id domain.ConfigID, expectedRevision string) error {
+	mutate := func(mutationCtx context.Context) error {
+		return manager.RetireConnection(mutationCtx, id, expectedRevision)
+	}
+	if persistence := server.configurationPersistence(); persistence != nil && persistence.RetireConnection != nil {
+		return persistence.RetireConnection(ctx, id, expectedRevision, mutate)
+	}
+	return mutate(ctx)
+}
+
+func (server *Server) createStorageRoot(ctx context.Context, manager *configuration.Manager, spec configuration.StorageRootSpec) (domain.StorageRoot, error) {
+	mutate := func(mutationCtx context.Context) (domain.StorageRoot, error) {
+		return manager.CreateStorageRoot(mutationCtx, spec)
+	}
+	if persistence := server.configurationPersistence(); persistence != nil && persistence.CreateStorageRoot != nil {
+		draft := domain.StorageRoot{ID: spec.ID, Label: spec.Label, Purpose: spec.Purpose, Path: spec.Path, Source: domain.SourceMetadata{Source: domain.SourceAPI, Editable: true, DocumentID: "api", Revision: "pending", StartupAt: server.now().UTC(), ReloadPolicy: domain.ReloadOnRestart}, ReadOnly: spec.ReadOnly, Capabilities: append([]domain.Capability(nil), spec.Capabilities...), Watch: spec.Watch}
+		return persistence.CreateStorageRoot(ctx, draft, mutate)
+	}
+	return mutate(ctx)
+}
+
+func (server *Server) updateStorageRoot(ctx context.Context, manager *configuration.Manager, id domain.ConfigID, expectedRevision string, patch configuration.StorageRootPatch) (domain.StorageRoot, error) {
+	mutate := func(mutationCtx context.Context) (domain.StorageRoot, error) {
+		return manager.PatchStorageRoot(mutationCtx, id, expectedRevision, patch)
+	}
+	if persistence := server.configurationPersistence(); persistence != nil && persistence.UpdateStorageRoot != nil {
+		return persistence.UpdateStorageRoot(ctx, id, expectedRevision, mutate)
+	}
+	return mutate(ctx)
+}
+
+func (server *Server) retireStorageRoot(ctx context.Context, manager *configuration.Manager, id domain.ConfigID, expectedRevision string) error {
+	mutate := func(mutationCtx context.Context) error {
+		return manager.RetireStorageRoot(mutationCtx, id, expectedRevision)
+	}
+	if persistence := server.configurationPersistence(); persistence != nil && persistence.RetireStorageRoot != nil {
+		return persistence.RetireStorageRoot(ctx, id, expectedRevision, mutate)
+	}
+	return mutate(ctx)
+}
+
+func (server *Server) createPathMapping(ctx context.Context, manager *configuration.Manager, spec configuration.PathMappingSpec) (domain.PathMapping, error) {
+	mutate := func(mutationCtx context.Context) (domain.PathMapping, error) {
+		return manager.CreatePathMapping(mutationCtx, spec)
+	}
+	if persistence := server.configurationPersistence(); persistence != nil && persistence.CreatePathMapping != nil {
+		draft := domain.PathMapping{ID: spec.ID, ConnectionID: spec.ConnectionID, SourcePrefix: spec.SourcePrefix, RootID: spec.RootID, DestinationPrefix: spec.DestinationPrefix, Source: domain.SourceMetadata{Source: domain.SourceAPI, Editable: true, DocumentID: "api", Revision: "pending", StartupAt: server.now().UTC(), ReloadPolicy: domain.ReloadOnRestart}}
+		return persistence.CreatePathMapping(ctx, draft, mutate)
+	}
+	return mutate(ctx)
+}
+
+func (server *Server) updatePathMapping(ctx context.Context, manager *configuration.Manager, id domain.ConfigID, expectedRevision string, patch configuration.PathMappingPatch) (domain.PathMapping, error) {
+	mutate := func(mutationCtx context.Context) (domain.PathMapping, error) {
+		return manager.PatchPathMapping(mutationCtx, id, expectedRevision, patch)
+	}
+	if persistence := server.configurationPersistence(); persistence != nil && persistence.UpdatePathMapping != nil {
+		return persistence.UpdatePathMapping(ctx, id, expectedRevision, mutate)
+	}
+	return mutate(ctx)
+}
+
+func (server *Server) retirePathMapping(ctx context.Context, manager *configuration.Manager, id domain.ConfigID, expectedRevision string) error {
+	mutate := func(mutationCtx context.Context) error {
+		return manager.RetirePathMapping(mutationCtx, id, expectedRevision)
+	}
+	if persistence := server.configurationPersistence(); persistence != nil && persistence.RetirePathMapping != nil {
+		return persistence.RetirePathMapping(ctx, id, expectedRevision, mutate)
+	}
+	return mutate(ctx)
 }
 
 func (server *Server) snapshot(ctx context.Context) (domain.ConfigurationSnapshot, error) {
@@ -538,7 +851,7 @@ func boundedLimit(value *api.Limit) (int, error) {
 		return 100, nil
 	}
 	if *value < 1 || *value > 1000 {
-		return 0, errors.New("snapshot limit is outside the supported bound")
+		return 0, ErrInvalidParameter
 	}
 	return int(*value), nil
 }
@@ -547,12 +860,22 @@ func stringPtr(value string) *string { return &value }
 
 func quoteETag(value string) string { return `"` + strings.ReplaceAll(value, `"`, "") + `"` }
 
-func normalizeETag(value string) string {
+func strongETag(value string) (string, error) {
 	value = strings.TrimSpace(value)
-	if strings.HasPrefix(value, "W/") {
-		value = strings.TrimSpace(strings.TrimPrefix(value, "W/"))
+	if value == "" {
+		return "", ErrIfMatchRequired
 	}
-	return strings.Trim(value, `"`)
+	if strings.HasPrefix(strings.ToLower(value), "w/") {
+		return "", ErrIfMatchMismatch
+	}
+	if value == "*" || len(value) < 2 || value[0] != '"' || value[len(value)-1] != '"' || strings.Contains(value[1:len(value)-1], `"`) {
+		return "", ErrIfMatchMismatch
+	}
+	return value[1 : len(value)-1], nil
+}
+
+func normalizeETag(value string) string {
+	return strings.TrimSpace(value)
 }
 
 func canonicalOrigin(value string) (string, error) {
@@ -571,9 +894,25 @@ func apiSource(metadata domain.SourceMetadata) api.SourceMetadata {
 	return api.SourceMetadata{DocumentId: metadata.DocumentID, Editable: metadata.Editable, ReloadPolicy: api.RestartRequired, Revision: metadata.Revision, Source: source, StartupAt: metadata.StartupAt.UTC()}
 }
 
-func apiConfiguration(snapshot domain.ConfigurationSnapshot) api.Configuration {
+func (server *Server) apiConfiguration(snapshot domain.ConfigurationSnapshot) api.Configuration {
 	keySource := api.ConfigurationKeySource(snapshot.KeySource)
-	return api.Configuration{Connections: mapConnections(snapshot.Connections), StorageRoots: mapStorageRoots(snapshot.StorageRoots), PathMappings: mapPathMappings(snapshot.PathMappings), KeyPath: optionalString(snapshot.KeyPath), KeySource: keySource, RestartRequired: boolPtr(snapshot.RestartRequired), Source: apiSource(snapshot.Source)}
+	return api.Configuration{Connections: server.mapConnections(snapshot.Connections), StorageRoots: mapStorageRoots(snapshot.StorageRoots), PathMappings: mapPathMappings(snapshot.PathMappings), KeyPath: optionalString(snapshot.KeyPath), KeySource: keySource, RestartRequired: boolPtr(snapshot.RestartRequired), Source: apiSource(snapshot.Source)}
+}
+
+func (server *Server) mapConnections(items []domain.Connection) []api.Connection {
+	result := make([]api.Connection, 0, len(items))
+	for _, item := range items {
+		result = append(result, server.mapConnection(item))
+	}
+	return result
+}
+
+func (server *Server) mapConnection(item domain.Connection) api.Connection {
+	result := mapConnection(item)
+	if server.hasManagedCredentials(item.ID) {
+		result.CredentialState = api.ConnectionCredentialStateManaged
+	}
+	return result
 }
 
 func mapConnections(items []domain.Connection) []api.Connection {
@@ -735,7 +1074,7 @@ func problemFor(ctx context.Context, err error, status int) api.Problem {
 	switch {
 	case errors.Is(err, ErrNotReady):
 		code, title, retryable = "not_ready", "Service is not ready", true
-	case errors.Is(err, errRouteUnavailable):
+	case errors.Is(err, ErrRouteUnavailable):
 		code, title, retryable = "service_unavailable", "Service is unavailable", true
 	case errors.Is(err, ErrRequestTooLarge):
 		code, title = "request_too_large", "Request is too large"
@@ -804,7 +1143,7 @@ func statusFor(err error) int {
 		return http.StatusUnprocessableEntity
 	case errors.Is(err, configuration.ErrResourceNotFound):
 		return http.StatusNotFound
-	case errors.Is(err, ErrNotReady), errors.Is(err, errRouteUnavailable):
+	case errors.Is(err, ErrNotReady), errors.Is(err, ErrRouteUnavailable):
 		return http.StatusServiceUnavailable
 	case errors.Is(err, context.Canceled):
 		return http.StatusRequestTimeout
@@ -1028,13 +1367,8 @@ func (server *Server) prepareBody(r *http.Request) error {
 			return ErrInvalidJSON
 		}
 	}
-	if err := validateArrayBounds(data, server.maxManifestEntries); err != nil {
+	if err := validateArrayBoundsWithBytes(data, server.maxManifestEntries, server.maxManifestBytes); err != nil {
 		return err
-	}
-	if strings.Contains(r.URL.Path, "action-plans") || strings.Contains(r.URL.Path, "review-decisions") || strings.Contains(r.URL.Path, "workflow-runs") {
-		if int64(len(data)) > server.maxManifestBytes {
-			return ErrRequestTooLarge
-		}
 	}
 	return nil
 }
@@ -1230,27 +1564,78 @@ func validateTopLevelObject(data []byte, allowed map[string]struct{}) error {
 }
 
 func validateArrayBounds(data []byte, maximum int) error {
+	return validateArrayBoundsWithBytes(data, maximum, 0)
+}
+
+func validateArrayBoundsWithBytes(data []byte, maximum int, maximumBytes int64) error {
 	if maximum <= 0 {
 		return ErrRequestTooLarge
 	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
+	if maximumBytes < 0 {
+		return ErrRequestTooLarge
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	var value any
+	if err := decoder.Decode(&value); err != nil {
 		return ErrInvalidJSON
 	}
-	for _, name := range []string{"manifest", "files", "steps", "connectionIds", "rootIds", "descriptorIds", "clientItemIds"} {
-		raw, ok := fields[name]
-		if !ok || len(raw) == 0 || raw[0] != '[' {
-			continue
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return ErrInvalidJSON
+	}
+	limits := arrayBounds{maximumEntries: maximum, maximumBytes: maximumBytes}
+	if err := limits.walk(value, ""); err != nil {
+		return err
+	}
+	return nil
+}
+
+type arrayBounds struct {
+	maximumEntries int
+	maximumBytes   int64
+	entries        int
+	bytes          int64
+}
+
+func (limits *arrayBounds) walk(value any, field string) error {
+	switch typed := value.(type) {
+	case map[string]any:
+		for name, child := range typed {
+			if err := limits.walk(child, name); err != nil {
+				return err
+			}
 		}
-		var items []json.RawMessage
-		if err := json.Unmarshal(raw, &items); err != nil {
-			return ErrInvalidJSON
+	case []any:
+		if boundedCollectionField(field) {
+			limits.entries += len(typed)
+			if limits.entries > limits.maximumEntries {
+				return ErrRequestTooLarge
+			}
+			encoded, err := json.Marshal(typed)
+			if err != nil {
+				return ErrInvalidJSON
+			}
+			limits.bytes += int64(len(encoded))
+			if limits.maximumBytes > 0 && limits.bytes > limits.maximumBytes {
+				return ErrRequestTooLarge
+			}
 		}
-		if len(items) > maximum {
-			return ErrRequestTooLarge
+		for _, child := range typed {
+			if err := limits.walk(child, ""); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
+}
+
+func boundedCollectionField(field string) bool {
+	switch field {
+	case "manifest", "files", "steps", "connectionIds", "rootIds", "descriptorIds", "clientItemIds":
+		return true
+	default:
+		return false
+	}
 }
 
 func validateIdempotencyHeader(value string) error {
