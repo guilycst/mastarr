@@ -3579,7 +3579,8 @@
         "Independent W-05 correction round-five receipt 63af1bf9d15068ab1b2c3f9bb2c89077432e404e integrated as 30a42ce: R3c mapping closed, R3d/R3e remain blocking; stale-terminal and evidence-overwrite probes reproduced both findings 20/20 ordinary and 10/10 race, and full offline CI guardrails passed.",
         "W-05 correction round five dispatched from state checkpoint 6c3428bd70e089db705ae8d393f5a8aeb6de5743 to /root/x05_implementer. Scope is R3d/R3e only: stale terminal item hold and durable action/reconciliation evidence merge; no schema/API/adapter/client/worker changes.",
         "W-05 correction round five product 73c55183faef67d20286b7656886b3e672cf8ef9 and handoff e65b3603821154df77790845e7d6b4bd14cce58c complete from dispatch checkpoint 6c3428bd70e089db705ae8d393f5a8aeb6de5743; R3d stale-terminal hold and R3e lossless evidence regressions, focused/race/root/vet/mod checks and full offline CI guardrails passed.",
-        "Independent W-05 correction round-six receipt 5a1240f66c7c5f7614b34750f90c60f5d3bd4397 integrated as e574abf: R3d/R3e closed, R3f remains blocking; recursive-history probe reproduced depth 127 and 967-to-125808-byte growth after 128 unchanged observations, while full offline CI guardrails passed."
+        "Independent W-05 correction round-six receipt 5a1240f66c7c5f7614b34750f90c60f5d3bd4397 integrated as e574abf: R3d/R3e closed, R3f remains blocking; recursive-history probe reproduced depth 127 and 967-to-125808-byte growth after 128 unchanged observations, while full offline CI guardrails passed.",
+        "W-05 correction round six dispatched from state checkpoint 40a8955f4f721fa5ad37efa5a34bb860f487c15b to /root/x05_implementer. Scope is R3f only: bound reconciliation history while retaining immutable action result, item outcomes and exact unresolved scope evidence; no schema/API/adapter/client/worker changes."
       ],
       "review": {
         "status": "changes_requested",
@@ -3617,10 +3618,10 @@
           "GOWORK=off focused tests/race/vet/module verification and full offline guardrails",
           "generation/API/Vacuum/lint/architecture checks and Linux amd64/arm64 CGO-free builds"
         ],
-        "reviewPath": "docs/execution/handoffs/W-05-review-round6.md",
-        "handoffPath": "docs/execution/handoffs/W-05-correction-round5.md",
+        "reviewPath": "docs/execution/handoffs/W-05-review-round7.md",
+        "handoffPath": "docs/execution/handoffs/W-05-correction-round6.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "changes_requested",
+        "status": "in_progress",
         "dependencyCommits": {
           "W-04-product": "780c00e92498660c08b6ac67259bbb4147c58531",
           "W-04-review": "2aef896fd5d3e10dcefc80f8f5a094852d73fd27",
@@ -3632,29 +3633,29 @@
           "X-14": "qBittorrent removal remains metadata-only with deleteFiles=false; stop and read-back are required before payload mutation."
         },
         "waitingOn": "/root/x05_implementer",
-        "waitingReason": "correction round six for R3f bounded reconciliation history",
+        "waitingReason": "W-05 correction round six implementation for R3f bounded reconciliation history",
         "implementationCommit": "37ecdde36b56a6cd3d7d147cd8af1b49eba3f45a",
         "handoffCommit": "91038f799d894b58d1c7f149606ac2c686515beb",
         "reviewSourceCommit": "73c55183faef67d20286b7656886b3e672cf8ef9",
         "reviewRound": 6,
-        "reviewCommit": "5a1240f66c7c5f7614b34750f90c60f5d3bd4397",
-        "reviewIntegrationCommit": "e574abf",
-        "correctionStatus": "changes_requested",
-        "correctionRound": 5,
+        "reviewCommit": null,
+        "reviewIntegrationCommit": null,
+        "correctionStatus": "in_progress",
+        "correctionRound": 6,
         "correctionOwner": "/root/x05_implementer",
-        "correctionBaseSha": "6c3428bd70e089db705ae8d393f5a8aeb6de5743",
-        "correctionDispatchCheckpoint": "6c3428bd70e089db705ae8d393f5a8aeb6de5743",
-        "correctionReviewPath": "docs/execution/handoffs/W-05-review-round6.md",
-        "correctionHandoffPath": "docs/execution/handoffs/W-05-correction-round5.md",
+        "correctionBaseSha": "40a8955f4f721fa5ad37efa5a34bb860f487c15b",
+        "correctionDispatchCheckpoint": "40a8955f4f721fa5ad37efa5a34bb860f487c15b",
+        "correctionReviewPath": "docs/execution/handoffs/W-05-review-round7.md",
+        "correctionHandoffPath": "docs/execution/handoffs/W-05-correction-round6.md",
         "correctionReviewer": "/root/x05_reviewer",
         "priorReviewCommit": "5a1240f66c7c5f7614b34750f90c60f5d3bd4397",
         "priorReviewIntegrationCommit": "e574abf",
-        "correctionImplementationCommit": "73c55183faef67d20286b7656886b3e672cf8ef9",
-        "correctionHandoffCommit": "e65b3603821154df77790845e7d6b4bd14cce58c",
-        "correctionReviewSourceCommit": "73c55183faef67d20286b7656886b3e672cf8ef9",
-        "priorCorrectionRound": 4,
-        "priorCorrectionImplementationCommit": "2ba78ca03c1b3f2afa31949782f75af012d8aab6",
-        "priorCorrectionHandoffCommit": "36ad4e0e6f2525994bfa863afe4e8393c7d45b05"
+        "correctionImplementationCommit": null,
+        "correctionHandoffCommit": null,
+        "correctionReviewSourceCommit": null,
+        "priorCorrectionRound": 5,
+        "priorCorrectionImplementationCommit": "73c55183faef67d20286b7656886b3e672cf8ef9",
+        "priorCorrectionHandoffCommit": "e65b3603821154df77790845e7d6b4bd14cce58c"
       },
       "reviewHistory": [
         {
@@ -5670,7 +5671,7 @@
       ]
     }
   },
-  "nextAction": "Record and dispatch W-05 correction round six for R3f: bound reconciliation history while retaining immutable action and exact scope evidence.",
+  "nextAction": "W-05 correction round six is dispatched from 40a8955f4f721fa5ad37efa5a34bb860f487c15b; await product and handoff commits for R3f, then queue independent review round seven.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
