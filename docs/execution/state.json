@@ -3773,20 +3773,18 @@
         "Full offline aggregate was started with GOWORK=off GOPROXY=off GOSUMDB=off and interrupted after successful generation, API/Vacuum, architecture, lint, root ordinary, and nested ordinary/race phases; final marker not claimed.",
         "461b0c06b0a3094f5da28ca2920400b639e22a61 independent C-04 correction review round two receipt; integrated as d593fd4",
         "Review round two closed R1, R4, R5 and R6; R2a manager publication rollback and R3a durable idempotency completion remain P1, R3b exact JSON number digest remains P2.",
-        "Reviewer full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed in 312.43s; focused/race/vet/mod/lint/architecture/planning/Linux checks passed; functional corrections remain."
+        "Reviewer full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed in 312.43s; focused/race/vet/mod/lint/architecture/planning/Linux checks passed; functional corrections remain.",
+        "9337475cceaee1c2401b8baaa05f45f40e0789ed C-04 correction round two product: durable configuration reload gate, append-only idempotency reservation/completion, restart/concurrency fencing, and exact JSON-number digests.",
+        "a08180a50df979c1f4ae6425ff4a02b42a4dd021 C-04 correction round two handoff records owned paths, regressions, checks and no migration/bootstrap blocker.",
+        "Correction round two checks passed: focused/race transport and startup tests, root tests/vet/module verification, architecture, planning, pre-commit fast guardrail, full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci in 103.68s, and Linux amd64/arm64 CGO-free builds."
       ],
       "review": {
-        "status": "changes_requested",
-        "decision": "changes_requested",
+        "status": "pending",
+        "decision": "pending",
         "reviewer": "/root/x05_reviewer",
-        "commit": "461b0c06b0a3094f5da28ca2920400b639e22a61",
-        "findings": [
-          "R2a P1 failed SQLite publication leaves rolled-back configuration visible and blocks retry",
-          "R3a P1 failed idempotency completion permits same-process replay and fresh-process redispatch",
-          "R3b P2 lossy float64 JSON canonicalization collides on large integers"
-        ],
-        "round": 2,
-        "integratedCommit": "d593fd4"
+        "commit": null,
+        "findings": [],
+        "round": 3
       },
       "dispatch": {
         "assignedAt": "2026-09-16",
@@ -3816,22 +3814,22 @@
         "reviewPath": "docs/execution/handoffs/C-04-review-round3.md",
         "handoffPath": "docs/execution/handoffs/C-04-correction-round2.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "in_progress",
+        "status": "review_pending",
         "dependencyCommits": {
           "D-04": "036288114bcf303f98e0ee02e54ddce18384e504",
           "F-03": "b65f5d65d67e6fc823fbf54fa8ab4f2a4d17d191",
           "X-08": "8c770f779204a00c2d8cc6312a2c0fc04262ea35",
           "W-05": "ea3958b15508d13893b55674b59cfb0bf50d1ffe"
         },
-        "waitingOn": "/root/x05_implementer",
-        "waitingReason": "C-04 correction round 2 for R2a/R3a/R3b",
+        "waitingOn": "/root/x05_reviewer",
+        "waitingReason": "Independent C-04 correction round three review of R2a/R3a/R3b and regression of closed findings.",
         "implementationCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
         "handoffCommit": "c46b84183f0723d0cbb439eb539cd600c235acf0",
         "reviewSourceCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
-        "reviewRound": 2,
+        "reviewRound": 3,
         "reviewCommit": "461b0c06b0a3094f5da28ca2920400b639e22a61",
         "reviewIntegrationCommit": "d593fd4",
-        "correctionStatus": "in_progress",
+        "correctionStatus": "review_pending",
         "correctionRound": 2,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "d593fd4",
@@ -3841,16 +3839,18 @@
         "correctionReviewer": "/root/x05_reviewer",
         "priorReviewCommit": "461b0c06b0a3094f5da28ca2920400b639e22a61",
         "priorReviewIntegrationCommit": "d593fd4",
-        "correctionImplementationCommit": null,
-        "correctionHandoffCommit": null,
-        "correctionReviewSourceCommit": null,
+        "correctionImplementationCommit": "9337475cceaee1c2401b8baaa05f45f40e0789ed",
+        "correctionHandoffCommit": "a08180a50df979c1f4ae6425ff4a02b42a4dd021",
+        "correctionReviewSourceCommit": "9337475cceaee1c2401b8baaa05f45f40e0789ed",
         "correctionReviewCommit": null,
         "correctionReviewIntegrationCommit": null,
-        "correctionProductCommits": []
+        "correctionProductCommits": [
+          "9337475cceaee1c2401b8baaa05f45f40e0789ed"
+        ]
       },
       "implementationCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
       "handoffCommit": "c46b84183f0723d0cbb439eb539cd600c235acf0",
-      "reviewSourceCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
+      "reviewSourceCommit": "9337475cceaee1c2401b8baaa05f45f40e0789ed",
       "reviewHistory": [
         {
           "round": 1,
@@ -3877,6 +3877,14 @@
           "sourceCommit": "b5b3e521618405d8b51deb10ff40de4d2d0de37a",
           "receipt": "docs/execution/handoffs/C-04-review-round2.md",
           "integratedCommit": "d593fd4"
+        },
+        {
+          "round": 3,
+          "reviewer": "/root/x05_reviewer",
+          "commit": null,
+          "status": "pending",
+          "sourceCommit": "9337475cceaee1c2401b8baaa05f45f40e0789ed",
+          "receipt": "docs/execution/handoffs/C-04-review-round3.md"
         }
       ]
     },
@@ -5807,7 +5815,7 @@
       ]
     }
   },
-  "nextAction": "C-04 review 461b0c06b0a3094f5da28ca2920400b639e22a61 integrated as d593fd4; R2a/R3a/R3b remain. Dispatch correction round 2 from d593fd4 to /root/x05_implementer, requiring rollback-safe configuration publication, durable idempotency reservation/completion or an explicit schema seam, and exact JSON-number digesting.",
+  "nextAction": "C-04 correction round two product 9337475cceaee1c2401b8baaa05f45f40e0789ed and handoff a08180a50df979c1f4ae6425ff4a02b42a4dd021 are pushed; independent round-three review is queued for R2a/R3a/R3b.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
