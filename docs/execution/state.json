@@ -15,7 +15,9 @@
   "resumeDocument": "docs/execution/RESUME.md",
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
-  "activeImplementationTasks": [],
+  "activeImplementationTasks": [
+    "U-01"
+  ],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
   "guardrailBaseline": {
@@ -3807,7 +3809,8 @@
         "87d49e7cfee20fab62128b4f19e2d5a4fde76102 C-04 correction round eight handoff records R3g-c, exact owner/readiness behavior, checks and boundaries.",
         "Correction round eight focused ordinary/race tests, full owned ordinary/race tests, vet, module verification, architecture, planning, product pre-commit and full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed.",
         "4b55e48a463d3de74f8c936ed1312cc5ab43673d independent C-04 correction round eight review approved product b031416f27e6819d454d8ec419e7a4ffa4e8eb12; no P1/P2 findings and R3g-c plus all prior invariants pass.",
-        "Review receipt integrated as 37326ef211c2f2141f412c1f3bbcada208ec6f46; full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci, focused/race probes, vet, module verification, architecture, planning and Linux builds passed."
+        "Review receipt integrated as 37326ef211c2f2141f412c1f3bbcada208ec6f46; full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci, focused/race probes, vet, module verification, architecture, planning and Linux builds passed.",
+        "Coordinator clean checkout gate at 4aecc47ddfba0eb21a36a8ffcb423df711191a1d: GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed with final marker guardrail checks passed (ci)."
       ],
       "review": {
         "status": "approved",
@@ -4044,12 +4047,88 @@
       ]
     },
     "U-01": {
-      "status": "planned",
-      "owner": null,
-      "baseSha": null,
+      "status": "in_progress",
+      "owner": "/root/x05_implementer",
+      "baseSha": "4aecc47ddfba0eb21a36a8ffcb423df711191a1d",
       "integratedSha": null,
-      "evidence": [],
-      "review": null
+      "evidence": [
+        "Dispatched from clean coordinator checkpoint 4aecc47ddfba0eb21a36a8ffcb423df711191a1d after U-00, C-03 and C-04 approvals.",
+        "Own only ui/internal/client/, ui/internal/shell/, ui/internal/config/, ui/cmd/, ui/internal/assets/ and docs/execution/handoffs/U-01.md.",
+        "Nested UI remains HTTP-only: no root internals, DB, storage, upstream clients, media mounts or safety decisions.",
+        "Use frozen api/openapi.yaml and the generated HTTP client; do not add go.work or local replace directives.",
+        "No credentials, private service coordinates, real inventory, media data or live deployment."
+      ],
+      "review": {
+        "status": "pending",
+        "decision": "pending",
+        "reviewer": "/root/x05_reviewer",
+        "commit": null,
+        "findings": [],
+        "round": 1
+      },
+      "implementationCommit": null,
+      "handoffCommit": null,
+      "reviewSourceCommit": null,
+      "reviewIntegrationCommit": null,
+      "dispatch": {
+        "assignedAt": "2026-09-17",
+        "model": "gpt-5.6-luna",
+        "reasoning": "max",
+        "role": "implementer",
+        "baseSha": "4aecc47ddfba0eb21a36a8ffcb423df711191a1d",
+        "ownedPaths": [
+          "ui/internal/client/",
+          "ui/internal/shell/",
+          "ui/internal/config/",
+          "ui/cmd/",
+          "ui/internal/assets/",
+          "docs/execution/handoffs/U-01.md"
+        ],
+        "checkout": "shared main",
+        "expectedChecks": [
+          "A-45",
+          "A-46",
+          "A-47",
+          "A-51",
+          "GOWORK=off UI tests/vet/lint/module verification",
+          "generated-client reproducibility from frozen OpenAPI",
+          "templ generation and static asset checks",
+          "HTTP-only import architecture check",
+          "Linux amd64/arm64 CGO-free UI build"
+        ],
+        "reviewPath": "docs/execution/handoffs/U-01-review-round1.md",
+        "handoffPath": "docs/execution/handoffs/U-01.md",
+        "nextReviewer": "/root/x05_reviewer",
+        "status": "in_progress",
+        "waitingOn": "/root/x05_implementer",
+        "waitingReason": "Implement BFF shell and generated-client boundary, then provide product and handoff commits for independent review.",
+        "dependencyCommits": {
+          "U-00": "508d88ef7e11d115d004cd48dae8bb9b2bb7608c",
+          "C-03": "8c9bf9a6277e068f9ae6b859fab2c5f7aa4890a1",
+          "C-04": "37326ef211c2f2141f412c1f3bbcada208ec6f46"
+        },
+        "implementationCommit": null,
+        "handoffCommit": null,
+        "reviewSourceCommit": null,
+        "reviewRound": 0,
+        "reviewCommit": null,
+        "reviewIntegrationCommit": null,
+        "correctionStatus": null,
+        "correctionRound": 0,
+        "correctionOwner": null,
+        "correctionBaseSha": null,
+        "correctionDispatchCheckpoint": null,
+        "correctionReviewPath": null,
+        "correctionHandoffPath": null,
+        "correctionReviewer": null,
+        "correctionImplementationCommit": null,
+        "correctionHandoffCommit": null,
+        "correctionReviewSourceCommit": null,
+        "correctionReviewCommit": null,
+        "correctionReviewIntegrationCommit": null,
+        "correctionProductCommits": []
+      },
+      "reviewHistory": []
     },
     "U-02": {
       "status": "planned",
@@ -5903,7 +5982,7 @@
       ]
     }
   },
-  "nextAction": "C-04 is closed and approved; run the clean coordinator guardrail, then dispatch U-01 BFF shell and generated-client boundary.",
+  "nextAction": "U-01 BFF shell and generated-client boundary is dispatched from clean checkpoint 4aecc47ddfba0eb21a36a8ffcb423df711191a1d; implementer owns the nested UI paths and independent review follows.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
