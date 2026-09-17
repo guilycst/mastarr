@@ -3577,19 +3577,17 @@
         "W-05 correction round four dispatched from state checkpoint 03d06218a36d19b2f504731664c35b8d9fd5b06f to /root/x05_implementer. Scope is R3c only: preserve exact per-item effects and remaining retry scope after partial explicit trash retry, with held-state read-only recovery; no schema/API/adapter/client/worker changes.",
         "W-05 correction round four product 2ba78ca03c1b3f2afa31949782f75af012d8aab6 and handoff 36ad4e0e6f2525994bfa863afe4e8393c7d45b05 complete from dispatch checkpoint 03d06218a36d19b2f504731664c35b8d9fd5b06f; R3c partial per-item outcome and remaining-scope regressions, focused/race/root/vet/mod checks and full offline CI guardrails passed.",
         "Independent W-05 correction round-five receipt 63af1bf9d15068ab1b2c3f9bb2c89077432e404e integrated as 30a42ce: R3c mapping closed, R3d/R3e remain blocking; stale-terminal and evidence-overwrite probes reproduced both findings 20/20 ordinary and 10/10 race, and full offline CI guardrails passed.",
-        "W-05 correction round five dispatched from state checkpoint 6c3428bd70e089db705ae8d393f5a8aeb6de5743 to /root/x05_implementer. Scope is R3d/R3e only: stale terminal item hold and durable action/reconciliation evidence merge; no schema/API/adapter/client/worker changes."
+        "W-05 correction round five dispatched from state checkpoint 6c3428bd70e089db705ae8d393f5a8aeb6de5743 to /root/x05_implementer. Scope is R3d/R3e only: stale terminal item hold and durable action/reconciliation evidence merge; no schema/API/adapter/client/worker changes.",
+        "W-05 correction round five product 73c55183faef67d20286b7656886b3e672cf8ef9 and handoff e65b3603821154df77790845e7d6b4bd14cce58c complete from dispatch checkpoint 6c3428bd70e089db705ae8d393f5a8aeb6de5743; R3d stale-terminal hold and R3e lossless evidence regressions, focused/race/root/vet/mod checks and full offline CI guardrails passed."
       ],
       "review": {
-        "status": "changes_requested",
-        "decision": "changes_requested",
+        "status": "pending",
+        "decision": "pending",
         "reviewer": "/root/x05_reviewer",
-        "commit": "63af1bf9d15068ab1b2c3f9bb2c89077432e404e",
-        "findings": [
-          "R3d P1: after a partial retry marks one item trashed, read-back can observe that terminal item source-only; the fresh retry sends only the pending item and then falsely terminalizes the whole entry while the first source remains unmoved.",
-          "R3e P2: persistTrashReconciliation overwrites item-bound action outcome, action error, and exact foreign/duplicate scope evidence instead of appending/merging it."
-        ],
-        "round": 5,
-        "integratedCommit": "30a42ce"
+        "commit": null,
+        "findings": [],
+        "round": 6,
+        "integratedCommit": null
       },
       "dispatch": {
         "assignedAt": "2026-09-16",
@@ -3619,7 +3617,7 @@
         "reviewPath": "docs/execution/handoffs/W-05-review-round6.md",
         "handoffPath": "docs/execution/handoffs/W-05-correction-round5.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "in_progress",
+        "status": "review_pending",
         "dependencyCommits": {
           "W-04-product": "780c00e92498660c08b6ac67259bbb4147c58531",
           "W-04-review": "2aef896fd5d3e10dcefc80f8f5a094852d73fd27",
@@ -3630,15 +3628,15 @@
           "G-01": "Arr native registration/import writes remain blocked; this lane must not bypass that gate.",
           "X-14": "qBittorrent removal remains metadata-only with deleteFiles=false; stop and read-back are required before payload mutation."
         },
-        "waitingOn": "/root/x05_implementer",
-        "waitingReason": "W-05 correction round five implementation for R3d stale terminal and R3e evidence retention",
+        "waitingOn": "/root/x05_reviewer",
+        "waitingReason": "independent review of W-05 correction round five",
         "implementationCommit": "37ecdde36b56a6cd3d7d147cd8af1b49eba3f45a",
         "handoffCommit": "91038f799d894b58d1c7f149606ac2c686515beb",
-        "reviewSourceCommit": "2ba78ca03c1b3f2afa31949782f75af012d8aab6",
-        "reviewRound": 5,
+        "reviewSourceCommit": "73c55183faef67d20286b7656886b3e672cf8ef9",
+        "reviewRound": 6,
         "reviewCommit": null,
         "reviewIntegrationCommit": null,
-        "correctionStatus": "in_progress",
+        "correctionStatus": "review_pending",
         "correctionRound": 5,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "6c3428bd70e089db705ae8d393f5a8aeb6de5743",
@@ -3648,9 +3646,9 @@
         "correctionReviewer": "/root/x05_reviewer",
         "priorReviewCommit": "63af1bf9d15068ab1b2c3f9bb2c89077432e404e",
         "priorReviewIntegrationCommit": "30a42ce",
-        "correctionImplementationCommit": null,
-        "correctionHandoffCommit": null,
-        "correctionReviewSourceCommit": null,
+        "correctionImplementationCommit": "73c55183faef67d20286b7656886b3e672cf8ef9",
+        "correctionHandoffCommit": "e65b3603821154df77790845e7d6b4bd14cce58c",
+        "correctionReviewSourceCommit": "73c55183faef67d20286b7656886b3e672cf8ef9",
         "priorCorrectionRound": 4,
         "priorCorrectionImplementationCommit": "2ba78ca03c1b3f2afa31949782f75af012d8aab6",
         "priorCorrectionHandoffCommit": "36ad4e0e6f2525994bfa863afe4e8393c7d45b05"
@@ -3716,6 +3714,14 @@
             "R3d P1: after a partial retry marks one item trashed, read-back can observe that terminal item source-only; the fresh retry sends only the pending item and then falsely terminalizes the whole entry while the first source remains unmoved.",
             "R3e P2: persistTrashReconciliation overwrites item-bound action outcome, action error, and exact foreign/duplicate scope evidence instead of appending/merging it."
           ]
+        },
+        {
+          "round": 6,
+          "reviewer": "/root/x05_reviewer",
+          "commit": null,
+          "status": "review_pending",
+          "sourceCommit": "73c55183faef67d20286b7656886b3e672cf8ef9",
+          "receipt": "docs/execution/handoffs/W-05-review-round6.md"
         }
       ],
       "implementationCommit": "37ecdde36b56a6cd3d7d147cd8af1b49eba3f45a",
@@ -5657,7 +5663,7 @@
       ]
     }
   },
-  "nextAction": "W-05 correction round five is dispatched from 6c3428bd70e089db705ae8d393f5a8aeb6de5743; await product and handoff commits for R3d/R3e, then queue independent review round six.",
+  "nextAction": "W-05 correction round five product 73c55183faef67d20286b7656886b3e672cf8ef9 and handoff e65b3603821154df77790845e7d6b4bd14cce58c are ready for independent review. Await the exact round-six receipt, then integrate it before any next feature dispatch.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
