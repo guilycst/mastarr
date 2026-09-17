@@ -3802,7 +3802,7 @@
         "23462380b004586c1e09794c937ae396ee18b394 C-04 correction round seven product: attempt-bound SQLite effect markers block markerless false recovery and atomic recovery-owner setter assembly.",
         "911e67ac291f7e096eea46f9210a40232eb3fd21 C-04 correction round seven handoff records exact regressions, checks, owned paths and product boundary.",
         "Correction round seven focused/repeated race tests, vet, module verification, product pre-commit and full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed.",
-        "0770b38dc318c776ffb33ad4063c51c5b5416a58 independent C-04 correction round seven review receipt, integrated as 03cd48e; R3f-d/R3g-b closed and R3g-c remains P1.",
+        "0770b38dc318c776ffb33ad4063c51c5b5416a58 independent C-04 correction round seven review receipt, integrated as 03cd48e81aabd5279bb9ea701e6cd6d027856624; R3f-d/R3g-b closed and R3g-c remains P1.",
         "Reviewer full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed; independent built-in owner-removal probe failed 20/20 ordinary and 10/10 race."
       ],
       "review": {
@@ -3858,7 +3858,7 @@
         "reviewSourceCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
         "reviewRound": 7,
         "reviewCommit": "0770b38dc318c776ffb33ad4063c51c5b5416a58",
-        "reviewIntegrationCommit": "03cd48e",
+        "reviewIntegrationCommit": "03cd48e81aabd5279bb9ea701e6cd6d027856624",
         "correctionStatus": "awaiting_review",
         "correctionRound": 7,
         "correctionOwner": "/root/x05_implementer",
@@ -3954,7 +3954,7 @@
           "handoff": "docs/execution/handoffs/C-04-correction-round7.md",
           "productCommit": "23462380b004586c1e09794c937ae396ee18b394",
           "handoffCommit": "911e67ac291f7e096eea46f9210a40232eb3fd21",
-          "integratedCommit": "03cd48e"
+          "integratedCommit": "03cd48e81aabd5279bb9ea701e6cd6d027856624"
         }
       ]
     },
@@ -5885,7 +5885,7 @@
       ]
     }
   },
-  "nextAction": "C-04 round-seven review is recorded and integrated at 03cd48e with P1 R3g-c; dispatch correction round eight from the next clean state checkpoint.",
+  "nextAction": "C-04 round-seven review is recorded and integrated at 03cd48e81aabd5279bb9ea701e6cd6d027856624 with P1 R3g-c; dispatch correction round eight from the next clean state checkpoint.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
