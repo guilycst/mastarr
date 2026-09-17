@@ -15,7 +15,9 @@
   "resumeDocument": "docs/execution/RESUME.md",
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
-  "activeImplementationTasks": [],
+  "activeImplementationTasks": [
+    "U-03"
+  ],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
   "guardrailBaseline": {
@@ -4347,12 +4349,61 @@
       "verificationNote": "U-02 approved after independent round-five review. The default production http.Server maximum-form probe reached the reader with 2,066 fields and 671,459 escaped bytes; focused/full UI ordinary and race tests, vet, mod verify/tidy, generation/Vacuum, lint/architecture/planning, Linux amd64/arm64 builds and full offline guardrails passed."
     },
     "U-03": {
-      "status": "planned",
-      "owner": null,
-      "baseSha": null,
+      "status": "in_progress",
+      "owner": "/root/x05_implementer",
+      "baseSha": "ef215ce2eee56d82cfdeb72df26c61140547e9ff",
       "integratedSha": null,
-      "evidence": [],
-      "review": null
+      "evidence": [
+        "Dispatched from clean coordinator checkpoint ef215ce2eee56d82cfdeb72df26c61140547e9ff after U-02 and W-04 approvals.",
+        "Own only ui/internal/review/, ui/internal/workflows/ and docs/execution/handoffs/U-03.md; do not edit state.json, API contract, generated API code or other UI lanes.",
+        "UI remains an HTTP-only BFF: consume normalized client data, never import root internals, database, storage, upstream clients, media mounts or safety decisions.",
+        "Render both registration and exact-import approval phases, standalone/composed effects, monitoring opt-in, copy fallback review, retries, cancellation and late/partial effects honestly.",
+        "Preserve immutable plan/revision/digest and idempotency context in visible forms and links; all actions remain server/API-owned and no hidden blanket approval is added."
+      ],
+      "review": null,
+      "dispatch": {
+        "assignedAt": "2026-09-17",
+        "model": "gpt-5.6-luna",
+        "reasoning": "max",
+        "role": "implementer",
+        "baseSha": "ef215ce2eee56d82cfdeb72df26c61140547e9ff",
+        "ownedPaths": [
+          "ui/internal/review/",
+          "ui/internal/workflows/",
+          "docs/execution/handoffs/U-03.md"
+        ],
+        "checkout": "shared main",
+        "expectedChecks": [
+          "A-12",
+          "A-13",
+          "A-15",
+          "A-20",
+          "A-35",
+          "A-37",
+          "A-48",
+          "A-49",
+          "GOWORK=off UI tests/race/vet/module verification",
+          "generated-client reproducibility",
+          "HTTP-only import architecture check",
+          "Linux amd64/arm64 CGO-free UI build"
+        ],
+        "reviewPath": "docs/execution/handoffs/U-03-review-round1.md",
+        "handoffPath": "docs/execution/handoffs/U-03.md",
+        "nextReviewer": "/root/x05_reviewer",
+        "status": "assigned",
+        "waitingOn": "/root/x05_implementer",
+        "waitingReason": "U-03 implementation and handoff are required before independent review.",
+        "dependencyCommits": {
+          "U-02": "ef215ce2eee56d82cfdeb72df26c61140547e9ff",
+          "W-04": "780c00e92498660c08b6ac67259bbb4147c58531"
+        },
+        "implementationCommit": null,
+        "handoffCommit": null,
+        "reviewSourceCommit": null,
+        "reviewRound": 0,
+        "reviewCommit": null,
+        "reviewIntegrationCommit": null
+      }
     },
     "U-04": {
       "status": "planned",
@@ -6190,7 +6241,7 @@
       ]
     }
   },
-  "nextAction": "U-02 is approved and integrated at c214be4cfbc073fec62465c277b144101f7fdb33; dispatch U-03 exact review and workflow controls from this clean checkpoint.",
+  "nextAction": "U-03 is dispatched to /root/x05_implementer from clean checkpoint ef215ce2eee56d82cfdeb72df26c61140547e9ff; await the exact-review/workflow controls handoff before independent review.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
