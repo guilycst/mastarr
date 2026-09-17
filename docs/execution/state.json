@@ -16,7 +16,7 @@
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
   "activeImplementationTasks": [
-    "W-05"
+    "C-04"
   ],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
@@ -3746,12 +3746,74 @@
       "reviewSourceCommit": "37ecdde36b56a6cd3d7d147cd8af1b49eba3f45a"
     },
     "C-04": {
-      "status": "planned",
-      "owner": null,
-      "baseSha": null,
+      "status": "in_progress",
+      "owner": "/root/x05_implementer",
+      "baseSha": "887e9ea2fa791720f9743d8a0ba89e1e49cb814b",
       "integratedSha": null,
-      "evidence": [],
-      "review": null
+      "evidence": [
+        "Dispatched from clean coordinator checkpoint 887e9ea2fa791720f9743d8a0ba89e1e49cb814b; dependencies D-04=036288114bcf303f98e0ee02e54ddce18384e504, F-03=b65f5d65d67e6fc823fbf54fa8ab4f2a4d17d191, X-08=8c770f779204a00c2d8cc6312a2c0fc04262ea35, W-05=ea3958b15508d13893b55674b59cfb0bf50d1ffe are approved and closed.",
+        "Own only internal/transport/, cmd/mastarr/, and docs/execution/handoffs/C-04.md; generated API bindings, schemas, adapters, clients, UI, storage, and workflow packages remain outside this lane.",
+        "Synthetic fixtures and local temporary SQLite only. No credentials, private service coordinates, live services, inventories, or media.",
+        "F-05 remains fail-closed for unsupported move/rename/permanent filesystem deletion; G-01 Arr native writes remain disabled; Seerr remains read-only."
+      ],
+      "review": {
+        "status": "pending",
+        "decision": "pending",
+        "reviewer": "/root/x05_reviewer",
+        "commit": null,
+        "findings": [],
+        "round": 1,
+        "integratedCommit": null
+      },
+      "dispatch": {
+        "assignedAt": "2026-09-16",
+        "model": "gpt-5.6-luna",
+        "reasoning": "max",
+        "role": "implementer",
+        "baseSha": "887e9ea2fa791720f9743d8a0ba89e1e49cb814b",
+        "ownedPaths": [
+          "internal/transport/",
+          "cmd/mastarr/",
+          "docs/execution/handoffs/C-04.md"
+        ],
+        "checkout": "shared main",
+        "expectedChecks": [
+          "A-38 static/API configuration source and restart-required behavior",
+          "A-39 ETag/If-Match and startup snapshot behavior",
+          "A-42 encrypted credential readiness and sanitized problem responses",
+          "A-46 unauthenticated actor and untrusted proxy-header behavior",
+          "A-47 conservative origin/CSRF/CORS and configured-origin links",
+          "A-56 bounded validation/problem responses, unknown-field rejection, idempotency and oversized-body handling",
+          "strict generated net/http server wiring for every documented resource",
+          "startup lock, migrations, key readiness and graceful shutdown",
+          "GOWORK=off focused/race/vet/root tests and module verification",
+          "generation/API/Vacuum/lint/architecture/planning/full offline guardrails",
+          "Linux amd64/arm64 CGO-free builds"
+        ],
+        "reviewPath": "docs/execution/handoffs/C-04-review-round1.md",
+        "handoffPath": "docs/execution/handoffs/C-04.md",
+        "nextReviewer": "/root/x05_reviewer",
+        "status": "in_progress",
+        "dependencyCommits": {
+          "D-04": "036288114bcf303f98e0ee02e54ddce18384e504",
+          "F-03": "b65f5d65d67e6fc823fbf54fa8ab4f2a4d17d191",
+          "X-08": "8c770f779204a00c2d8cc6312a2c0fc04262ea35",
+          "W-05": "ea3958b15508d13893b55674b59cfb0bf50d1ffe"
+        },
+        "waitingOn": "/root/x05_implementer",
+        "waitingReason": "bounded C-04 transport and startup implementation",
+        "implementationCommit": null,
+        "handoffCommit": null,
+        "reviewSourceCommit": null,
+        "reviewRound": 0,
+        "reviewCommit": null,
+        "reviewIntegrationCommit": null,
+        "correctionStatus": null,
+        "correctionRound": 0
+      },
+      "implementationCommit": null,
+      "handoffCommit": null,
+      "reviewSourceCommit": null
     },
     "U-00": {
       "status": "done",
@@ -5680,7 +5742,7 @@
       ]
     }
   },
-  "nextAction": "W-05 is approved and closed at product 3f2d4e9e13540f21474a68f1d4d729ba232f3f50 with receipt 5f4ce4a97942be8a6660354a37178879557955d9. Choose the next dependency-ready implementation lane; keep F-05 capability block, G-01 Arr write block, and Seerr read-only policy active.",
+  "nextAction": "C-04 transport/startup implementation is dispatched from 887e9ea2fa791720f9743d8a0ba89e1e49cb814b to /root/x05_implementer. Await product and handoff commits, then queue independent review with /root/x05_reviewer; preserve F-05/G-01/Seerr gates.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
