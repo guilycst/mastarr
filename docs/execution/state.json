@@ -4063,7 +4063,10 @@
         "Reviewer full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed; UI tests/race/vet/mod, generation, architecture, planning, metadata/header probes and Linux builds passed while findings remain.",
         "U-01 correction round two dispatched from clean coordinator checkpoint 84e5aaca09e9d69fd5edc307d7294a48d528b895; worker owns R1-R4 UI behavior and coordinator owns the separate UI module metadata normalization for R5.",
         "b74cde7e0a38635023a02e905db71ae963a5c0bc coordinator support commit pins caarlos0/env/v11 v11.4.1 in ui/go.mod and ui/go.sum for parity with the root bootstrap parser; worker remains restricted to UI behavior paths.",
-        "U-01 correction round two dispatch checkpoint finalized at clean state commit e116df6a55bd1921be52dc134a0d5ae4dc53d34a; no product paths changed by this state-only correction."
+        "U-01 correction round two dispatch checkpoint finalized at clean state commit e116df6a55bd1921be52dc134a0d5ae4dc53d34a; no product paths changed by this state-only correction.",
+        "65a1c0e66764308ff95c2a70de10ace15712b695 U-01 correction round two product fixes asset method gates, unknown readiness fail-closed behavior, env/v11 bootstrap parity and startup diagnostics.",
+        "f397aaf326ae18615e01d4d86be764da5502a158 U-01 correction round two handoff records R1-R4 regressions, the coordinator module-support boundary and exact checks.",
+        "3e93e80503682f7c13de5a65a3a502af046b9de3 coordinator UI module metadata normalization makes GOWORK=off go mod tidy -diff clean and promotes env/v11 to a direct dependency."
       ],
       "review": {
         "status": "changes_requested",
@@ -4112,9 +4115,9 @@
         "reviewPath": "docs/execution/handoffs/U-01-review-round1.md",
         "handoffPath": "docs/execution/handoffs/U-01.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "in_progress",
-        "waitingOn": "/root/x05_implementer",
-        "waitingReason": "Implement correction round two for R1-R4 using the pinned env/v11 dependency; R5 module metadata is normalized by coordinator support commit.",
+        "status": "awaiting_review",
+        "waitingOn": "/root/x05_reviewer",
+        "waitingReason": "U-01 correction round two product, handoff and coordinator module metadata support are complete; independent review is required for R1-R5 and prior shell invariants.",
         "dependencyCommits": {
           "U-00": "508d88ef7e11d115d004cd48dae8bb9b2bb7608c",
           "C-03": "8c9bf9a6277e068f9ae6b859fab2c5f7aa4890a1",
@@ -4126,7 +4129,7 @@
         "reviewRound": 1,
         "reviewCommit": "9ada4806d49bb3da71e0c8e3c1e50fdc98c2f5a6",
         "reviewIntegrationCommit": "7ef11c3072769c04ecd2679b373a08fcfc6df46",
-        "correctionStatus": "in_progress",
+        "correctionStatus": "awaiting_review",
         "correctionRound": 2,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "e116df6a55bd1921be52dc134a0d5ae4dc53d34a",
@@ -4134,12 +4137,15 @@
         "correctionReviewPath": "docs/execution/handoffs/U-01-review-round2.md",
         "correctionHandoffPath": "docs/execution/handoffs/U-01-correction-round2.md",
         "correctionReviewer": "/root/x05_reviewer",
-        "correctionImplementationCommit": null,
-        "correctionHandoffCommit": null,
-        "correctionReviewSourceCommit": null,
+        "correctionImplementationCommit": "65a1c0e66764308ff95c2a70de10ace15712b695",
+        "correctionHandoffCommit": "f397aaf326ae18615e01d4d86be764da5502a158",
+        "correctionReviewSourceCommit": "3e93e80503682f7c13de5a65a3a502af046b9de3",
         "correctionReviewCommit": null,
         "correctionReviewIntegrationCommit": null,
-        "correctionProductCommits": [],
+        "correctionProductCommits": [
+          "65a1c0e66764308ff95c2a70de10ace15712b695",
+          "3e93e80503682f7c13de5a65a3a502af046b9de3"
+        ],
         "correctionDispatchCommit": "e116df6a55bd1921be52dc134a0d5ae4dc53d34a"
       },
       "reviewHistory": [
@@ -4159,9 +4165,12 @@
           "reviewer": "/root/x05_reviewer",
           "commit": null,
           "status": "pending",
-          "sourceCommit": null,
+          "sourceCommit": "3e93e80503682f7c13de5a65a3a502af046b9de3",
           "receipt": "docs/execution/handoffs/U-01-review-round2.md",
-          "handoff": "docs/execution/handoffs/U-01-correction-round2.md"
+          "handoff": "docs/execution/handoffs/U-01-correction-round2.md",
+          "productCommit": "65a1c0e66764308ff95c2a70de10ace15712b695",
+          "handoffCommit": "f397aaf326ae18615e01d4d86be764da5502a158",
+          "supportCommit": "3e93e80503682f7c13de5a65a3a502af046b9de3"
         }
       ]
     },
@@ -6017,7 +6026,7 @@
       ]
     }
   },
-  "nextAction": "U-01 correction round two is dispatched from clean checkpoint e116df6a55bd1921be52dc134a0d5ae4dc53d34a; implementer owns R1-R4 and env/v11 parser integration while R5 module metadata is normalized.",
+  "nextAction": "U-01 correction round two product and module metadata support are recorded; dispatch independent review round two for the BFF boundary and tidy gate.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
