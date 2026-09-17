@@ -1,0 +1,1412 @@
+// Package transport exposes Mastarr's generated HTTP boundary.
+//
+// The package deliberately keeps HTTP concerns at the edge.  It translates
+// the non-secret configuration service into generated API DTOs and leaves
+// action, discovery, and upstream policy to their existing application
+// services.  Routes whose service has not yet been assembled return a typed,
+// sanitized problem instead of silently pretending that an empty result is
+// authoritative.
+package transport
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+	"unicode/utf8"
+
+	api "github.com/guilycst/mastarr/internal/api/generated"
+	"github.com/guilycst/mastarr/internal/configuration"
+	"github.com/guilycst/mastarr/internal/domain"
+)
+
+const (
+	defaultMaxBodyBytes       int64 = 4 << 20
+	defaultMaxManifestBytes         = 1 << 30
+	defaultMaxManifestEntries       = 10_000
+	maxIdempotencyEntries           = 1024
+)
+
+var (
+	ErrNotReady            = errors.New("mastarr is not ready")
+	ErrRequestTooLarge     = errors.New("request body exceeds configured limit")
+	ErrUnknownField        = errors.New("request contains an unknown field")
+	ErrDuplicateField      = errors.New("request contains a duplicate field")
+	ErrInvalidJSON         = errors.New("request body is invalid JSON")
+	ErrOriginForbidden     = errors.New("request origin is not allowed")
+	ErrIdempotencyConflict = errors.New("idempotency key was reused with a different request")
+	ErrIdempotencyRequired = errors.New("Idempotency-Key is required")
+	ErrIfMatchRequired     = errors.New("If-Match precondition is required")
+	ErrIfMatchMismatch     = errors.New("If-Match precondition does not match")
+	ErrInvalidIdempotency  = errors.New("Idempotency-Key is invalid")
+	ErrInvalidParameter    = errors.New("request parameter is invalid")
+)
+
+// Options controls one API server.  Configuration is optional so a process
+// can expose health while its durable dependencies are still starting.
+type Options struct {
+	Configuration *configuration.Manager
+	Now           func() time.Time
+	Ready         bool
+	AllowedOrigin string
+	MaxBodyBytes  int64
+
+	// MaxManifestBytes and MaxManifestEntries are applied to request bodies
+	// before generated decoding.  They remain independent from the body limit
+	// so callers can choose a smaller action-specific budget.
+	MaxManifestBytes   int64
+	MaxManifestEntries int
+}
+
+// Server implements api.StrictServerInterface and is wrapped by the strict
+// generated net/http adapter.  The embedded fallback gives every documented
+// route a deliberate response while assembled application services can be
+// added one at a time without changing the wire boundary.
+type Server struct {
+	strictFallback
+
+	configurationMu    sync.RWMutex
+	configuration      *configuration.Manager
+	now                func() time.Time
+	allowedOrigin      string
+	maxBodyBytes       int64
+	maxManifestBytes   int64
+	maxManifestEntries int
+	ready              atomic.Bool
+
+	idempotencyMu sync.Mutex
+	idempotency   map[string]idempotencyEntry
+	pending       map[string]*idempotencyPending
+	sequence      atomic.Uint64
+}
+
+type idempotencyEntry struct {
+	digest []byte
+	status int
+	header http.Header
+	body   []byte
+}
+
+type idempotencyPending struct {
+	digest []byte
+	done   chan struct{}
+}
+
+// New constructs a generated-server implementation.  It does not open a
+// database or contact an upstream; startup owns those lifecycle decisions.
+func New(options Options) (*Server, error) {
+	if options.Now == nil {
+		options.Now = time.Now
+	}
+	if options.MaxBodyBytes <= 0 {
+		options.MaxBodyBytes = defaultMaxBodyBytes
+	}
+	if options.MaxBodyBytes < 1 {
+		return nil, errors.New("transport max body size must be positive")
+	}
+	if options.MaxManifestBytes <= 0 {
+		options.MaxManifestBytes = defaultMaxManifestBytes
+	}
+	if options.MaxManifestEntries <= 0 {
+		options.MaxManifestEntries = defaultMaxManifestEntries
+	}
+	if options.AllowedOrigin != "" {
+		origin, err := canonicalOrigin(options.AllowedOrigin)
+		if err != nil {
+			return nil, fmt.Errorf("transport allowed origin: %w", err)
+		}
+		options.AllowedOrigin = origin
+	}
+	server := &Server{
+		configuration:      options.Configuration,
+		now:                options.Now,
+		allowedOrigin:      options.AllowedOrigin,
+		maxBodyBytes:       options.MaxBodyBytes,
+		maxManifestBytes:   options.MaxManifestBytes,
+		maxManifestEntries: options.MaxManifestEntries,
+		idempotency:        make(map[string]idempotencyEntry),
+		pending:            make(map[string]*idempotencyPending),
+	}
+	server.ready.Store(options.Ready)
+	return server, nil
+}
+
+// NewServer is an explicit alias for callers that prefer constructor names
+// which describe the returned value.
+func NewServer(options Options) (*Server, error) { return New(options) }
+
+// SetConfiguration publishes the bootstrapped configuration service. Startup
+// may expose health while migrations and key loading are in progress, so the
+// generated handler must be able to transition from an unavailable service to
+// a ready one without racing request handlers.
+func (server *Server) SetConfiguration(manager *configuration.Manager) {
+	if server == nil {
+		return
+	}
+	server.configurationMu.Lock()
+	server.configuration = manager
+	server.configurationMu.Unlock()
+}
+
+func (server *Server) configurationManager() *configuration.Manager {
+	if server == nil {
+		return nil
+	}
+	server.configurationMu.RLock()
+	defer server.configurationMu.RUnlock()
+	return server.configuration
+}
+
+// SetReady publishes the process readiness transition after migrations,
+// encryption-key setup, and static configuration have completed.
+func (server *Server) SetReady(ready bool) {
+	if server != nil {
+		server.ready.Store(ready)
+	}
+}
+
+// Ready reports the current process readiness without inspecting an upstream.
+func (server *Server) Ready() bool { return server != nil && server.ready.Load() }
+
+// Handler returns the generated strict server surrounded by the transport
+// policy layer.  The generated router remains the source of route matching.
+func (server *Server) Handler() http.Handler {
+	if server == nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			writeProblem(w, r, errors.New("transport server is nil"))
+		})
+	}
+	strict := api.NewStrictHandlerWithOptions(server, nil, api.StrictHTTPServerOptions{
+		RequestErrorHandlerFunc:  writeProblem,
+		ResponseErrorHandlerFunc: writeProblem,
+	})
+	return server.policy(api.HandlerWithOptions(strict, api.StdHTTPServerOptions{ErrorHandlerFunc: writeProblem}))
+}
+
+// ServeHTTP makes Server usable directly in tests and when passed to a
+// net/http.Server.  Handler() is constructed once per request only if callers
+// use this convenience path; production startup should cache Handler().
+func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	server.Handler().ServeHTTP(w, r)
+}
+
+// GetLiveHealth reports process liveness and intentionally does not depend on
+// migrations, the key, or upstream availability.
+func (server *Server) GetLiveHealth(ctx context.Context, _ api.GetLiveHealthRequestObject) (api.GetLiveHealthResponseObject, error) {
+	if err := contextError(ctx); err != nil {
+		return nil, err
+	}
+	return api.GetLiveHealth200JSONResponse(api.Health{
+		ObservedAt: server.now().UTC(),
+		Status:     api.HealthStatusOk,
+	}), nil
+}
+
+// GetReadyHealth reports the startup barrier separately from liveness.
+func (server *Server) GetReadyHealth(ctx context.Context, _ api.GetReadyHealthRequestObject) (api.GetReadyHealthResponseObject, error) {
+	if err := contextError(ctx); err != nil {
+		return nil, err
+	}
+	if !server.Ready() {
+		return api.GetReadyHealth503ApplicationProblemPlusJSONResponse{
+			Problem503ApplicationProblemPlusJSONResponse: api.Problem503ApplicationProblemPlusJSONResponse(problemFor(ctx, ErrNotReady, http.StatusServiceUnavailable)),
+		}, nil
+	}
+	return api.GetReadyHealth200JSONResponse(api.Health{
+		ObservedAt: server.now().UTC(),
+		Status:     api.HealthStatusOk,
+		Reason:     nil,
+	}), nil
+}
+
+// GetConfiguration returns only the effective non-secret snapshot.
+func (server *Server) GetConfiguration(ctx context.Context, _ api.GetConfigurationRequestObject) (api.GetConfigurationResponseObject, error) {
+	snapshot, err := server.snapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	etag := quoteETag(snapshot.Source.Revision)
+	return api.GetConfiguration200JSONResponse{
+		Body:    apiConfiguration(snapshot),
+		Headers: api.GetConfiguration200ResponseHeaders{CacheControl: stringPtr("no-store"), ETag: &etag},
+	}, nil
+}
+
+// ListConnections returns a bounded, complete snapshot page.  Cursor paging
+// is rejected until a durable cursor service is wired; an empty response is
+// never used to imply that a later page does not exist.
+func (server *Server) ListConnections(ctx context.Context, request api.ListConnectionsRequestObject) (api.ListConnectionsResponseObject, error) {
+	manager := server.configurationManager()
+	if manager == nil {
+		return nil, ErrNotReady
+	}
+	if request.Params.Cursor != nil && strings.TrimSpace(string(*request.Params.Cursor)) != "" {
+		return nil, ErrSnapshotCursor
+	}
+	limit, err := boundedLimit(request.Params.Limit)
+	if err != nil {
+		return nil, err
+	}
+	items, err := manager.ListConnections(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) > limit {
+		return nil, ErrSnapshotCursor
+	}
+	now := server.now().UTC()
+	return api.ListConnections200JSONResponse{
+		Body:    api.ConnectionList{Items: mapConnections(items), Page: api.Page{Coverage: []api.Coverage{}, ObservedAt: now}},
+		Headers: api.ListConnections200ResponseHeaders{CacheControl: stringPtr("no-store")},
+	}, nil
+}
+
+// GetConnection returns one source-aware configuration record.
+func (server *Server) GetConnection(ctx context.Context, request api.GetConnectionRequestObject) (api.GetConnectionResponseObject, error) {
+	manager := server.configurationManager()
+	if manager == nil {
+		return nil, ErrNotReady
+	}
+	connection, err := manager.GetConnection(ctx, domain.ConfigID(request.ConnectionId), false)
+	if err != nil {
+		return nil, err
+	}
+	etag := quoteETag(connection.Revision)
+	return api.GetConnection200JSONResponse{Body: mapConnection(connection), Headers: api.GetConnection200ResponseHeaders{CacheControl: stringPtr("no-store"), ETag: &etag}}, nil
+}
+
+// CreateConnection persists an API-owned, encrypted-credential connection.
+func (server *Server) CreateConnection(ctx context.Context, request api.CreateConnectionRequestObject) (api.CreateConnectionResponseObject, error) {
+	manager := server.configurationManager()
+	if manager == nil {
+		return nil, ErrNotReady
+	}
+	if request.Body == nil {
+		return nil, ErrInvalidJSON
+	}
+	spec, cleanup, err := connectionSpec(*request.Body)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	connection, err := manager.CreateConnection(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+	etag := quoteETag(connection.Revision)
+	location := "/api/v1/connections/" + url.PathEscape(connection.ID.String())
+	return api.CreateConnection201JSONResponse{Body: mapConnection(connection), Headers: api.CreateConnection201ResponseHeaders{CacheControl: stringPtr("no-store"), ETag: &etag, Location: &location}}, nil
+}
+
+// PatchConnection applies the generated If-Match value to the configuration
+// manager's revision CAS.
+func (server *Server) PatchConnection(ctx context.Context, request api.PatchConnectionRequestObject) (api.PatchConnectionResponseObject, error) {
+	manager := server.configurationManager()
+	if manager == nil {
+		return nil, ErrNotReady
+	}
+	if request.Body == nil {
+		return nil, ErrInvalidJSON
+	}
+	patch, cleanup, err := connectionPatch(*request.Body)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	connection, err := manager.PatchConnection(ctx, domain.ConfigID(request.ConnectionId), normalizeETag(string(request.Params.IfMatch)), patch)
+	if err != nil {
+		return nil, err
+	}
+	etag := quoteETag(connection.Revision)
+	return api.PatchConnection200JSONResponse{Body: mapConnection(connection), Headers: api.PatchConnection200ResponseHeaders{CacheControl: stringPtr("no-store"), ETag: &etag}}, nil
+}
+
+// RetireConnection preserves the configuration tombstone and requires the
+// exact revision supplied by If-Match.
+func (server *Server) RetireConnection(ctx context.Context, request api.RetireConnectionRequestObject) (api.RetireConnectionResponseObject, error) {
+	manager := server.configurationManager()
+	if manager == nil {
+		return nil, ErrNotReady
+	}
+	err := manager.RetireConnection(ctx, domain.ConfigID(request.ConnectionId), normalizeETag(string(request.Params.IfMatch)))
+	if err != nil {
+		return nil, err
+	}
+	return api.RetireConnection204Response{}, nil
+}
+
+func (server *Server) ListStorageRoots(ctx context.Context, request api.ListStorageRootsRequestObject) (api.ListStorageRootsResponseObject, error) {
+	manager := server.configurationManager()
+	if manager == nil {
+		return nil, ErrNotReady
+	}
+	if request.Params.Cursor != nil && strings.TrimSpace(string(*request.Params.Cursor)) != "" {
+		return nil, ErrSnapshotCursor
+	}
+	limit, err := boundedLimit(request.Params.Limit)
+	if err != nil {
+		return nil, err
+	}
+	items, err := manager.ListStorageRoots(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) > limit {
+		return nil, ErrSnapshotCursor
+	}
+	return api.ListStorageRoots200JSONResponse{Body: api.StorageRootList{Items: mapStorageRoots(items), Page: api.Page{Coverage: []api.Coverage{}, ObservedAt: server.now().UTC()}}, Headers: api.ListStorageRoots200ResponseHeaders{CacheControl: stringPtr("no-store")}}, nil
+}
+
+func (server *Server) GetStorageRoot(ctx context.Context, request api.GetStorageRootRequestObject) (api.GetStorageRootResponseObject, error) {
+	manager := server.configurationManager()
+	if manager == nil {
+		return nil, ErrNotReady
+	}
+	root, err := manager.GetStorageRoot(ctx, domain.ConfigID(request.StorageRootId), false)
+	if err != nil {
+		return nil, err
+	}
+	etag := quoteETag(root.Revision)
+	return api.GetStorageRoot200JSONResponse{Body: mapStorageRoot(root), Headers: api.GetStorageRoot200ResponseHeaders{CacheControl: stringPtr("no-store"), ETag: &etag}}, nil
+}
+
+func (server *Server) CreateStorageRoot(ctx context.Context, request api.CreateStorageRootRequestObject) (api.CreateStorageRootResponseObject, error) {
+	manager := server.configurationManager()
+	if manager == nil {
+		return nil, ErrNotReady
+	}
+	if request.Body == nil {
+		return nil, ErrInvalidJSON
+	}
+	root, err := manager.CreateStorageRoot(ctx, configuration.StorageRootSpec{ID: domain.ConfigID(request.Body.Id), Label: request.Body.Label, Purpose: domain.StoragePurpose(request.Body.Purpose), Path: request.Body.Path})
+	if err != nil {
+		return nil, err
+	}
+	etag := quoteETag(root.Revision)
+	location := "/api/v1/storage-roots/" + url.PathEscape(root.ID.String())
+	return api.CreateStorageRoot201JSONResponse{Body: mapStorageRoot(root), Headers: api.CreateStorageRoot201ResponseHeaders{CacheControl: stringPtr("no-store"), ETag: &etag, Location: &location}}, nil
+}
+
+func (server *Server) PatchStorageRoot(ctx context.Context, request api.PatchStorageRootRequestObject) (api.PatchStorageRootResponseObject, error) {
+	manager := server.configurationManager()
+	if manager == nil {
+		return nil, ErrNotReady
+	}
+	if request.Body == nil {
+		return nil, ErrInvalidJSON
+	}
+	body := request.Body
+	patch := configuration.StorageRootPatch{Label: body.Label, Path: body.Path, WatchEnabled: body.WatchEnabled, WatchIntervalSeconds: body.WatchIntervalSeconds}
+	root, err := manager.PatchStorageRoot(ctx, domain.ConfigID(request.StorageRootId), normalizeETag(string(request.Params.IfMatch)), patch)
+	if err != nil {
+		return nil, err
+	}
+	etag := quoteETag(root.Revision)
+	return api.PatchStorageRoot200JSONResponse{Body: mapStorageRoot(root), Headers: api.PatchStorageRoot200ResponseHeaders{CacheControl: stringPtr("no-store"), ETag: &etag}}, nil
+}
+
+func (server *Server) RetireStorageRoot(ctx context.Context, request api.RetireStorageRootRequestObject) (api.RetireStorageRootResponseObject, error) {
+	manager := server.configurationManager()
+	if manager == nil {
+		return nil, ErrNotReady
+	}
+	err := manager.RetireStorageRoot(ctx, domain.ConfigID(request.StorageRootId), normalizeETag(string(request.Params.IfMatch)))
+	if err != nil {
+		return nil, err
+	}
+	return api.RetireStorageRoot204Response{}, nil
+}
+
+func (server *Server) ListPathMappings(ctx context.Context, request api.ListPathMappingsRequestObject) (api.ListPathMappingsResponseObject, error) {
+	manager := server.configurationManager()
+	if manager == nil {
+		return nil, ErrNotReady
+	}
+	if request.Params.Cursor != nil && strings.TrimSpace(string(*request.Params.Cursor)) != "" {
+		return nil, ErrSnapshotCursor
+	}
+	limit, err := boundedLimit(request.Params.Limit)
+	if err != nil {
+		return nil, err
+	}
+	items, err := manager.ListPathMappings(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) > limit {
+		return nil, ErrSnapshotCursor
+	}
+	return api.ListPathMappings200JSONResponse{Body: api.PathMappingList{Items: mapPathMappings(items), Page: api.Page{Coverage: []api.Coverage{}, ObservedAt: server.now().UTC()}}, Headers: api.ListPathMappings200ResponseHeaders{CacheControl: stringPtr("no-store")}}, nil
+}
+
+func (server *Server) GetPathMapping(ctx context.Context, request api.GetPathMappingRequestObject) (api.GetPathMappingResponseObject, error) {
+	manager := server.configurationManager()
+	if manager == nil {
+		return nil, ErrNotReady
+	}
+	mapping, err := manager.GetPathMapping(ctx, domain.ConfigID(request.PathMappingId), false)
+	if err != nil {
+		return nil, err
+	}
+	etag := quoteETag(mapping.Revision)
+	return api.GetPathMapping200JSONResponse{Body: mapPathMapping(mapping), Headers: api.GetPathMapping200ResponseHeaders{CacheControl: stringPtr("no-store"), ETag: &etag}}, nil
+}
+
+func (server *Server) CreatePathMapping(ctx context.Context, request api.CreatePathMappingRequestObject) (api.CreatePathMappingResponseObject, error) {
+	manager := server.configurationManager()
+	if manager == nil {
+		return nil, ErrNotReady
+	}
+	if request.Body == nil {
+		return nil, ErrInvalidJSON
+	}
+	body := request.Body
+	mapping, err := manager.CreatePathMapping(ctx, configuration.PathMappingSpec{ID: domain.ConfigID(body.Id), ConnectionID: domain.ConfigID(body.ConnectionId), SourcePrefix: body.SourcePrefix, RootID: domain.ConfigID(body.RootId), DestinationPrefix: body.DestinationPrefix})
+	if err != nil {
+		return nil, err
+	}
+	etag := quoteETag(mapping.Revision)
+	location := "/api/v1/path-mappings/" + url.PathEscape(mapping.ID.String())
+	return api.CreatePathMapping201JSONResponse{Body: mapPathMapping(mapping), Headers: api.CreatePathMapping201ResponseHeaders{CacheControl: stringPtr("no-store"), ETag: &etag, Location: &location}}, nil
+}
+
+func (server *Server) PatchPathMapping(ctx context.Context, request api.PatchPathMappingRequestObject) (api.PatchPathMappingResponseObject, error) {
+	manager := server.configurationManager()
+	if manager == nil {
+		return nil, ErrNotReady
+	}
+	if request.Body == nil {
+		return nil, ErrInvalidJSON
+	}
+	patch := configuration.PathMappingPatch{SourcePrefix: request.Body.SourcePrefix, DestinationPrefix: request.Body.DestinationPrefix}
+	mapping, err := manager.PatchPathMapping(ctx, domain.ConfigID(request.PathMappingId), normalizeETag(string(request.Params.IfMatch)), patch)
+	if err != nil {
+		return nil, err
+	}
+	etag := quoteETag(mapping.Revision)
+	return api.PatchPathMapping200JSONResponse{Body: mapPathMapping(mapping), Headers: api.PatchPathMapping200ResponseHeaders{CacheControl: stringPtr("no-store"), ETag: &etag}}, nil
+}
+
+func (server *Server) RetirePathMapping(ctx context.Context, request api.RetirePathMappingRequestObject) (api.RetirePathMappingResponseObject, error) {
+	manager := server.configurationManager()
+	if manager == nil {
+		return nil, ErrNotReady
+	}
+	err := manager.RetirePathMapping(ctx, domain.ConfigID(request.PathMappingId), normalizeETag(string(request.Params.IfMatch)))
+	if err != nil {
+		return nil, err
+	}
+	return api.RetirePathMapping204Response{}, nil
+}
+
+func (server *Server) snapshot(ctx context.Context) (domain.ConfigurationSnapshot, error) {
+	manager := server.configurationManager()
+	if manager == nil {
+		return domain.ConfigurationSnapshot{}, ErrNotReady
+	}
+	return manager.Snapshot(ctx)
+}
+
+func contextError(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		return nil
+	}
+}
+
+var ErrSnapshotCursor = errors.New("snapshot cursor is expired or unsupported")
+
+func boundedLimit(value *api.Limit) (int, error) {
+	if value == nil {
+		return 100, nil
+	}
+	if *value < 1 || *value > 1000 {
+		return 0, errors.New("snapshot limit is outside the supported bound")
+	}
+	return int(*value), nil
+}
+
+func stringPtr(value string) *string { return &value }
+
+func quoteETag(value string) string { return `"` + strings.ReplaceAll(value, `"`, "") + `"` }
+
+func normalizeETag(value string) string {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "W/") {
+		value = strings.TrimSpace(strings.TrimPrefix(value, "W/"))
+	}
+	return strings.Trim(value, `"`)
+}
+
+func canonicalOrigin(value string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.User != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
+		return "", errors.New("origin must be an absolute HTTP(S) origin without credentials or a path")
+	}
+	return strings.ToLower(parsed.Scheme) + "://" + strings.ToLower(parsed.Host), nil
+}
+
+func apiSource(metadata domain.SourceMetadata) api.SourceMetadata {
+	source := api.Api
+	if metadata.Source == domain.SourceYAML {
+		source = api.Yaml
+	}
+	return api.SourceMetadata{DocumentId: metadata.DocumentID, Editable: metadata.Editable, ReloadPolicy: api.RestartRequired, Revision: metadata.Revision, Source: source, StartupAt: metadata.StartupAt.UTC()}
+}
+
+func apiConfiguration(snapshot domain.ConfigurationSnapshot) api.Configuration {
+	keySource := api.ConfigurationKeySource(snapshot.KeySource)
+	return api.Configuration{Connections: mapConnections(snapshot.Connections), StorageRoots: mapStorageRoots(snapshot.StorageRoots), PathMappings: mapPathMappings(snapshot.PathMappings), KeyPath: optionalString(snapshot.KeyPath), KeySource: keySource, RestartRequired: boolPtr(snapshot.RestartRequired), Source: apiSource(snapshot.Source)}
+}
+
+func mapConnections(items []domain.Connection) []api.Connection {
+	result := make([]api.Connection, 0, len(items))
+	for _, item := range items {
+		result = append(result, mapConnection(item))
+	}
+	return result
+}
+
+func mapConnection(item domain.Connection) api.Connection {
+	credentialState := api.ConnectionCredentialStateMissing
+	if len(item.Credentials) > 0 {
+		credentialState = api.ConnectionCredentialStateStaticReference
+	}
+	var retired *time.Time
+	if item.RetiredAt != nil {
+		value := item.RetiredAt.UTC()
+		retired = &value
+	}
+	return api.Connection{Id: item.ID.String(), Kind: api.ConnectionKind(item.Kind), Label: item.Label, Endpoint: item.Endpoint, Revision: item.Revision, Source: apiSource(item.Source), CredentialState: credentialState, Health: api.ConnectionHealthUnknown, RetiredAt: retired}
+}
+
+func mapStorageRoots(items []domain.StorageRoot) []api.StorageRoot {
+	result := make([]api.StorageRoot, 0, len(items))
+	for _, item := range items {
+		result = append(result, mapStorageRoot(item))
+	}
+	return result
+}
+
+func mapStorageRoot(item domain.StorageRoot) api.StorageRoot {
+	permission := api.StorageRootPermissionReadWrite
+	if item.ReadOnly {
+		permission = api.StorageRootPermissionReadOnly
+	}
+	capabilities := make([]string, 0, len(item.Capabilities))
+	for _, capability := range item.Capabilities {
+		capabilities = append(capabilities, capability.Name+":"+string(capability.State))
+	}
+	var retired *time.Time
+	if item.RetiredAt != nil {
+		value := item.RetiredAt.UTC()
+		retired = &value
+	}
+	return api.StorageRoot{Id: item.ID.String(), Label: item.Label, Purpose: api.StoragePurpose(item.Purpose), Path: item.Path, Revision: item.Revision, Source: apiSource(item.Source), Permission: &permission, Capabilities: capabilities, RetiredAt: retired, Watch: api.WatchSettings{Enabled: item.Watch.Enabled, IntervalSeconds: int(item.Watch.Interval / time.Second)}}
+}
+
+func mapPathMappings(items []domain.PathMapping) []api.PathMapping {
+	result := make([]api.PathMapping, 0, len(items))
+	for _, item := range items {
+		result = append(result, mapPathMapping(item))
+	}
+	return result
+}
+
+func mapPathMapping(item domain.PathMapping) api.PathMapping {
+	return api.PathMapping{Id: item.ID.String(), ConnectionId: item.ConnectionID.String(), SourcePrefix: item.SourcePrefix, RootId: item.RootID.String(), DestinationPrefix: item.DestinationPrefix, Revision: item.Revision, Source: apiSource(item.Source)}
+}
+
+func boolPtr(value bool) *bool { return &value }
+
+func optionalString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+// connectionSpec translates the generated credential union at the transport
+// boundary.  Values are copied into the configuration service and cleared by
+// the returned cleanup function; no generated credential DTO crosses into the
+// domain or configuration packages.
+func connectionSpec(body api.ConnectionCreate) (configuration.ConnectionSpec, func(), error) {
+	values, cleanup, err := credentialInputs(body.Credentials)
+	if err != nil {
+		return configuration.ConnectionSpec{}, func() {}, err
+	}
+	return configuration.ConnectionSpec{ID: domain.ConfigID(body.Id), Kind: domain.ConnectionKind(body.Kind), Label: body.Label, Endpoint: body.Endpoint, Credentials: values}, cleanup, nil
+}
+
+func connectionPatch(body api.ConnectionPatch) (configuration.ConnectionPatch, func(), error) {
+	values, cleanup, err := credentialInputs(body.Credentials)
+	if err != nil {
+		return configuration.ConnectionPatch{}, func() {}, err
+	}
+	return configuration.ConnectionPatch{Label: body.Label, Endpoint: body.Endpoint, Credentials: values}, cleanup, nil
+}
+
+func credentialInputs(input *api.CredentialInput) (map[string]configuration.CredentialInput, func(), error) {
+	if input == nil {
+		return nil, func() {}, nil
+	}
+	raw, err := json.Marshal(input)
+	if err != nil || len(raw) == 0 || !json.Valid(raw) {
+		return nil, func() {}, errors.New("credential input is invalid")
+	}
+	var value struct {
+		Kind     string  `json:"kind"`
+		APIKey   *string `json:"apiKey"`
+		Token    *string `json:"token"`
+		Username *string `json:"username"`
+		Password *string `json:"password"`
+	}
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, func() {}, errors.New("credential input is invalid")
+	}
+	result := make(map[string]configuration.CredentialInput)
+	owned := make([][]byte, 0, 2)
+	add := func(field string, source *string) error {
+		if source == nil || *source == "" {
+			return errors.New("credential input is invalid")
+		}
+		copyValue := []byte(*source)
+		owned = append(owned, copyValue)
+		result[field] = configuration.CredentialInput{Value: copyValue}
+		return nil
+	}
+	switch value.Kind {
+	case "api_key":
+		if err := add("apiKey", value.APIKey); err != nil {
+			return nil, func() {}, err
+		}
+	case "token":
+		if err := add("token", value.Token); err != nil {
+			return nil, func() {}, err
+		}
+	case "username_password":
+		if err := add("username", value.Username); err != nil {
+			return nil, func() {}, err
+		}
+		if err := add("password", value.Password); err != nil {
+			return nil, func() {}, err
+		}
+	default:
+		return nil, func() {}, errors.New("credential input is invalid")
+	}
+	cleanup := func() {
+		for _, bytes := range owned {
+			for index := range bytes {
+				bytes[index] = 0
+			}
+		}
+	}
+	return result, cleanup, nil
+}
+
+func problemFor(ctx context.Context, err error, status int) api.Problem {
+	requestID := ""
+	if id, ok := ctx.Value(requestIDKey{}).(string); ok {
+		requestID = id
+	}
+	if requestID == "" {
+		requestID = "unavailable"
+	}
+	code := "internal_error"
+	title := "Request failed"
+	retryable := false
+	switch {
+	case errors.Is(err, ErrNotReady):
+		code, title, retryable = "not_ready", "Service is not ready", true
+	case errors.Is(err, errRouteUnavailable):
+		code, title, retryable = "service_unavailable", "Service is unavailable", true
+	case errors.Is(err, ErrRequestTooLarge):
+		code, title = "request_too_large", "Request is too large"
+	case errors.Is(err, ErrUnknownField):
+		code, title = "unknown_field", "Request contains an unknown field"
+	case errors.Is(err, ErrDuplicateField):
+		code, title = "duplicate_field", "Request contains a duplicate field"
+	case errors.Is(err, ErrInvalidJSON):
+		code, title = "invalid_json", "Request body is invalid"
+	case errors.Is(err, ErrOriginForbidden):
+		code, title = "origin_forbidden", "Request origin is not allowed"
+	case errors.Is(err, ErrIdempotencyConflict):
+		code, title = "idempotency_conflict", "Idempotency key conflicts with an earlier request"
+	case errors.Is(err, ErrInvalidIdempotency):
+		code, title = "invalid_idempotency_key", "Idempotency key is invalid"
+	case errors.Is(err, ErrIdempotencyRequired):
+		code, title = "idempotency_required", "Idempotency-Key is required"
+	case errors.Is(err, ErrIfMatchRequired):
+		code, title = "precondition_required", "If-Match precondition is required"
+	case errors.Is(err, ErrIfMatchMismatch):
+		code, title = "precondition_failed", "If-Match precondition failed"
+	case errors.Is(err, ErrSnapshotCursor):
+		code, title, retryable = "snapshot_expired", "Snapshot cursor is expired", true
+	case errors.Is(err, configuration.ErrResourceNotFound):
+		code, title = "resource_not_found", "Resource was not found"
+	case errors.Is(err, configuration.ErrConfigSourceReadOnly):
+		code, title = "configuration_read_only", "Configuration source is read-only"
+	case errors.Is(err, configuration.ErrRevisionMismatch):
+		code, title = "precondition_failed", "Configuration revision does not match"
+	case errors.Is(err, configuration.ErrPreconditionRequired):
+		code, title = "precondition_required", "A revision precondition is required"
+	case errors.Is(err, configuration.ErrConfigSourceConflict), errors.Is(err, configuration.ErrMappingAmbiguous), errors.Is(err, configuration.ErrMappingInvalid):
+		code, title = "configuration_conflict", "Configuration change conflicts with current state"
+	case errors.Is(err, configuration.ErrInvalidDocument), errors.Is(err, configuration.ErrCredentialInvalid):
+		code, title = "invalid_request", "Request is invalid"
+	case errors.Is(err, context.Canceled):
+		code, title, retryable = "request_canceled", "Request was canceled", true
+	case errors.Is(err, context.DeadlineExceeded):
+		code, title, retryable = "request_deadline", "Request deadline exceeded", true
+	default:
+		if status == 0 {
+			status = http.StatusInternalServerError
+		}
+	}
+	if status == 0 {
+		status = statusFor(err)
+	}
+	return api.Problem{Type: "https://mastarr.dev/problems/" + code, Title: title, Status: status, Code: code, RequestId: requestID, Retryable: retryable}
+}
+
+func statusFor(err error) int {
+	switch {
+	case errors.Is(err, ErrRequestTooLarge):
+		return http.StatusRequestEntityTooLarge
+	case errors.Is(err, ErrOriginForbidden):
+		return http.StatusForbidden
+	case errors.Is(err, ErrInvalidIdempotency):
+		return http.StatusUnprocessableEntity
+	case errors.Is(err, ErrIdempotencyConflict), errors.Is(err, ErrSnapshotCursor), errors.Is(err, configuration.ErrConfigSourceConflict), errors.Is(err, configuration.ErrMappingAmbiguous), errors.Is(err, configuration.ErrMappingInvalid):
+		return http.StatusConflict
+	case errors.Is(err, ErrIfMatchMismatch), errors.Is(err, configuration.ErrRevisionMismatch):
+		return http.StatusPreconditionFailed
+	case errors.Is(err, ErrIfMatchRequired), errors.Is(err, ErrIdempotencyRequired), errors.Is(err, configuration.ErrPreconditionRequired):
+		return http.StatusPreconditionRequired
+	case errors.Is(err, configuration.ErrInvalidDocument), errors.Is(err, configuration.ErrCredentialInvalid), errors.Is(err, ErrInvalidJSON), errors.Is(err, ErrUnknownField), errors.Is(err, ErrDuplicateField), errors.Is(err, ErrInvalidParameter):
+		return http.StatusUnprocessableEntity
+	case errors.Is(err, configuration.ErrResourceNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, ErrNotReady), errors.Is(err, errRouteUnavailable):
+		return http.StatusServiceUnavailable
+	case errors.Is(err, context.Canceled):
+		return http.StatusRequestTimeout
+	case errors.Is(err, context.DeadlineExceeded):
+		return http.StatusGatewayTimeout
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+type requestIDKey struct{}
+
+func requestID() string {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err == nil {
+		return hex.EncodeToString(raw[:])
+	}
+	return strconv.FormatInt(time.Now().UnixNano(), 10)
+}
+
+func writeProblem(w http.ResponseWriter, r *http.Request, err error) {
+	if err == nil {
+		err = errors.New("request failed")
+	}
+	err = normalizeError(err)
+	status := statusFor(err)
+	problem := problemFor(r.Context(), err, status)
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Cache-Control", "no-store")
+	if id := problem.RequestId; id != "" {
+		w.Header().Set("X-Request-ID", id)
+	}
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(problem)
+}
+
+func normalizeError(err error) error {
+	var headerErr *api.RequiredHeaderError
+	if errors.As(err, &headerErr) {
+		switch headerErr.ParamName {
+		case "If-Match":
+			return ErrIfMatchRequired
+		case "Idempotency-Key":
+			return ErrIdempotencyRequired
+		default:
+			return ErrInvalidParameter
+		}
+	}
+	var paramErr *api.RequiredParamError
+	if errors.As(err, &paramErr) {
+		return ErrInvalidParameter
+	}
+	var formatErr *api.InvalidParamFormatError
+	if errors.As(err, &formatErr) {
+		return ErrInvalidParameter
+	}
+	var valuesErr *api.TooManyValuesForParamError
+	if errors.As(err, &valuesErr) {
+		return ErrInvalidParameter
+	}
+	return err
+}
+
+// policy is intentionally outside the generated handler: it bounds raw body
+// bytes before generated decoding, applies origin policy, and preserves
+// idempotent HTTP responses without changing the generated contract.
+func (server *Server) policy(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := requestID()
+		ctx := context.WithValue(r.Context(), requestIDKey{}, id)
+		r = r.WithContext(ctx)
+		w.Header().Set("X-Request-ID", id)
+		if err := server.checkOrigin(r); err != nil {
+			writeProblem(w, r, err)
+			return
+		}
+		if r.Method == http.MethodOptions {
+			server.writePreflight(w, r)
+			return
+		}
+		if err := server.prepareBody(r); err != nil {
+			writeProblem(w, r, err)
+			return
+		}
+		server.setCORS(w, r)
+		if !isMutation(r.Method) || strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if err := validateIdempotencyHeader(r.Header.Get("Idempotency-Key")); err != nil {
+			writeProblem(w, r, err)
+			return
+		}
+		key := r.Method + " " + r.URL.Path + "\x00" + r.Header.Get("Idempotency-Key")
+		digest := requestDigest(r)
+		for {
+			entry, pending, conflict := server.beginIdempotency(key, digest)
+			if conflict {
+				writeProblem(w, r, ErrIdempotencyConflict)
+				return
+			}
+			if entry != nil {
+				replay(w, entry)
+				return
+			}
+			if pending == nil {
+				break
+			}
+			select {
+			case <-pending.done:
+				continue
+			case <-r.Context().Done():
+				writeProblem(w, r, r.Context().Err())
+				return
+			}
+		}
+		capture := newCapture()
+		// Always release the process-local reservation, including a panic in the
+		// generated handler. A stuck reservation would make later requests wait
+		// forever and would turn a recoverable transport failure into a denial.
+		defer server.finishIdempotency(key)
+		next.ServeHTTP(capture, r)
+		entry := capture.entry()
+		server.rememberIdempotency(key, digest, entry)
+		replay(w, &entry)
+	})
+}
+
+func isMutation(method string) bool {
+	return method == http.MethodPost || method == http.MethodPatch || method == http.MethodPut || method == http.MethodDelete
+}
+
+func (server *Server) checkOrigin(r *http.Request) error {
+	if !isMutation(r.Method) {
+		return nil
+	}
+	if r.Header.Get("Forwarded") != "" || r.Header.Get("X-Forwarded-Host") != "" || r.Header.Get("X-Forwarded-Proto") != "" || r.Header.Get("X-Forwarded-Port") != "" {
+		// Proxy headers are never trusted for authorization or URL formation.
+		// A mutation carrying them is rejected rather than guessing its origin.
+		return ErrOriginForbidden
+	}
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		if strings.EqualFold(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")), "cross-site") {
+			return ErrOriginForbidden
+		}
+		return nil
+	}
+	canonical, err := canonicalOrigin(origin)
+	if err != nil || server.allowedOrigin == "" || canonical != server.allowedOrigin {
+		return ErrOriginForbidden
+	}
+	return nil
+}
+
+func (server *Server) setCORS(w http.ResponseWriter, r *http.Request) {
+	if server.allowedOrigin != "" && strings.TrimSpace(r.Header.Get("Origin")) != "" {
+		if origin, err := canonicalOrigin(r.Header.Get("Origin")); err == nil && origin == server.allowedOrigin {
+			w.Header().Set("Access-Control-Allow-Origin", server.allowedOrigin)
+			w.Header().Add("Vary", "Origin")
+		}
+	}
+}
+
+func (server *Server) writePreflight(w http.ResponseWriter, r *http.Request) {
+	origin, err := canonicalOrigin(r.Header.Get("Origin"))
+	if err != nil || server.allowedOrigin == "" || origin != server.allowedOrigin {
+		writeProblem(w, r, ErrOriginForbidden)
+		return
+	}
+	w.Header().Set("Access-Control-Allow-Origin", server.allowedOrigin)
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Idempotency-Key, If-Match")
+	w.Header().Set("Access-Control-Max-Age", "600")
+	w.Header().Add("Vary", "Origin")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (server *Server) prepareBody(r *http.Request) error {
+	if r.Body == nil || r.Method == http.MethodGet || r.Method == http.MethodHead {
+		return nil
+	}
+	if r.ContentLength > server.maxBodyBytes {
+		return ErrRequestTooLarge
+	}
+	data, err := io.ReadAll(io.LimitReader(r.Body, server.maxBodyBytes+1))
+	if err != nil {
+		return ErrInvalidJSON
+	}
+	if int64(len(data)) > server.maxBodyBytes {
+		return ErrRequestTooLarge
+	}
+	r.Body = io.NopCloser(bytes.NewReader(data))
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil
+	}
+	if !utf8.Valid(data) || !json.Valid(data) {
+		return ErrInvalidJSON
+	}
+	if err := validateJSONSyntax(data); err != nil {
+		return err
+	}
+	allowed := allowedBodyFields(r.URL.Path, r.Method)
+	if allowed == nil {
+		return nil
+	}
+	if err := validateTopLevelObject(data, allowed); err != nil {
+		return err
+	}
+	if target := bodyTarget(r.URL.Path, r.Method); target != nil {
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(target); err != nil {
+			if strings.Contains(err.Error(), "unknown field") {
+				return ErrUnknownField
+			}
+			return ErrInvalidJSON
+		}
+		var extra any
+		if err := decoder.Decode(&extra); err != io.EOF {
+			return ErrInvalidJSON
+		}
+	}
+	if err := validateArrayBounds(data, server.maxManifestEntries); err != nil {
+		return err
+	}
+	if strings.Contains(r.URL.Path, "action-plans") || strings.Contains(r.URL.Path, "review-decisions") || strings.Contains(r.URL.Path, "workflow-runs") {
+		if int64(len(data)) > server.maxManifestBytes {
+			return ErrRequestTooLarge
+		}
+	}
+	return nil
+}
+
+func bodyTarget(path, method string) any {
+	switch {
+	case method == http.MethodPatch && strings.Contains(path, "/connections/"):
+		return new(api.ConnectionPatch)
+	case method == http.MethodPatch && strings.Contains(path, "/storage-roots/"):
+		return new(api.StorageRootPatch)
+	case method == http.MethodPatch && strings.Contains(path, "/path-mappings/"):
+		return new(api.PathMappingPatch)
+	case method == http.MethodPost && strings.HasSuffix(path, "/connections"):
+		return new(api.ConnectionCreate)
+	case method == http.MethodPost && strings.HasSuffix(path, "/storage-roots"):
+		return new(api.StorageRootCreate)
+	case method == http.MethodPost && strings.HasSuffix(path, "/path-mappings"):
+		return new(api.PathMappingCreate)
+	case method == http.MethodPost && strings.Contains(path, "/action-plans"):
+		return new(api.ActionPlanCreate)
+	case method == http.MethodPost && strings.Contains(path, "/connection-checks"):
+		return new(api.ConnectionCheckCreate)
+	case method == http.MethodPost && strings.Contains(path, "/review-decisions"):
+		return new(api.ReviewDecisionCreate)
+	case method == http.MethodPost && strings.HasSuffix(path, "/scans"):
+		return new(api.ScanCreate)
+	case method == http.MethodPost && strings.HasSuffix(path, "/workflow-runs"):
+		return new(api.WorkflowRunCreate)
+	case method == http.MethodPost && strings.Contains(path, "/cancellations"):
+		return new(api.CancellationCreate)
+	default:
+		return nil
+	}
+}
+
+const maxJSONDepth = 64
+
+func validateJSONSyntax(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if err := scanJSONValue(decoder, 0); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return ErrInvalidJSON
+	}
+	return nil
+}
+
+func scanJSONValue(decoder *json.Decoder, depth int) error {
+	if depth > maxJSONDepth {
+		return ErrRequestTooLarge
+	}
+	token, err := decoder.Token()
+	if err != nil {
+		return ErrInvalidJSON
+	}
+	delim, isDelim := token.(json.Delim)
+	if !isDelim {
+		return nil
+	}
+	switch delim {
+	case '{':
+		seen := make(map[string]struct{})
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return ErrInvalidJSON
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return ErrInvalidJSON
+			}
+			if _, exists := seen[key]; exists {
+				return ErrDuplicateField
+			}
+			seen[key] = struct{}{}
+			if err := scanJSONValue(decoder, depth+1); err != nil {
+				return err
+			}
+		}
+		end, err := decoder.Token()
+		if err != nil {
+			return ErrInvalidJSON
+		}
+		if end != json.Delim('}') {
+			return ErrInvalidJSON
+		}
+	case '[':
+		for decoder.More() {
+			if err := scanJSONValue(decoder, depth+1); err != nil {
+				return err
+			}
+		}
+		end, err := decoder.Token()
+		if err != nil {
+			return ErrInvalidJSON
+		}
+		if end != json.Delim(']') {
+			return ErrInvalidJSON
+		}
+	default:
+		return ErrInvalidJSON
+	}
+	return nil
+}
+
+func allowedBodyFields(path, method string) map[string]struct{} {
+	if method == http.MethodPatch && strings.Contains(path, "/connections/") {
+		return fields("credentials", "endpoint", "label")
+	}
+	if method == http.MethodPatch && strings.Contains(path, "/storage-roots/") {
+		return fields("label", "path", "watchEnabled", "watchIntervalSeconds")
+	}
+	if method == http.MethodPatch && strings.Contains(path, "/path-mappings/") {
+		return fields("sourcePrefix", "destinationPrefix")
+	}
+	switch {
+	case method == http.MethodPost && strings.HasSuffix(path, "/connections"):
+		return fields("credentials", "endpoint", "id", "kind", "label")
+	case method == http.MethodPost && strings.HasSuffix(path, "/storage-roots"):
+		return fields("id", "label", "path", "purpose")
+	case method == http.MethodPost && strings.HasSuffix(path, "/path-mappings"):
+		return fields("connectionId", "destinationPrefix", "id", "rootId", "sourcePrefix")
+	case method == http.MethodPost && strings.Contains(path, "/action-plans"):
+		return fields("action", "expiresInSeconds")
+	case method == http.MethodPost && strings.Contains(path, "/connection-checks"):
+		return fields("connectionId")
+	case method == http.MethodPost && strings.Contains(path, "/review-decisions"):
+		return fields("decision", "digest", "irreversibleAcknowledgement", "planId", "revision", "unverifiedLabel")
+	case method == http.MethodPost && strings.HasSuffix(path, "/scans"):
+		return fields("connectionIds", "rootIds", "scope")
+	case method == http.MethodPost && strings.HasSuffix(path, "/workflow-runs"):
+		return fields("deadlineSeconds", "name", "recipeVersion", "steps")
+	case method == http.MethodPost && strings.Contains(path, "/cancellations"):
+		return fields("reason")
+	case method == http.MethodPost && strings.Contains(path, "/reconciliations"):
+		return fields("scope")
+	case method == http.MethodPost && strings.Contains(path, "/retry-requests"):
+		return fields("expectedRevision", "reason")
+	default:
+		return nil
+	}
+}
+
+func fields(values ...string) map[string]struct{} {
+	result := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		result[value] = struct{}{}
+	}
+	return result
+}
+
+func validateTopLevelObject(data []byte, allowed map[string]struct{}) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	token, err := decoder.Token()
+	if err != nil {
+		return ErrInvalidJSON
+	}
+	delim, ok := token.(json.Delim)
+	if !ok || delim != '{' {
+		return ErrInvalidJSON
+	}
+	seen := make(map[string]struct{})
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return ErrInvalidJSON
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return ErrInvalidJSON
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return ErrDuplicateField
+		}
+		seen[key] = struct{}{}
+		if _, known := allowed[key]; !known {
+			return ErrUnknownField
+		}
+		var raw json.RawMessage
+		if err := decoder.Decode(&raw); err != nil {
+			return ErrInvalidJSON
+		}
+	}
+	if _, err := decoder.Token(); err != nil {
+		return ErrInvalidJSON
+	}
+	if decoder.More() {
+		return ErrInvalidJSON
+	}
+	return nil
+}
+
+func validateArrayBounds(data []byte, maximum int) error {
+	if maximum <= 0 {
+		return ErrRequestTooLarge
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return ErrInvalidJSON
+	}
+	for _, name := range []string{"manifest", "files", "steps", "connectionIds", "rootIds", "descriptorIds", "clientItemIds"} {
+		raw, ok := fields[name]
+		if !ok || len(raw) == 0 || raw[0] != '[' {
+			continue
+		}
+		var items []json.RawMessage
+		if err := json.Unmarshal(raw, &items); err != nil {
+			return ErrInvalidJSON
+		}
+		if len(items) > maximum {
+			return ErrRequestTooLarge
+		}
+	}
+	return nil
+}
+
+func validateIdempotencyHeader(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 200 || !utf8.ValidString(value) {
+		return ErrInvalidIdempotency
+	}
+	for _, char := range value {
+		if char < 0x20 || char == 0x7f {
+			return ErrInvalidIdempotency
+		}
+	}
+	return nil
+}
+
+func requestDigest(r *http.Request) []byte {
+	if r.Body == nil {
+		r.Body = http.NoBody
+	}
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil
+	}
+	r.Body = io.NopCloser(bytes.NewReader(data))
+	var canonical bytes.Buffer
+	if json.Valid(data) {
+		var value any
+		if json.Unmarshal(data, &value) == nil {
+			if encoded, marshalErr := json.Marshal(value); marshalErr == nil {
+				data = encoded
+			}
+		}
+	}
+	canonical.WriteString(r.Method)
+	canonical.WriteByte('\n')
+	canonical.WriteString(r.URL.Path)
+	canonical.WriteByte('\n')
+	canonical.WriteString(normalizeETag(r.Header.Get("If-Match")))
+	canonical.WriteByte('\n')
+	canonical.Write(data)
+	digest := sha256.Sum256(canonical.Bytes())
+	return digest[:]
+}
+
+func (server *Server) lookupIdempotency(key string, digest []byte) (*idempotencyEntry, bool) {
+	server.idempotencyMu.Lock()
+	defer server.idempotencyMu.Unlock()
+	entry, exists := server.idempotency[key]
+	if !exists {
+		return nil, false
+	}
+	if !bytes.Equal(entry.digest, digest) {
+		return nil, true
+	}
+	copyEntry := entry
+	copyEntry.digest = append([]byte(nil), entry.digest...)
+	copyEntry.header = entry.header.Clone()
+	copyEntry.body = append([]byte(nil), entry.body...)
+	return &copyEntry, true
+}
+
+// beginIdempotency reserves one request key. A second caller with the same
+// digest waits for the first response, while a changed digest is rejected
+// before the application service can be invoked.
+func (server *Server) beginIdempotency(key string, digest []byte) (*idempotencyEntry, *idempotencyPending, bool) {
+	server.idempotencyMu.Lock()
+	defer server.idempotencyMu.Unlock()
+	if entry, exists := server.idempotency[key]; exists {
+		if !bytes.Equal(entry.digest, digest) {
+			return nil, nil, true
+		}
+		copyEntry := entry
+		copyEntry.digest = append([]byte(nil), entry.digest...)
+		copyEntry.header = entry.header.Clone()
+		copyEntry.body = append([]byte(nil), entry.body...)
+		return &copyEntry, nil, false
+	}
+	if pending, exists := server.pending[key]; exists {
+		if !bytes.Equal(pending.digest, digest) {
+			return nil, nil, true
+		}
+		return nil, pending, false
+	}
+	pending := &idempotencyPending{digest: append([]byte(nil), digest...), done: make(chan struct{})}
+	server.pending[key] = pending
+	return nil, nil, false
+}
+
+func (server *Server) finishIdempotency(key string) {
+	server.idempotencyMu.Lock()
+	defer server.idempotencyMu.Unlock()
+	if pending, exists := server.pending[key]; exists {
+		delete(server.pending, key)
+		close(pending.done)
+	}
+}
+
+func (server *Server) rememberIdempotency(key string, digest []byte, entry idempotencyEntry) {
+	server.idempotencyMu.Lock()
+	defer server.idempotencyMu.Unlock()
+	if len(server.idempotency) >= maxIdempotencyEntries {
+		// Remove one deterministic key.  The cache is an optimization around
+		// the durable service; a bounded cache cannot grow with caller input.
+		for oldKey := range server.idempotency {
+			delete(server.idempotency, oldKey)
+			break
+		}
+	}
+	entry.digest = append([]byte(nil), digest...)
+	entry.header = entry.header.Clone()
+	entry.body = append([]byte(nil), entry.body...)
+	server.idempotency[key] = entry
+}
+
+type responseCapture struct {
+	header http.Header
+	status int
+	body   bytes.Buffer
+}
+
+func newCapture() *responseCapture                   { return &responseCapture{header: make(http.Header)} }
+func (capture *responseCapture) Header() http.Header { return capture.header }
+func (capture *responseCapture) WriteHeader(status int) {
+	if capture.status == 0 {
+		capture.status = status
+	}
+}
+func (capture *responseCapture) Write(data []byte) (int, error) {
+	if capture.status == 0 {
+		capture.status = http.StatusOK
+	}
+	return capture.body.Write(data)
+}
+func (capture *responseCapture) entry() idempotencyEntry {
+	status := capture.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	return idempotencyEntry{status: status, header: capture.header.Clone(), body: append([]byte(nil), capture.body.Bytes()...)}
+}
+func replay(w http.ResponseWriter, entry *idempotencyEntry) {
+	if entry == nil {
+		return
+	}
+	for key, values := range entry.header {
+		if key == "X-Request-ID" {
+			continue
+		}
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+	w.WriteHeader(entry.status)
+	_, _ = w.Write(entry.body)
+}
+
+// Keep compile-time proof that the implementation still satisfies the
+// generated strict contract when the OpenAPI bundle changes.
+var _ api.StrictServerInterface = (*Server)(nil)
