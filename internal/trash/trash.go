@@ -1188,10 +1188,10 @@ func (service *Service) persistTrashReconciliation(ctx context.Context, entry En
 		}
 		priorOutcome := ""
 		if outcomeOperation(janitor.OutcomeJson) == OperationTrash {
-			// Keep the complete preceding action/reconciliation envelope. A
-			// read-back is additive evidence and must not erase affected item
-			// identities, action errors, timestamps, or scope diagnostics.
-			priorOutcome = janitor.OutcomeJson
+			// Keep the immutable preceding action envelope. A read-back is
+			// additive evidence and must not erase affected item identities,
+			// action errors, timestamps, or scope diagnostics.
+			priorOutcome = compactTrashPriorOutcome(janitor.OutcomeJson)
 		}
 		outcome, err := encodeTrashReconciliation(reconciliation, state, effects, priorOutcome)
 		if err != nil {
@@ -1249,6 +1249,34 @@ func encodeTrashReconciliation(reconciliation trashReconciliation, state string,
 		return "", err
 	}
 	return string(encoded), nil
+}
+
+// compactTrashPriorOutcome returns the oldest package-owned envelope in a
+// reconciliation chain. Read-only reconciliation replaces the current
+// observation on every pass, but the immutable action result must remain
+// available. Keeping only that original envelope prevents a periodic janitor
+// from recursively copying the complete current journal on every unchanged
+// observation. Historical round-five chains are compacted in one read-back;
+// newly written outcomes contain at most one priorOutcome field.
+func compactTrashPriorOutcome(raw string) string {
+	candidate := strings.TrimSpace(raw)
+	if candidate == "" {
+		return ""
+	}
+	for {
+		var envelope map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(candidate), &envelope); err != nil || envelope == nil {
+			return candidate
+		}
+		prior, ok := envelope["priorOutcome"]
+		if !ok || len(prior) == 0 || !json.Valid(prior) {
+			return candidate
+		}
+		candidate = strings.TrimSpace(string(prior))
+		if candidate == "" {
+			return ""
+		}
+	}
 }
 
 func appendUniqueString(values []string, value string) []string {
