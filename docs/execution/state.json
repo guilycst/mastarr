@@ -3804,7 +3804,7 @@
         "Correction round seven focused/repeated race tests, vet, module verification, product pre-commit and full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed.",
         "0770b38dc318c776ffb33ad4063c51c5b5416a58 independent C-04 correction round seven review receipt, integrated as 03cd48e81aabd5279bb9ea701e6cd6d027856624; R3f-d/R3g-b closed and R3g-c remains P1.",
         "Reviewer full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed; independent built-in owner-removal probe failed 20/20 ordinary and 10/10 race.",
-        "C-04 correction round eight dispatched from clean coordinator checkpoint 61f0d1dd25edd0d47115df06b68c0a6e3f217aeb; scope is R3g-c built-in configuration recovery-owner removal with durable persistence."
+        "C-04 correction round eight dispatched from clean coordinator checkpoint d646d967b8375528ce707debbe461a815c38b29e; scope is R3g-c built-in configuration recovery-owner removal with durable persistence."
       ],
       "review": {
         "status": "changes_requested",
@@ -3863,8 +3863,8 @@
         "correctionStatus": "in_progress",
         "correctionRound": 8,
         "correctionOwner": "/root/x05_implementer",
-        "correctionBaseSha": "61f0d1dd25edd0d47115df06b68c0a6e3f217aeb",
-        "correctionDispatchCheckpoint": "61f0d1dd25edd0d47115df06b68c0a6e3f217aeb",
+        "correctionBaseSha": "d646d967b8375528ce707debbe461a815c38b29e",
+        "correctionDispatchCheckpoint": "d646d967b8375528ce707debbe461a815c38b29e",
         "correctionReviewPath": "docs/execution/handoffs/C-04-review-round8.md",
         "correctionHandoffPath": "docs/execution/handoffs/C-04-correction-round8.md",
         "correctionReviewer": "/root/x05_reviewer",
@@ -3878,7 +3878,7 @@
         "correctionProductCommits": [
           "23462380b004586c1e09794c937ae396ee18b394"
         ],
-        "correctionDispatchCommit": "61f0d1dd25edd0d47115df06b68c0a6e3f217aeb"
+        "correctionDispatchCommit": "d646d967b8375528ce707debbe461a815c38b29e"
       },
       "implementationCommit": "52f3654cd0a669dbc3dc59f5187bec828616c34e",
       "handoffCommit": "21c54c7a288eb984fd122f475c41df03fe6c6a23",
@@ -5896,7 +5896,7 @@
       ]
     }
   },
-  "nextAction": "C-04 correction round eight is dispatched from clean checkpoint 61f0d1dd25edd0d47115df06b68c0a6e3f217aeb; implementer owns R3g-c and reviewer round eight follows.",
+  "nextAction": "C-04 correction round eight is dispatched from clean checkpoint d646d967b8375528ce707debbe461a815c38b29e; implementer owns R3g-c and reviewer round eight follows.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
