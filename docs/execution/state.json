@@ -3573,7 +3573,8 @@
         "Independent W-05 correction round-three receipt eee4fa2dac2dd201316e79f6a898cea20c0071f8 integrated as 08f8672: R1a/R2a/R2b closed, R3b remains blocking; planned trash crash-window probes reproduced the stuck state 10/10 ordinary and 5/5 race, and full offline guardrails passed.",
         "W-05 correction round three dispatched from state checkpoint a68fafb29f07ff0561f1e28b6857a1c3fa0ab311 to /root/x05_implementer. Scope is R3b only: explicit durable read-only reconciliation for planned trash intents across pre-dispatch, post-dispatch, partial, collision, identity-change, directory-leaf, and restart states; no schema/API/adapter/client/worker changes.",
         "W-05 correction round three product 985be793b184f090599b2ee7aea3860993091139 and handoff 735086cd7123ba2527f02dc7346a606ab79c6ed0 complete from dispatch checkpoint a68fafb29f07ff0561f1e28b6857a1c3fa0ab311; R3b durable planned-trash reconciliation regressions, focused/race/root/vet/mod checks and product guardrails passed. Full aggregate race and cross-build remain coordinator/reviewer gates.",
-        "Independent W-05 correction round-four receipt 027a4431a0dc586419a596a01e87921f2edd7571 integrated as 7447e08: R3b closed, R3c remains blocking; partial retry probes reproduced lost per-item state 20/20 ordinary and 10/10 race, and full offline guardrails passed."
+        "Independent W-05 correction round-four receipt 027a4431a0dc586419a596a01e87921f2edd7571 integrated as 7447e08: R3b closed, R3c remains blocking; partial retry probes reproduced lost per-item state 20/20 ordinary and 10/10 race, and full offline guardrails passed.",
+        "W-05 correction round four dispatched from state checkpoint 03d06218a36d19b2f504731664c35b8d9fd5b06f to /root/x05_implementer. Scope is R3c only: preserve exact per-item effects and remaining retry scope after partial explicit trash retry, with held-state read-only recovery; no schema/API/adapter/client/worker changes."
       ],
       "review": {
         "status": "changes_requested",
@@ -3611,10 +3612,10 @@
           "GOWORK=off focused tests/race/vet/module verification and full offline guardrails",
           "generation/API/Vacuum/lint/architecture checks and Linux amd64/arm64 CGO-free builds"
         ],
-        "reviewPath": "docs/execution/handoffs/W-05-review-round4.md",
-        "handoffPath": "docs/execution/handoffs/W-05-correction-round3.md",
+        "reviewPath": "docs/execution/handoffs/W-05-review-round5.md",
+        "handoffPath": "docs/execution/handoffs/W-05-correction-round4.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "changes_requested",
+        "status": "in_progress",
         "dependencyCommits": {
           "W-04-product": "780c00e92498660c08b6ac67259bbb4147c58531",
           "W-04-review": "2aef896fd5d3e10dcefc80f8f5a094852d73fd27",
@@ -3626,29 +3627,29 @@
           "X-14": "qBittorrent removal remains metadata-only with deleteFiles=false; stop and read-back are required before payload mutation."
         },
         "waitingOn": "/root/x05_implementer",
-        "waitingReason": "correction round four for R3c partial trash retry per-item state",
+        "waitingReason": "W-05 correction round four implementation for R3c partial trash retry per-item state",
         "implementationCommit": "37ecdde36b56a6cd3d7d147cd8af1b49eba3f45a",
         "handoffCommit": "91038f799d894b58d1c7f149606ac2c686515beb",
         "reviewSourceCommit": "985be793b184f090599b2ee7aea3860993091139",
         "reviewRound": 4,
-        "reviewCommit": "027a4431a0dc586419a596a01e87921f2edd7571",
-        "reviewIntegrationCommit": "7447e08",
-        "correctionStatus": "changes_requested",
-        "correctionRound": 3,
+        "reviewCommit": null,
+        "reviewIntegrationCommit": null,
+        "correctionStatus": "in_progress",
+        "correctionRound": 4,
         "correctionOwner": "/root/x05_implementer",
-        "correctionBaseSha": "a68fafb29f07ff0561f1e28b6857a1c3fa0ab311",
-        "correctionDispatchCheckpoint": "a68fafb29f07ff0561f1e28b6857a1c3fa0ab311",
-        "correctionReviewPath": "docs/execution/handoffs/W-05-review-round4.md",
-        "correctionHandoffPath": "docs/execution/handoffs/W-05-correction-round3.md",
+        "correctionBaseSha": "03d06218a36d19b2f504731664c35b8d9fd5b06f",
+        "correctionDispatchCheckpoint": "03d06218a36d19b2f504731664c35b8d9fd5b06f",
+        "correctionReviewPath": "docs/execution/handoffs/W-05-review-round5.md",
+        "correctionHandoffPath": "docs/execution/handoffs/W-05-correction-round4.md",
         "correctionReviewer": "/root/x05_reviewer",
         "priorReviewCommit": "027a4431a0dc586419a596a01e87921f2edd7571",
         "priorReviewIntegrationCommit": "7447e08",
-        "correctionImplementationCommit": "985be793b184f090599b2ee7aea3860993091139",
-        "correctionHandoffCommit": "735086cd7123ba2527f02dc7346a606ab79c6ed0",
-        "correctionReviewSourceCommit": "985be793b184f090599b2ee7aea3860993091139",
-        "priorCorrectionRound": 2,
-        "priorCorrectionImplementationCommit": "730b3774fb412c2d9dcecce5a5dec292d11f63eb",
-        "priorCorrectionHandoffCommit": "daa7df6d2612439b07556e9e776e1dd4a17f0983"
+        "correctionImplementationCommit": null,
+        "correctionHandoffCommit": null,
+        "correctionReviewSourceCommit": null,
+        "priorCorrectionRound": 3,
+        "priorCorrectionImplementationCommit": "985be793b184f090599b2ee7aea3860993091139",
+        "priorCorrectionHandoffCommit": "735086cd7123ba2527f02dc7346a606ab79c6ed0"
       },
       "reviewHistory": [
         {
@@ -5639,7 +5640,7 @@
       ]
     }
   },
-  "nextAction": "Record and dispatch W-05 correction round four for R3c: preserve exact per-item effects and remaining scope after partial explicit trash retry, with held-state read-only recovery.",
+  "nextAction": "W-05 correction round four is dispatched from 03d06218a36d19b2f504731664c35b8d9fd5b06f; await product and handoff commits for R3c, then queue independent review round five.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
