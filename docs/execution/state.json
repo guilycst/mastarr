@@ -4183,9 +4183,23 @@
         "Synthetic fixtures only. Preserve provenance, unknown coverage, download-client metadata, per-instance tracking, editable identity/episode/subtitle associations, pagination and deep-link input state.",
         "No mutations beyond rendering read-only inventory and matching views; review and workflow actions remain in later U-03.",
         "0e0e66d16c4211e20d4b773262165f7e5b4e3dc9 U-02 product adds normalized HTTP-only inventory reader, strict DTO conversion, bounded read-only handler and synthetic coverage.",
-        "f832b664104f2f0d07523a15cf019bd87cbf793a U-02 handoff records delivered discoveries/media/download/descriptor list/detail views, provenance, unknown coverage, per-instance tracking, editable GET-only associations, exact checks and deferred browser integration."
+        "f832b664104f2f0d07523a15cf019bd87cbf793a U-02 handoff records delivered discoveries/media/download/descriptor list/detail views, provenance, unknown coverage, per-instance tracking, editable GET-only associations, exact checks and deferred browser integration.",
+        "c4ea224451e2fd96e6128745a82b2adc8a261106 independent U-02 round-one review requests corrections; focused/UI/race/vet/mod/tidy/generation/architecture/planning/Linux/full offline checks pass but R1-R5 remain."
       ],
-      "review": null,
+      "review": {
+        "status": "changes_requested",
+        "decision": "changes_requested",
+        "reviewer": "/root/x05_reviewer",
+        "commit": "c4ea224451e2fd96e6128745a82b2adc8a261106",
+        "findings": [
+          "R1 P1 detail responses are not bound to the requested deep-link ID across discovery, media, download and descriptor routes.",
+          "R2 P1 accepted GET draft state is overwritten or dropped across media identity and association/candidate forms.",
+          "R3 P1 required file, provenance, tracking, coverage and descriptor observation evidence is omitted from rendered views.",
+          "R4 P2 unselected media-kind and association-role option attributes omit the closing quote.",
+          "R5 P2 nested candidate/provenance semantics and required enum values are not strictly validated."
+        ],
+        "round": 1
+      },
       "dispatch": {
         "assignedAt": "2026-09-17",
         "model": "gpt-5.6-luna",
@@ -4213,9 +4227,9 @@
         "reviewPath": "docs/execution/handoffs/U-02-review-round1.md",
         "handoffPath": "docs/execution/handoffs/U-02.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "awaiting_review",
-        "waitingOn": "/root/x05_reviewer",
-        "waitingReason": "U-02 product and handoff are complete; independent review is required before integration.",
+        "status": "changes_requested",
+        "waitingOn": "/root/x05_implementer",
+        "waitingReason": "Independent review found three P1 and two P2 U-02 correctness gaps; correction round one is required before re-review.",
         "dependencyCommits": {
           "U-01": "c2aa8a692e719d3e925f37c0d2b42357e86cce04"
         },
@@ -4223,12 +4237,40 @@
         "handoffCommit": "f832b664104f2f0d07523a15cf019bd87cbf793a",
         "reviewSourceCommit": "0e0e66d16c4211e20d4b773262165f7e5b4e3dc9",
         "reviewRound": 1,
-        "reviewCommit": null,
-        "reviewIntegrationCommit": null
+        "reviewCommit": "c4ea224451e2fd96e6128745a82b2adc8a261106",
+        "reviewIntegrationCommit": "f35beea597e62490d13f269794b9774a0ec08a33",
+        "correctionStatus": "assigned",
+        "correctionRound": 1,
+        "correctionOwner": "/root/x05_implementer",
+        "correctionBaseSha": "f35beea597e62490d13f269794b9774a0ec08a33",
+        "correctionDispatchCheckpoint": "f35beea597e62490d13f269794b9774a0ec08a33",
+        "correctionReviewPath": "docs/execution/handoffs/U-02-review-round2.md",
+        "correctionHandoffPath": "docs/execution/handoffs/U-02-correction-round1.md",
+        "correctionReviewer": "/root/x05_reviewer",
+        "correctionImplementationCommit": null,
+        "correctionHandoffCommit": null,
+        "correctionReviewSourceCommit": null,
+        "correctionReviewCommit": null,
+        "correctionReviewIntegrationCommit": null,
+        "correctionDispatchCommit": "f35beea597e62490d13f269794b9774a0ec08a33",
+        "correctionProductCommits": []
       },
       "implementationCommit": "0e0e66d16c4211e20d4b773262165f7e5b4e3dc9",
       "handoffCommit": "f832b664104f2f0d07523a15cf019bd87cbf793a",
-      "reviewSourceCommit": "0e0e66d16c4211e20d4b773262165f7e5b4e3dc9"
+      "reviewSourceCommit": "0e0e66d16c4211e20d4b773262165f7e5b4e3dc9",
+      "reviewHistory": [
+        {
+          "round": 1,
+          "reviewer": "/root/x05_reviewer",
+          "commit": "c4ea224451e2fd96e6128745a82b2adc8a261106",
+          "status": "changes_requested",
+          "sourceCommit": "0e0e66d16c4211e20d4b773262165f7e5b4e3dc9",
+          "receipt": "docs/execution/handoffs/U-02-review-round1.md",
+          "productCommit": "0e0e66d16c4211e20d4b773262165f7e5b4e3dc9",
+          "handoffCommit": "f832b664104f2f0d07523a15cf019bd87cbf793a",
+          "integratedCommit": "f35beea597e62490d13f269794b9774a0ec08a33"
+        }
+      ]
     },
     "U-03": {
       "status": "planned",
@@ -6074,7 +6116,7 @@
       ]
     }
   },
-  "nextAction": "U-02 product and handoff are recorded at 0e0e66d16c4211e20d4b773262165f7e5b4e3dc9 and f832b664104f2f0d07523a15cf019bd87cbf793a; dispatch independent review round one for the inventory views.",
+  "nextAction": "U-02 review receipt c4ea224451e2fd96e6128745a82b2adc8a261106 is integrated at f35beea597e62490d13f269794b9774a0ec08a33; correction round one is assigned to /root/x05_implementer for R1-R5.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
