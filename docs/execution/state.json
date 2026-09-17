@@ -4062,7 +4062,8 @@
         "9ada4806d49bb3da71e0c8e3c1e50fdc98c2f5a6 independent U-01 round-one review receipt, integrated as 7ef11c3072769c04ecd2679b373a08fcfc6df46; five P2 findings remain.",
         "Reviewer full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed; UI tests/race/vet/mod, generation, architecture, planning, metadata/header probes and Linux builds passed while findings remain.",
         "U-01 correction round two dispatched from clean coordinator checkpoint 84e5aaca09e9d69fd5edc307d7294a48d528b895; worker owns R1-R4 UI behavior and coordinator owns the separate UI module metadata normalization for R5.",
-        "b74cde76e1b8cd06d68758a2929ed4d3c39230df coordinator support commit pins caarlos0/env/v11 v11.4.1 in ui/go.mod and ui/go.sum for parity with the root bootstrap parser; worker remains restricted to UI behavior paths."
+        "b74cde7e0a38635023a02e905db71ae963a5c0bc coordinator support commit pins caarlos0/env/v11 v11.4.1 in ui/go.mod and ui/go.sum for parity with the root bootstrap parser; worker remains restricted to UI behavior paths.",
+        "U-01 correction round two dispatch checkpoint finalized at clean state commit e116df6a55bd1921be52dc134a0d5ae4dc53d34a; no product paths changed by this state-only correction."
       ],
       "review": {
         "status": "changes_requested",
@@ -4128,8 +4129,8 @@
         "correctionStatus": "in_progress",
         "correctionRound": 2,
         "correctionOwner": "/root/x05_implementer",
-        "correctionBaseSha": "b74cde76e1b8cd06d68758a2929ed4d3c39230df",
-        "correctionDispatchCheckpoint": "b74cde76e1b8cd06d68758a2929ed4d3c39230df",
+        "correctionBaseSha": "e116df6a55bd1921be52dc134a0d5ae4dc53d34a",
+        "correctionDispatchCheckpoint": "e116df6a55bd1921be52dc134a0d5ae4dc53d34a",
         "correctionReviewPath": "docs/execution/handoffs/U-01-review-round2.md",
         "correctionHandoffPath": "docs/execution/handoffs/U-01-correction-round2.md",
         "correctionReviewer": "/root/x05_reviewer",
@@ -4139,7 +4140,7 @@
         "correctionReviewCommit": null,
         "correctionReviewIntegrationCommit": null,
         "correctionProductCommits": [],
-        "correctionDispatchCommit": "b74cde76e1b8cd06d68758a2929ed4d3c39230df"
+        "correctionDispatchCommit": "e116df6a55bd1921be52dc134a0d5ae4dc53d34a"
       },
       "reviewHistory": [
         {
@@ -6016,7 +6017,7 @@
       ]
     }
   },
-  "nextAction": "U-01 correction round two is dispatched from clean checkpoint b74cde76e1b8cd06d68758a2929ed4d3c39230df; implementer owns R1-R4 and env/v11 parser integration while R5 module metadata is already normalized.",
+  "nextAction": "U-01 correction round two is dispatched from clean checkpoint e116df6a55bd1921be52dc134a0d5ae4dc53d34a; implementer owns R1-R4 and env/v11 parser integration while R5 module metadata is normalized.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
