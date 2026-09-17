@@ -19,19 +19,24 @@ import (
 )
 
 const (
-	DefaultPageSize       = 25
-	MaxPageSize           = 100
-	MaxCursorLength       = 256
-	MaxIdentityLength     = 128
-	MaxInputLength        = 240
-	MaxItemsPerPage       = 100
-	MaxFilesPerDiscovery  = 1000
-	MaxCandidates         = 100
-	MaxProvenance         = 100
-	MaxTracking           = 200
-	MaxAssociationInputs  = 256
-	MaxQueryValues        = 512
-	MaxRenderedTextLength = 240
+	DefaultPageSize      = 25
+	MaxPageSize          = 100
+	MaxCursorLength      = 256
+	MaxIdentityLength    = 128
+	MaxInputLength       = 240
+	MaxItemsPerPage      = 100
+	MaxFilesPerDiscovery = 1000
+	MaxCandidates        = 100
+	MaxProvenance        = 100
+	MaxTracking          = 200
+	MaxAssociationInputs = 256
+	// MaxCandidateEpisodesLength covers every non-negative int on supported
+	// Go targets, plus separators, for a candidate with the maximum accepted
+	// episode count. Candidate episode drafts therefore do not inherit the
+	// shorter scalar query bound.
+	MaxCandidateEpisodesLength = MaxAssociationInputs*20 + (MaxAssociationInputs - 1)
+	MaxQueryValues             = 512
+	MaxRenderedTextLength      = 240
 )
 
 // ErrorKind identifies a sanitized inventory read failure.
@@ -151,6 +156,8 @@ type Coverage struct {
 	RootID           string
 	SourceID         string
 	SnapshotRevision string
+	StartedAt        *time.Time
+	CompletedAt      *time.Time
 	ObservedAt       time.Time
 	ObservedCount    *int
 	ReasonCodes      []string
@@ -372,6 +379,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				h.handleReadError(w, err)
 				return
 			}
+			if err := validateDetailBindings(query, len(item.Files), len(item.Candidates)); err != nil {
+				h.renderError(w, http.StatusBadRequest, "Invalid inventory query.", "The supplied detail fields do not match this inventory record.")
+				return
+			}
 			h.renderDiscoveryDetail(w, route, query, item)
 			return
 		}
@@ -587,7 +598,11 @@ func parseQuery(raw, route string, detail bool, defaultSize, maxSize int) (query
 			return queryState{}, errors.New("duplicate query value")
 		}
 		value := entries[0]
-		if !utf8.ValidString(value) || len(value) > MaxInputLength {
+		maxValueLength := MaxInputLength
+		if isCandidateEpisodesKey(key) {
+			maxValueLength = MaxCandidateEpisodesLength
+		}
+		if !utf8.ValidString(value) || len(value) > maxValueLength {
 			return queryState{}, errors.New("query value too large")
 		}
 		if key == "cursor" {
@@ -624,14 +639,41 @@ func parseQuery(raw, route string, detail bool, defaultSize, maxSize int) (query
 			continue
 		}
 		if key == "kind" {
-			if !validKind(value) {
+			if route != "media" {
+				return queryState{}, errors.New("kind filter not valid for route")
+			}
+			if value != "" && !validKind(value) {
 				return queryState{}, errors.New("kind invalid")
 			}
 			state.Kind = value
 			state.Values[key] = value
 			continue
 		}
+		if detail && isDynamicDetailKey(key) {
+			if route != "discoveries" {
+				return queryState{}, errors.New("dynamic detail input not valid for route")
+			}
+			dynamic, ok := parseDynamicDetailKey(key)
+			if !ok || dynamic.index >= MaxAssociationInputs {
+				return queryState{}, errors.New("dynamic detail input invalid")
+			}
+			if err := validateDynamicDetailValue(dynamic, value); err != nil {
+				return queryState{}, err
+			}
+			detailInputCount++
+			if detailInputCount > MaxAssociationInputs {
+				return queryState{}, errors.New("too many detail inputs")
+			}
+			state.Values[key] = value
+			continue
+		}
+		if detail && isMalformedDynamicDetailKey(key) {
+			return queryState{}, errors.New("dynamic detail input invalid")
+		}
 		if detail && allowedDetailInput(key) {
+			if err := validateFixedDetailValue(key, value); err != nil {
+				return queryState{}, err
+			}
 			detailInputCount++
 			if detailInputCount > MaxAssociationInputs {
 				return queryState{}, errors.New("too many detail inputs")
@@ -662,12 +704,182 @@ func allowedDetailInput(key string) bool {
 			return true
 		}
 	}
-	for _, prefix := range []string{"association-", "candidate-"} {
-		if strings.HasPrefix(key, prefix) && len(key) <= MaxIdentityLength {
-			return validInputKey(key)
+	_, ok := parseDynamicDetailKey(key)
+	return ok
+}
+
+type dynamicDetailKey struct {
+	family string
+	index  int
+	field  string
+}
+
+func isDynamicDetailKey(key string) bool {
+	return strings.HasPrefix(key, "association-") || strings.HasPrefix(key, "candidate-")
+}
+
+func isMalformedDynamicDetailKey(key string) bool {
+	if !isDynamicDetailKey(key) {
+		return false
+	}
+	_, ok := parseDynamicDetailKey(key)
+	return !ok
+}
+
+func parseDynamicDetailKey(key string) (dynamicDetailKey, bool) {
+	if len(key) > MaxIdentityLength {
+		return dynamicDetailKey{}, false
+	}
+	var family string
+	var remainder string
+	switch {
+	case strings.HasPrefix(key, "association-"):
+		family = "association"
+		remainder = strings.TrimPrefix(key, "association-")
+	case strings.HasPrefix(key, "candidate-"):
+		family = "candidate"
+		remainder = strings.TrimPrefix(key, "candidate-")
+	default:
+		return dynamicDetailKey{}, false
+	}
+	separator := strings.IndexByte(remainder, '-')
+	if separator <= 0 || separator == len(remainder)-1 || strings.IndexByte(remainder[separator+1:], '-') >= 0 {
+		return dynamicDetailKey{}, false
+	}
+	indexText := remainder[:separator]
+	for _, character := range indexText {
+		if character < '0' || character > '9' {
+			return dynamicDetailKey{}, false
 		}
 	}
-	return false
+	if len(indexText) > 1 && indexText[0] == '0' {
+		return dynamicDetailKey{}, false
+	}
+	index, err := strconv.Atoi(indexText)
+	if err != nil || index < 0 {
+		return dynamicDetailKey{}, false
+	}
+	field := remainder[separator+1:]
+	if family == "association" {
+		switch field {
+		case "identity", "episode", "language", "pair", "forced", "sdh", "role":
+			return dynamicDetailKey{family: family, index: index, field: field}, true
+		default:
+			return dynamicDetailKey{}, false
+		}
+	}
+	switch field {
+	case "title", "provider", "external", "kind", "season", "episodes", "year", "score":
+		return dynamicDetailKey{family: family, index: index, field: field}, true
+	default:
+		return dynamicDetailKey{}, false
+	}
+}
+
+func isCandidateEpisodesKey(key string) bool {
+	dynamic, ok := parseDynamicDetailKey(key)
+	return ok && dynamic.family == "candidate" && dynamic.field == "episodes"
+}
+
+func validateFixedDetailValue(key, value string) error {
+	if !validBounded(value, MaxInputLength, true) {
+		return errors.New("detail input invalid")
+	}
+	if key == "kind" && value != "" && !validKind(value) {
+		return errors.New("kind invalid")
+	}
+	return nil
+}
+
+func validateDynamicDetailValue(key dynamicDetailKey, value string) error {
+	switch key.field {
+	case "kind":
+		if !validKind(value) {
+			return errors.New("candidate kind invalid")
+		}
+	case "role":
+		if value != "" && !validFileRole(value) {
+			return errors.New("association role invalid")
+		}
+	case "forced", "sdh":
+		if value != "" && value != "true" && value != "false" {
+			return errors.New("association boolean invalid")
+		}
+	case "season", "year":
+		if value != "" {
+			if _, ok := parseNonNegativeInt(value); !ok {
+				return errors.New("candidate number invalid")
+			}
+		}
+	case "episodes":
+		if err := validateCandidateEpisodes(value); err != nil {
+			return err
+		}
+	case "score":
+		if value != "" {
+			parsed, err := strconv.ParseFloat(value, 32)
+			if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+				return errors.New("candidate score invalid")
+			}
+		}
+	default:
+		if !validBounded(value, MaxInputLength, true) {
+			return errors.New("detail input invalid")
+		}
+	}
+	return nil
+}
+
+func parseNonNegativeInt(value string) (int, bool) {
+	if value == "" {
+		return 0, false
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			return 0, false
+		}
+	}
+	parsed, err := strconv.ParseUint(value, 10, strconv.IntSize)
+	if err != nil || parsed > uint64(^uint(0)>>1) {
+		return 0, false
+	}
+	return int(parsed), true
+}
+
+func validateCandidateEpisodes(value string) error {
+	if value == "" {
+		return nil
+	}
+	if len(value) > MaxCandidateEpisodesLength {
+		return errors.New("candidate episodes too large")
+	}
+	parts := strings.Split(value, ",")
+	if len(parts) > MaxAssociationInputs {
+		return errors.New("too many candidate episodes")
+	}
+	for _, part := range parts {
+		if _, ok := parseNonNegativeInt(part); !ok {
+			return errors.New("candidate episode invalid")
+		}
+	}
+	return nil
+}
+
+func validateDetailBindings(query queryState, files, candidates int) error {
+	for key := range query.Values {
+		dynamic, ok := parseDynamicDetailKey(key)
+		if !ok {
+			continue
+		}
+		limit := files
+		if dynamic.family == "candidate" {
+			limit = candidates
+		}
+		if dynamic.index >= limit {
+			return errors.New("detail input index is not present in the response")
+		}
+	}
+	return nil
 }
 
 func validInputKey(value string) bool {
@@ -890,7 +1102,7 @@ func floatPointerValue(value *float32) string {
 	if value == nil {
 		return ""
 	}
-	return strconv.FormatFloat(float64(*value), 'f', 2, 32)
+	return strconv.FormatFloat(float64(*value), 'g', -1, 32)
 }
 
 func validationError(message string) error {
@@ -920,6 +1132,9 @@ func validatePage(page PageInfo) error {
 func validateCoverage(coverage Coverage) error {
 	if !validCompleteness(coverage.Completeness) || coverage.ObservedAt.IsZero() {
 		return validationError("coverage evidence is incomplete")
+	}
+	if (coverage.StartedAt != nil && coverage.StartedAt.IsZero()) || (coverage.CompletedAt != nil && coverage.CompletedAt.IsZero()) {
+		return validationError("coverage window is invalid")
 	}
 	if !validOptionalConfigID(coverage.ConnectionID) || !validOptionalConfigID(coverage.RootID) || !validOptionalIdentity(coverage.SourceID) || !validBounded(coverage.SnapshotRevision, MaxInputLength, true) {
 		return validationError("coverage identity or revision is invalid")
@@ -1298,6 +1513,8 @@ func writeCoverageTerms(p *pageWriter, coverage Coverage) {
 	detailTerm(p, "Connection ID", coverage.ConnectionID)
 	detailTerm(p, "Root ID", coverage.RootID)
 	detailTerm(p, "Source ID", coverage.SourceID)
+	detailTerm(p, "Started at", optionalTimeLabel(coverage.StartedAt))
+	detailTerm(p, "Completed at", optionalTimeLabel(coverage.CompletedAt))
 	detailTerm(p, "Observed at", timeLabel(coverage.ObservedAt))
 	count := "unknown"
 	if coverage.ObservedCount != nil {

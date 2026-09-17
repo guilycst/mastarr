@@ -420,6 +420,9 @@ func convertCoverage(source generated.Coverage) (Coverage, error) {
 	if source.Completeness == "" || source.ObservedAt.IsZero() {
 		return Coverage{}, validationError("coverage evidence is incomplete")
 	}
+	if source.StartedAt != nil && source.StartedAt.IsZero() || source.CompletedAt != nil && source.CompletedAt.IsZero() {
+		return Coverage{}, validationError("coverage window is invalid")
+	}
 	if source.ConnectionId != nil && !validConfigID(*source.ConnectionId) || source.RootId != nil && !validConfigID(*source.RootId) || source.SourceId != nil && !validIdentity(idString(*source.SourceId)) || source.SnapshotRevision != nil && !validBounded(*source.SnapshotRevision, MaxInputLength, true) {
 		return Coverage{}, validationError("coverage identity or revision is invalid")
 	}
@@ -434,6 +437,8 @@ func convertCoverage(source generated.Coverage) (Coverage, error) {
 		RootID:           optionalString(source.RootId),
 		SourceID:         optionalID(source.SourceId),
 		SnapshotRevision: optionalString(source.SnapshotRevision),
+		StartedAt:        copyTime(source.StartedAt),
+		CompletedAt:      copyTime(source.CompletedAt),
 		ObservedAt:       source.ObservedAt,
 		ObservedCount:    copyInt(source.ObservedCount),
 		ReasonCodes:      append([]string(nil), optionalStrings(source.ReasonCodes)...),

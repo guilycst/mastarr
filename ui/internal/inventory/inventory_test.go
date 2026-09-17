@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -618,6 +619,203 @@ func TestHandlerOptionMarkupClosesEveryValueAndKeepsSelection(t *testing.T) {
 	}
 	if !strings.Contains(body, `<option value="video" selected>video</option>`) {
 		t.Fatalf("selected role option missing: %s", body)
+	}
+}
+
+func TestCandidateDraftBoundaryAndScoreRoundTrip(t *testing.T) {
+	now := time.Date(2026, 9, 17, 14, 0, 0, 0, time.UTC)
+	episodes := make([]int, 0, MaxAssociationInputs)
+	for episode := 1000; episode < 1000+MaxAssociationInputs; episode++ {
+		episodes = append(episodes, episode)
+	}
+	episodeText := joinInts(episodes)
+	if len(episodeText) <= MaxInputLength {
+		t.Fatalf("boundary fixture is too short: %d", len(episodeText))
+	}
+	score := float32(0.9137)
+	scoreText := floatPointerValue(&score)
+	fake := &fakeReader{discoveries: map[string]Discovery{
+		"discovery-boundary": {
+			ID:         "discovery-boundary",
+			ObservedAt: now,
+			Readiness:  "ready",
+			Files:      []File{},
+			Candidates: []Candidate{{
+				Title:    "Season pack",
+				Kind:     "season",
+				Episodes: episodes,
+				Score:    &score,
+			}},
+		},
+	}}
+	handler := NewHandler(fake)
+	initial := httptest.NewRecorder()
+	handler.ServeHTTP(initial, httptest.NewRequest(http.MethodGet, "/discoveries/discovery-boundary?rootId=root-a&limit=7&cursor=cursor-list", nil))
+	if initial.Code != http.StatusOK {
+		t.Fatalf("initial status = %d; body=%s", initial.Code, initial.Body.String())
+	}
+	if !strings.Contains(initial.Body.String(), `name="candidate-0-episodes" value="`+episodeText+`"`) {
+		t.Fatalf("initial episode draft was not losslessly rendered: %s", initial.Body.String())
+	}
+	if !strings.Contains(initial.Body.String(), `name="candidate-0-score" value="`+scoreText+`"`) {
+		t.Fatalf("initial score draft lost precision: %s", initial.Body.String())
+	}
+
+	values := url.Values{}
+	values.Set("rootId", "root-a")
+	values.Set("limit", "7")
+	values.Set("cursor", "cursor-list")
+	values.Set("candidate-0-episodes", episodeText)
+	values.Set("candidate-0-score", scoreText)
+	reload := httptest.NewRecorder()
+	handler.ServeHTTP(reload, httptest.NewRequest(http.MethodGet, "/discoveries/discovery-boundary?"+values.Encode(), nil))
+	if reload.Code != http.StatusOK {
+		t.Fatalf("reload status = %d; body=%s", reload.Code, reload.Body.String())
+	}
+	body := reload.Body.String()
+	for _, expected := range []string{
+		`name="candidate-0-episodes" value="` + episodeText + `"`,
+		`name="candidate-0-score" value="` + scoreText + `"`,
+		`name="rootId" value="root-a"`,
+		`name="limit" value="7"`,
+		`name="cursor" value="cursor-list"`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("reload lost candidate or list context %q: %s", expected, body)
+		}
+	}
+}
+
+func TestCoverageWindowsRoundTripAndZeroRejection(t *testing.T) {
+	const downloadID = "00000000-0000-0000-0000-000000000008"
+	now := "2026-09-17T14:10:00Z"
+	started := "2026-09-17T14:00:00Z"
+	completed := "2026-09-17T14:05:00Z"
+	page := func(items string, window bool) string {
+		coverage := fmt.Sprintf(`{"completeness":"partial","observedAt":%q}`, now)
+		if window {
+			coverage = fmt.Sprintf(`{"completeness":"partial","startedAt":%q,"completedAt":%q,"observedAt":%q}`, started, completed, now)
+		}
+		return fmt.Sprintf(`{"items":%s,"page":{"nextCursor":null,"coverage":[%s],"observedAt":%q}}`, items, coverage, now)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/descriptors":
+			_, _ = io.WriteString(w, page(fmt.Sprintf(`[{"id":"00000000-0000-0000-0000-000000000009","type":"torrent","size":1,"digest":"sha256:1","availability":"available","capturedAt":%q}]`, now), true))
+		case "/api/v1/downloads/" + downloadID:
+			_, _ = io.WriteString(w, fmt.Sprintf(`{"id":%q,"connectionId":"qbit-a","state":"complete","observedAt":%q,"coverage":{"completeness":"complete","startedAt":%q,"completedAt":%q,"observedAt":%q}}`, downloadID, now, started, completed, now))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	reader, err := NewHTTPReader(server.URL, server.Client(), time.Second)
+	if err != nil {
+		t.Fatalf("NewHTTPReader() error = %v", err)
+	}
+	descriptors, err := reader.ListDescriptors(context.Background(), PageRequest{})
+	if err != nil || len(descriptors.Page.Coverage) != 1 {
+		t.Fatalf("page coverage = %#v, error=%v", descriptors.Page.Coverage, err)
+	}
+	if descriptors.Page.Coverage[0].StartedAt == nil || descriptors.Page.Coverage[0].CompletedAt == nil || descriptors.Page.Coverage[0].StartedAt.UTC().Format(time.RFC3339) != started || descriptors.Page.Coverage[0].CompletedAt.UTC().Format(time.RFC3339) != completed {
+		t.Fatalf("page coverage window = %#v", descriptors.Page.Coverage[0])
+	}
+	download, err := reader.GetDownload(context.Background(), downloadID)
+	if err != nil || download.Coverage == nil || download.Coverage.StartedAt == nil || download.Coverage.CompletedAt == nil {
+		t.Fatalf("item coverage = %#v, error=%v", download.Coverage, err)
+	}
+
+	startTime, _ := time.Parse(time.RFC3339, started)
+	completeTime, _ := time.Parse(time.RFC3339, completed)
+	nowTime, _ := time.Parse(time.RFC3339, now)
+	coverage := Coverage{Completeness: "partial", StartedAt: &startTime, CompletedAt: &completeTime, ObservedAt: nowTime}
+	fake := &fakeReader{
+		descriptorPage: DescriptorPage{Items: []Descriptor{{ID: "descriptor-window", Type: "torrent", Digest: "sha256:1", Availability: "available", CapturedAt: nowTime}}, Page: PageInfo{ObservedAt: nowTime, Coverage: []Coverage{coverage}}},
+		downloads:      map[string]Download{"download-window": {ID: "download-window", ConnectionID: "qbit-a", State: "complete", ObservedAt: nowTime, Coverage: &coverage}},
+	}
+	recorder := httptest.NewRecorder()
+	NewHandler(fake).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/descriptors", nil))
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), started) || !strings.Contains(recorder.Body.String(), completed) {
+		t.Fatalf("page coverage was not rendered: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	recorder = httptest.NewRecorder()
+	NewHandler(fake).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/downloads/download-window", nil))
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), started) || !strings.Contains(recorder.Body.String(), completed) {
+		t.Fatalf("item coverage was not rendered: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	unknownCoverage := Coverage{Completeness: "unknown", ObservedAt: nowTime}
+	fake.descriptorPage.Page.Coverage = []Coverage{unknownCoverage}
+	recorder = httptest.NewRecorder()
+	NewHandler(fake).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/descriptors", nil))
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "Started at") || !strings.Contains(recorder.Body.String(), "unknown") {
+		t.Fatalf("absent coverage window was not explicit: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	zeroServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		zeroCoverage := fmt.Sprintf(`{"completeness":"partial","startedAt":"0001-01-01T00:00:00Z","observedAt":%q}`, now)
+		_, _ = io.WriteString(w, fmt.Sprintf(`{"items":[{"id":"00000000-0000-0000-0000-000000000009","type":"torrent","size":1,"digest":"sha256:1","availability":"available","capturedAt":%q}],"page":{"nextCursor":null,"coverage":[%s],"observedAt":%q}}`, now, zeroCoverage, now))
+	}))
+	defer zeroServer.Close()
+	// Replace the valid page's coverage with a present, zero timestamp while
+	// retaining otherwise complete page metadata.
+	zeroReader, err := NewHTTPReader(zeroServer.URL, zeroServer.Client(), time.Second)
+	if err != nil {
+		t.Fatalf("NewHTTPReader() zero fixture error = %v", err)
+	}
+	_, err = zeroReader.ListDescriptors(context.Background(), PageRequest{})
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Kind() != ErrorProtocol {
+		t.Fatalf("zero coverage window error = %T %v; APIError=%#v", err, err, apiErr)
+	}
+}
+
+func TestDynamicDraftKeysAreStrictAndBoundToEvidence(t *testing.T) {
+	now := time.Date(2026, 9, 17, 14, 20, 0, 0, time.UTC)
+	fake := &fakeReader{discoveries: map[string]Discovery{
+		"discovery-dynamic": {
+			ID:         "discovery-dynamic",
+			ObservedAt: now,
+			Readiness:  "ready",
+			Files:      []File{{RootID: "root-a", RelativePath: "Show/E01.mkv", Type: "file", Role: "video", Size: 1}},
+			Candidates: []Candidate{{Title: "Episode", Kind: "episode"}},
+		},
+	}}
+	invalid := []struct {
+		name  string
+		query string
+	}{
+		{name: "non-numeric candidate index", query: "candidate-x-title=draft"},
+		{name: "leading-zero candidate index", query: "candidate-00-title=draft"},
+		{name: "unknown candidate field", query: "candidate-0-unknown=draft"},
+		{name: "extra candidate suffix", query: "candidate-0-title-extra=draft"},
+		{name: "non-numeric association index", query: "association-x-role=video"},
+		{name: "unknown association field", query: "association-0-unknown=draft"},
+		{name: "out-of-bound maximum index", query: "candidate-999-title=draft"},
+		{name: "invalid candidate kind", query: "candidate-0-kind=future"},
+		{name: "invalid association role", query: "association-0-role=future"},
+		{name: "out-of-response candidate index", query: "candidate-1-title=draft"},
+		{name: "out-of-response association index", query: "association-1-role=video"},
+	}
+	for _, tc := range invalid {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			NewHandler(fake).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/discoveries/discovery-dynamic?"+tc.query, nil))
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d; body=%s", recorder.Code, recorder.Body.String())
+			}
+			if strings.Contains(recorder.Body.String(), tc.query) {
+				t.Fatalf("invalid query was retained: %s", recorder.Body.String())
+			}
+		})
+	}
+
+	valid := httptest.NewRecorder()
+	NewHandler(fake).ServeHTTP(valid, httptest.NewRequest(http.MethodGet, "/discoveries/discovery-dynamic?candidate-0-kind=episode&candidate-0-episodes=1%2C2&association-0-role=video", nil))
+	if valid.Code != http.StatusOK {
+		t.Fatalf("valid dynamic draft status = %d; body=%s", valid.Code, valid.Body.String())
 	}
 }
 
