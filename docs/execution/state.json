@@ -4190,7 +4190,9 @@
         "f9b4765d5e749232b9ccd237beb3984fc3986672 independent U-02 round-two review closes prior R1-R5 but requests corrections for R2a, R5a and R5b; focused/race/vet/mod/generation/architecture/planning/Linux/full offline checks pass.",
         "6bd6c9c188074ec8c5e05b33f3723f39aad16927 U-02 correction round two fixes R2a, R5a and R5b: field-specific candidate episode/score round-trip, coverage window retention/validation, and strict dynamic draft grammar/index binding.",
         "55c957eec5d2f7c68ca5eb25b5043f82522f6471 U-02 correction round-two handoff records focused/UI/race/vet/mod/generation/Vacuum/architecture/planning/lint/full offline checks and Linux builds passing.",
-        "a81e58c5fc5a97e8205dabaa071fdb3783c31f78 independent U-02 round-three review closes R2a/R5a/R5b but requests corrections for R2b, R5c and R5d; focused/race/vet/mod/generation/architecture/planning/Linux/full offline checks pass."
+        "a81e58c5fc5a97e8205dabaa071fdb3783c31f78 independent U-02 round-three review closes R2a/R5a/R5b but requests corrections for R2b, R5c and R5d; focused/race/vet/mod/generation/architecture/planning/Linux/full offline checks pass.",
+        "d832964b35cf2cfe2adf2b39d91e62c2f46bd745 U-02 correction round three closes R2b, R5c and R5d with usable back links, collection-sized draft bounds and route-scoped fixed-field validation.",
+        "90d6238dfd408f3e599d7450bb5bac6a300d17d9 U-02 correction round-three handoff records full form-boundary regressions, focused/UI/race/vet/mod/generation/Vacuum/architecture/planning/lint/full offline checks and Linux builds passing."
       ],
       "review": {
         "status": "changes_requested",
@@ -4231,9 +4233,9 @@
         "reviewPath": "docs/execution/handoffs/U-02-review-round1.md",
         "handoffPath": "docs/execution/handoffs/U-02.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "changes_requested",
-        "waitingOn": "/root/x05_implementer",
-        "waitingReason": "Round-three review found two P1 and one P2 generated-form/query-boundary gaps; correction round three is required before re-review.",
+        "status": "awaiting_review",
+        "waitingOn": "/root/x05_reviewer",
+        "waitingReason": "U-02 correction round three product and handoff are complete; independent review round four is required for R2b, R5c and R5d.",
         "dependencyCommits": {
           "U-01": "c2aa8a692e719d3e925f37c0d2b42357e86cce04"
         },
@@ -4243,7 +4245,7 @@
         "reviewRound": 3,
         "reviewCommit": "a81e58c5fc5a97e8205dabaa071fdb3783c31f78",
         "reviewIntegrationCommit": "a5aa88b0adcc1171e10d9e8cd0015d501468b007",
-        "correctionStatus": "assigned",
+        "correctionStatus": "awaiting_review",
         "correctionRound": 3,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "a5aa88b0adcc1171e10d9e8cd0015d501468b007",
@@ -4251,17 +4253,19 @@
         "correctionReviewPath": "docs/execution/handoffs/U-02-review-round4.md",
         "correctionHandoffPath": "docs/execution/handoffs/U-02-correction-round3.md",
         "correctionReviewer": "/root/x05_reviewer",
-        "correctionImplementationCommit": null,
-        "correctionHandoffCommit": null,
-        "correctionReviewSourceCommit": null,
+        "correctionImplementationCommit": "d832964b35cf2cfe2adf2b39d91e62c2f46bd745",
+        "correctionHandoffCommit": "90d6238dfd408f3e599d7450bb5bac6a300d17d9",
+        "correctionReviewSourceCommit": "d832964b35cf2cfe2adf2b39d91e62c2f46bd745",
         "correctionReviewCommit": null,
         "correctionReviewIntegrationCommit": null,
         "correctionDispatchCommit": "a5aa88b0adcc1171e10d9e8cd0015d501468b007",
-        "correctionProductCommits": []
+        "correctionProductCommits": [
+          "d832964b35cf2cfe2adf2b39d91e62c2f46bd745"
+        ]
       },
-      "implementationCommit": "6bd6c9c188074ec8c5e05b33f3723f39aad16927",
-      "handoffCommit": "55c957eec5d2f7c68ca5eb25b5043f82522f6471",
-      "reviewSourceCommit": "6bd6c9c188074ec8c5e05b33f3723f39aad16927",
+      "implementationCommit": "d832964b35cf2cfe2adf2b39d91e62c2f46bd745",
+      "handoffCommit": "90d6238dfd408f3e599d7450bb5bac6a300d17d9",
+      "reviewSourceCommit": "d832964b35cf2cfe2adf2b39d91e62c2f46bd745",
       "reviewHistory": [
         {
           "round": 1,
@@ -4317,9 +4321,13 @@
           "reviewer": "/root/x05_reviewer",
           "commit": null,
           "status": "pending",
-          "sourceCommit": null,
+          "sourceCommit": "d832964b35cf2cfe2adf2b39d91e62c2f46bd745",
           "receipt": "docs/execution/handoffs/U-02-review-round4.md",
-          "handoff": "docs/execution/handoffs/U-02-correction-round3.md"
+          "handoff": "docs/execution/handoffs/U-02-correction-round3.md",
+          "productCommit": "d832964b35cf2cfe2adf2b39d91e62c2f46bd745",
+          "handoffCommit": "90d6238dfd408f3e599d7450bb5bac6a300d17d9",
+          "priorReviewCommit": "a81e58c5fc5a97e8205dabaa071fdb3783c31f78",
+          "integratedCommit": null
         }
       ]
     },
@@ -6167,7 +6175,7 @@
       ]
     }
   },
-  "nextAction": "U-02 review round three receipt a81e58c5fc5a97e8205dabaa071fdb3783c31f78 is integrated at a5aa88b0adcc1171e10d9e8cd0015d501468b007; correction round three is assigned to /root/x05_implementer for R2b, R5c and R5d.",
+  "nextAction": "U-02 correction round three product d832964b35cf2cfe2adf2b39d91e62c2f46bd745 and handoff 90d6238dfd408f3e599d7450bb5bac6a300d17d9 are recorded; dispatch independent review round four from this clean checkpoint.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
