@@ -4349,7 +4349,7 @@
       "verificationNote": "U-02 approved after independent round-five review. The default production http.Server maximum-form probe reached the reader with 2,066 fields and 671,459 escaped bytes; focused/full UI ordinary and race tests, vet, mod verify/tidy, generation/Vacuum, lint/architecture/planning, Linux amd64/arm64 builds and full offline guardrails passed."
     },
     "U-03": {
-      "status": "awaiting_review",
+      "status": "in_progress",
       "owner": "/root/x05_implementer",
       "baseSha": "ef215ce2eee56d82cfdeb72df26c61140547e9ff",
       "integratedSha": null,
@@ -4361,14 +4361,23 @@
         "Preserve immutable plan/revision/digest and idempotency context in visible forms and links; all actions remain server/API-owned and no hidden blanket approval is added.",
         "ac732775c0877932687148ddb1c77596c80d9be5 U-03 product adds normalized HTTP-only review/workflow readers and server-rendered controls for registration/import phases, immutable approval binding, action effects, cancellation and late/partial reconciliation states.",
         "a7536bad70b157d2db3fec6aed5b42a6ba135d50 U-03 handoff records product boundaries, synthetic coverage, exact checks and deferred router/browser integration.",
-        "Product and handoff checks passed: focused/full UI tests and race, vet, mod verify/tidy, generation/Vacuum, architecture/planning/lint, Linux CGO-free build and full offline guardrails."
+        "Product and handoff checks passed: focused/full UI tests and race, vet, mod verify/tidy, generation/Vacuum, architecture/planning/lint, Linux CGO-free build and full offline guardrails.",
+        "40d9c954d4db04271b84256289e56d1cd6e7f818 independent U-03 round-one review requested changes. R1-R6 are recorded in docs/execution/handoffs/U-03-review-round1.md; full offline guardrails and reviewer checks passed, but the six correctness findings block approval.",
+        "36e4a29 integrates the independent review receipt. Planning validation identified awaiting_review as unsupported; this correction changes the task status to validator-supported in_progress/in_review vocabulary."
       ],
       "review": {
-        "status": "pending",
-        "decision": null,
+        "status": "changes_requested",
+        "decision": "changes_requested",
         "reviewer": "/root/x05_reviewer",
-        "commit": null,
-        "findings": [],
+        "commit": "40d9c954d4db04271b84256289e56d1cd6e7f818",
+        "findings": [
+          "R1 P1 foreign action-run/plan/workflow/step identity is accepted and displayed under the requested workflow step.",
+          "R2 P1 production workflow reader does not load or bind referenced action plans, leaving per-step action kind, immutable binding and impacts absent.",
+          "R3 P1 unresolved effects are duplicated and overlapping/contradictory evidence inflates rendered effect counts.",
+          "R4 P1 review detail omits exact client/torrent IDs, stopped-client prerequisites, retention, capabilities, subtitle SDH state and copy storage estimate.",
+          "R5 P2 duplicate JSON object keys are accepted by both HTTP readers.",
+          "R6 P2 reason forms advertise 4096 bytes but reject values above 512 bytes."
+        ],
         "round": 1
       },
       "dispatch": {
@@ -4400,9 +4409,9 @@
         "reviewPath": "docs/execution/handoffs/U-03-review-round1.md",
         "handoffPath": "docs/execution/handoffs/U-03.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "awaiting_review",
-        "waitingOn": "/root/x05_reviewer",
-        "waitingReason": "U-03 product and handoff are complete; independent review is required before integration.",
+        "status": "changes_requested",
+        "waitingOn": "/root/x05_implementer",
+        "waitingReason": "Independent review found four P1 and two P2 U-03 correctness gaps; correction round one is required before re-review.",
         "dependencyCommits": {
           "U-02": "ef215ce2eee56d82cfdeb72df26c61140547e9ff",
           "W-04": "780c00e92498660c08b6ac67259bbb4147c58531"
@@ -4411,8 +4420,23 @@
         "handoffCommit": "a7536bad70b157d2db3fec6aed5b42a6ba135d50",
         "reviewSourceCommit": "ac732775c0877932687148ddb1c77596c80d9be5",
         "reviewRound": 1,
-        "reviewCommit": null,
-        "reviewIntegrationCommit": null
+        "reviewCommit": "40d9c954d4db04271b84256289e56d1cd6e7f818",
+        "reviewIntegrationCommit": "36e4a29",
+        "correctionStatus": "assigned",
+        "correctionRound": 1,
+        "correctionOwner": "/root/x05_implementer",
+        "correctionBaseSha": "36e4a29",
+        "correctionDispatchCheckpoint": "36e4a29",
+        "correctionReviewPath": "docs/execution/handoffs/U-03-review-round2.md",
+        "correctionHandoffPath": "docs/execution/handoffs/U-03-correction-round1.md",
+        "correctionReviewer": "/root/x05_reviewer",
+        "correctionImplementationCommit": null,
+        "correctionHandoffCommit": null,
+        "correctionReviewSourceCommit": null,
+        "correctionReviewCommit": null,
+        "correctionReviewIntegrationCommit": null,
+        "correctionDispatchCommit": "36e4a29",
+        "correctionProductCommits": []
       },
       "implementationCommit": "ac732775c0877932687148ddb1c77596c80d9be5",
       "handoffCommit": "a7536bad70b157d2db3fec6aed5b42a6ba135d50",
@@ -4421,11 +4445,21 @@
         {
           "round": 1,
           "reviewer": "/root/x05_reviewer",
-          "status": "pending",
+          "commit": "40d9c954d4db04271b84256289e56d1cd6e7f818",
+          "status": "changes_requested",
           "sourceCommit": "ac732775c0877932687148ddb1c77596c80d9be5",
           "receipt": "docs/execution/handoffs/U-03-review-round1.md",
           "productCommit": "ac732775c0877932687148ddb1c77596c80d9be5",
-          "handoffCommit": "a7536bad70b157d2db3fec6aed5b42a6ba135d50"
+          "handoffCommit": "a7536bad70b157d2db3fec6aed5b42a6ba135d50",
+          "integratedCommit": "36e4a29",
+          "findings": [
+            "R1 P1 foreign action-run/plan/workflow/step identity is accepted and displayed under the requested workflow step.",
+            "R2 P1 production workflow reader does not load or bind referenced action plans, leaving per-step action kind, immutable binding and impacts absent.",
+            "R3 P1 unresolved effects are duplicated and overlapping/contradictory evidence inflates rendered effect counts.",
+            "R4 P1 review detail omits exact client/torrent IDs, stopped-client prerequisites, retention, capabilities, subtitle SDH state and copy storage estimate.",
+            "R5 P2 duplicate JSON object keys are accepted by both HTTP readers.",
+            "R6 P2 reason forms advertise 4096 bytes but reject values above 512 bytes."
+          ]
         }
       ]
     },
@@ -6265,7 +6299,7 @@
       ]
     }
   },
-  "nextAction": "U-03 product/handoff are recorded at a7536bad70b157d2db3fec6aed5b42a6ba135d50; dispatch /root/x05_reviewer for independent round-one review, then integrate or correct findings.",
+  "nextAction": "U-03 review receipt 40d9c954d4db04271b84256289e56d1cd6e7f818 is integrated at 36e4a29; correction round one is assigned to /root/x05_implementer for R1-R6, with state status kept in validator-supported in_progress vocabulary.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
