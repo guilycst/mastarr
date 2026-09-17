@@ -3554,10 +3554,10 @@
       ]
     },
     "W-05": {
-      "status": "in_review",
+      "status": "done",
       "owner": "/root/x05_implementer",
       "baseSha": "fa30ec27a2adb894cd49f7a523c84ef75e80c2e8",
-      "integratedSha": null,
+      "integratedSha": "ea3958b15508d13893b55674b59cfb0bf50d1ffe",
       "evidence": [
         "Dispatched after W-04 approval product 780c00e92498660c08b6ac67259bbb4147c58531, receipt 2aef896fd5d3e10dcefc80f8f5a094852d73fd27, and state closure fa30ec27a2adb894cd49f7a523c84ef75e80c2e8.",
         "Own only internal/trash/ and docs/execution/handoffs/W-05.md; use existing storage, ports, action handlers, and durable action_runs/janitor rows. Do not add an outbox, schema, API, adapter, client, or worker integration in this lane.",
@@ -3581,16 +3581,17 @@
         "W-05 correction round five product 73c55183faef67d20286b7656886b3e672cf8ef9 and handoff e65b3603821154df77790845e7d6b4bd14cce58c complete from dispatch checkpoint 6c3428bd70e089db705ae8d393f5a8aeb6de5743; R3d stale-terminal hold and R3e lossless evidence regressions, focused/race/root/vet/mod checks and full offline CI guardrails passed.",
         "Independent W-05 correction round-six receipt 5a1240f66c7c5f7614b34750f90c60f5d3bd4397 integrated as e574abf: R3d/R3e closed, R3f remains blocking; recursive-history probe reproduced depth 127 and 967-to-125808-byte growth after 128 unchanged observations, while full offline CI guardrails passed.",
         "W-05 correction round six dispatched from state checkpoint 40a8955f4f721fa5ad37efa5a34bb860f487c15b to /root/x05_implementer. Scope is R3f only: bound reconciliation history while retaining immutable action result, item outcomes and exact unresolved scope evidence; no schema/API/adapter/client/worker changes.",
-        "W-05 correction round six product 3f2d4e9e13540f21474a68f1d4d729ba232f3f50 and handoff 3ce4caefe4ce9f6f1b65c64bfb4f89b4cfc3f65e complete from dispatch checkpoint 40a8955f4f721fa5ad37efa5a34bb860f487c15b; R3f bounded reconciliation history regression, focused/race and full offline CI guardrails passed."
+        "W-05 correction round six product 3f2d4e9e13540f21474a68f1d4d729ba232f3f50 and handoff 3ce4caefe4ce9f6f1b65c64bfb4f89b4cfc3f65e complete from dispatch checkpoint 40a8955f4f721fa5ad37efa5a34bb860f487c15b; R3f bounded reconciliation history regression, focused/race and full offline CI guardrails passed.",
+        "Independent W-05 correction round-seven receipt 5f4ce4a97942be8a6660354a37178879557955d9 integrated as ea3958b: approved with no P1/P2 findings; bounded-history probes, focused/race/root/vet/mod, architecture/planning and full offline CI guardrails passed."
       ],
       "review": {
-        "status": "pending",
-        "decision": "pending",
+        "status": "approved",
+        "decision": "approved",
         "reviewer": "/root/x05_reviewer",
-        "commit": null,
+        "commit": "5f4ce4a97942be8a6660354a37178879557955d9",
         "findings": [],
         "round": 7,
-        "integratedCommit": null
+        "integratedCommit": "ea3958b"
       },
       "dispatch": {
         "assignedAt": "2026-09-16",
@@ -3620,7 +3621,7 @@
         "reviewPath": "docs/execution/handoffs/W-05-review-round7.md",
         "handoffPath": "docs/execution/handoffs/W-05-correction-round6.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "review_pending",
+        "status": "done",
         "dependencyCommits": {
           "W-04-product": "780c00e92498660c08b6ac67259bbb4147c58531",
           "W-04-review": "2aef896fd5d3e10dcefc80f8f5a094852d73fd27",
@@ -3631,15 +3632,15 @@
           "G-01": "Arr native registration/import writes remain blocked; this lane must not bypass that gate.",
           "X-14": "qBittorrent removal remains metadata-only with deleteFiles=false; stop and read-back are required before payload mutation."
         },
-        "waitingOn": "/root/x05_reviewer",
-        "waitingReason": "independent review of W-05 correction round six",
+        "waitingOn": null,
+        "waitingReason": null,
         "implementationCommit": "37ecdde36b56a6cd3d7d147cd8af1b49eba3f45a",
         "handoffCommit": "91038f799d894b58d1c7f149606ac2c686515beb",
         "reviewSourceCommit": "3f2d4e9e13540f21474a68f1d4d729ba232f3f50",
         "reviewRound": 7,
-        "reviewCommit": null,
-        "reviewIntegrationCommit": null,
-        "correctionStatus": "review_pending",
+        "reviewCommit": "5f4ce4a97942be8a6660354a37178879557955d9",
+        "reviewIntegrationCommit": "ea3958b",
+        "correctionStatus": "approved",
         "correctionRound": 6,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "40a8955f4f721fa5ad37efa5a34bb860f487c15b",
@@ -3733,10 +3734,11 @@
         {
           "round": 7,
           "reviewer": "/root/x05_reviewer",
-          "commit": null,
-          "status": "review_pending",
+          "commit": "5f4ce4a97942be8a6660354a37178879557955d9",
+          "status": "approved",
           "sourceCommit": "3f2d4e9e13540f21474a68f1d4d729ba232f3f50",
-          "receipt": "docs/execution/handoffs/W-05-review-round7.md"
+          "receipt": "docs/execution/handoffs/W-05-review-round7.md",
+          "integratedCommit": "ea3958b"
         }
       ],
       "implementationCommit": "37ecdde36b56a6cd3d7d147cd8af1b49eba3f45a",
@@ -5678,7 +5680,7 @@
       ]
     }
   },
-  "nextAction": "W-05 correction round six product 3f2d4e9e13540f21474a68f1d4d729ba232f3f50 and handoff 3ce4caefe4ce9f6f1b65c64bfb4f89b4cfc3f65e are ready for independent review. Await the exact round-seven receipt, then integrate it before any next feature dispatch.",
+  "nextAction": "W-05 is approved and closed at product 3f2d4e9e13540f21474a68f1d4d729ba232f3f50 with receipt 5f4ce4a97942be8a6660354a37178879557955d9. Choose the next dependency-ready implementation lane; keep F-05 capability block, G-01 Arr write block, and Seerr read-only policy active.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
