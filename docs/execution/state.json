@@ -3795,20 +3795,20 @@
         "C-04 correction round six product base corrected to exact clean dispatch checkpoint ecea16b62844083d06c7a491d7ccbfad12dcd89f; no product files changed.",
         "52f3654cd0a669dbc3dc59f5187bec828616c34e C-04 correction round six product fixes attempt-specific built-in no-effect release, managed credential read-back, ETag replay preservation, and durable mutation owner construction guard.",
         "21c54c7a288eb984fd122f475c41df03fe6c6a23 C-04 correction round six handoff records owned paths, exact checks, route-owner boundary, and no schema/API/client changes.",
-        "Correction round six product focused/repeated race tests, vet, module verification, Linux builds, and full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed."
+        "Correction round six product focused/repeated race tests, vet, module verification, Linux builds, and full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed.",
+        "8598d5619509706cac383697d22fe93345de1573 independent C-04 correction round six review receipt; ETag, managed credential identity, ordinary rejected release, and constructor owner gate pass, R3f-d/R3g-b remain P1.",
+        "Reviewer full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed; real-SQLite marker-outage and late-persistence owner probes reproduced both findings under ordinary and race runs."
       ],
       "review": {
         "status": "changes_requested",
         "decision": "changes_requested",
         "reviewer": "/root/x05_reviewer",
-        "commit": "c5c1baf1b6511b28693b8e3758d6597d28bd50e1",
+        "commit": "8598d5619509706cac383697d22fe93345de1573",
         "findings": [
-          "R3f-a P1 built-in recovery falsely terminalizes rejected stale PATCH as 200 after completion loss",
-          "R3f-b P1 CREATE recovery falsely terminalizes duplicate conflict as 201 after completion loss",
-          "R3f-c P1 durable and recovered PATCH replay drops ETag due Go canonical header allowlist mismatch",
-          "R3g-a P1 cmd/mastarr has no terminal owner for nonconfiguration mutations or connection credential PATCH recovery"
+          "R3f-d P1 if both exact no-effect release and rejected-response completion fail, fresh recovery still infers stale PATCH 200 or duplicate CREATE 201 from coincident state",
+          "R3g-b P1 late SetIdempotencyPersistence and SetIdempotencyRecovery(nil) bypass or remove the durable mutation recovery-owner invariant"
         ],
-        "round": 5
+        "round": 6
       },
       "dispatch": {
         "assignedAt": "2026-09-16",
@@ -3838,22 +3838,22 @@
         "reviewPath": "docs/execution/handoffs/C-04-review-round4.md",
         "handoffPath": "docs/execution/handoffs/C-04-correction-round3.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "review_pending",
+        "status": "review_complete",
         "dependencyCommits": {
           "D-04": "036288114bcf303f98e0ee02e54ddce18384e504",
           "F-03": "b65f5d65d67e6fc823fbf54fa8ab4f2a4d17d191",
           "X-08": "8c770f779204a00c2d8cc6312a2c0fc04262ea35",
           "W-05": "ea3958b15508d13893b55674b59cfb0bf50d1ffe"
         },
-        "waitingOn": "/root/x05_reviewer",
-        "waitingReason": "Independent review round six of correction product and handoff is pending.",
+        "waitingOn": "/root/x05_implementer",
+        "waitingReason": "Round-six review requests durable no-effect fencing when both markers fail and atomic recovery-owner enforcement across startup setters.",
         "implementationCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
         "handoffCommit": "c46b84183f0723d0cbb439eb539cd600c235acf0",
         "reviewSourceCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
         "reviewRound": 3,
         "reviewCommit": "461b0c06b0a3094f5da28ca2920400b639e22a61",
         "reviewIntegrationCommit": "d593fd4",
-        "correctionStatus": "review_pending",
+        "correctionStatus": "pending_dispatch",
         "correctionRound": 5,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "01f837a64ba4c48ff89a8a08962e703eababfdd6",
@@ -3932,10 +3932,11 @@
         {
           "round": 6,
           "reviewer": "/root/x05_reviewer",
-          "commit": null,
-          "status": "pending",
+          "commit": "8598d5619509706cac383697d22fe93345de1573",
+          "status": "changes_requested",
           "sourceCommit": "52f3654cd0a669dbc3dc59f5187bec828616c34e",
-          "receipt": "docs/execution/handoffs/C-04-review-round6.md"
+          "receipt": "docs/execution/handoffs/C-04-review-round6.md",
+          "integratedCommit": "b75e14faa55f3826bc856a09660bb36239d44b0d"
         }
       ]
     },
@@ -5866,7 +5867,7 @@
       ]
     }
   },
-  "nextAction": "C-04 correction round six product 52f3654cd0a669dbc3dc59f5187bec828616c34e and handoff 21c54c7a288eb984fd122f475c41df03fe6c6a23 are recorded; independent review round six is pending.",
+  "nextAction": "Record C-04 round-six changes_requested receipt and dispatch correction round seven for marker-outage false recovery and setter invariant bypass.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
