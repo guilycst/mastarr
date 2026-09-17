@@ -4349,7 +4349,7 @@
       "verificationNote": "U-02 approved after independent round-five review. The default production http.Server maximum-form probe reached the reader with 2,066 fields and 671,459 escaped bytes; focused/full UI ordinary and race tests, vet, mod verify/tidy, generation/Vacuum, lint/architecture/planning, Linux amd64/arm64 builds and full offline guardrails passed."
     },
     "U-03": {
-      "status": "in_progress",
+      "status": "awaiting_review",
       "owner": "/root/x05_implementer",
       "baseSha": "ef215ce2eee56d82cfdeb72df26c61140547e9ff",
       "integratedSha": null,
@@ -4358,9 +4358,19 @@
         "Own only ui/internal/review/, ui/internal/workflows/ and docs/execution/handoffs/U-03.md; do not edit state.json, API contract, generated API code or other UI lanes.",
         "UI remains an HTTP-only BFF: consume normalized client data, never import root internals, database, storage, upstream clients, media mounts or safety decisions.",
         "Render both registration and exact-import approval phases, standalone/composed effects, monitoring opt-in, copy fallback review, retries, cancellation and late/partial effects honestly.",
-        "Preserve immutable plan/revision/digest and idempotency context in visible forms and links; all actions remain server/API-owned and no hidden blanket approval is added."
+        "Preserve immutable plan/revision/digest and idempotency context in visible forms and links; all actions remain server/API-owned and no hidden blanket approval is added.",
+        "ac732775c0877932687148ddb1c77596c80d9be5 U-03 product adds normalized HTTP-only review/workflow readers and server-rendered controls for registration/import phases, immutable approval binding, action effects, cancellation and late/partial reconciliation states.",
+        "a7536bad70b157d2db3fec6aed5b42a6ba135d50 U-03 handoff records product boundaries, synthetic coverage, exact checks and deferred router/browser integration.",
+        "Product and handoff checks passed: focused/full UI tests and race, vet, mod verify/tidy, generation/Vacuum, architecture/planning/lint, Linux CGO-free build and full offline guardrails."
       ],
-      "review": null,
+      "review": {
+        "status": "pending",
+        "decision": null,
+        "reviewer": "/root/x05_reviewer",
+        "commit": null,
+        "findings": [],
+        "round": 1
+      },
       "dispatch": {
         "assignedAt": "2026-09-17",
         "model": "gpt-5.6-luna",
@@ -4390,20 +4400,34 @@
         "reviewPath": "docs/execution/handoffs/U-03-review-round1.md",
         "handoffPath": "docs/execution/handoffs/U-03.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "assigned",
-        "waitingOn": "/root/x05_implementer",
-        "waitingReason": "U-03 implementation and handoff are required before independent review.",
+        "status": "awaiting_review",
+        "waitingOn": "/root/x05_reviewer",
+        "waitingReason": "U-03 product and handoff are complete; independent review is required before integration.",
         "dependencyCommits": {
           "U-02": "ef215ce2eee56d82cfdeb72df26c61140547e9ff",
           "W-04": "780c00e92498660c08b6ac67259bbb4147c58531"
         },
-        "implementationCommit": null,
-        "handoffCommit": null,
-        "reviewSourceCommit": null,
-        "reviewRound": 0,
+        "implementationCommit": "ac732775c0877932687148ddb1c77596c80d9be5",
+        "handoffCommit": "a7536bad70b157d2db3fec6aed5b42a6ba135d50",
+        "reviewSourceCommit": "ac732775c0877932687148ddb1c77596c80d9be5",
+        "reviewRound": 1,
         "reviewCommit": null,
         "reviewIntegrationCommit": null
-      }
+      },
+      "implementationCommit": "ac732775c0877932687148ddb1c77596c80d9be5",
+      "handoffCommit": "a7536bad70b157d2db3fec6aed5b42a6ba135d50",
+      "reviewSourceCommit": "ac732775c0877932687148ddb1c77596c80d9be5",
+      "reviewHistory": [
+        {
+          "round": 1,
+          "reviewer": "/root/x05_reviewer",
+          "status": "pending",
+          "sourceCommit": "ac732775c0877932687148ddb1c77596c80d9be5",
+          "receipt": "docs/execution/handoffs/U-03-review-round1.md",
+          "productCommit": "ac732775c0877932687148ddb1c77596c80d9be5",
+          "handoffCommit": "a7536bad70b157d2db3fec6aed5b42a6ba135d50"
+        }
+      ]
     },
     "U-04": {
       "status": "planned",
@@ -6241,7 +6265,7 @@
       ]
     }
   },
-  "nextAction": "U-03 is dispatched to /root/x05_implementer from clean checkpoint ef215ce2eee56d82cfdeb72df26c61140547e9ff; await the exact-review/workflow controls handoff before independent review.",
+  "nextAction": "U-03 product/handoff are recorded at a7536bad70b157d2db3fec6aed5b42a6ba135d50; dispatch /root/x05_reviewer for independent round-one review, then integrate or correct findings.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
