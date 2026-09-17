@@ -15,9 +15,7 @@
   "resumeDocument": "docs/execution/RESUME.md",
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
-  "activeImplementationTasks": [
-    "U-01"
-  ],
+  "activeImplementationTasks": [],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
   "guardrailBaseline": {
@@ -4047,10 +4045,10 @@
       ]
     },
     "U-01": {
-      "status": "in_progress",
+      "status": "done",
       "owner": "/root/x05_implementer",
       "baseSha": "4aecc47ddfba0eb21a36a8ffcb423df711191a1d",
-      "integratedSha": null,
+      "integratedSha": "2f861a0322e8a693550ed6069e19776a1149a48e",
       "evidence": [
         "Dispatched from clean coordinator checkpoint 4aecc47ddfba0eb21a36a8ffcb423df711191a1d after U-00, C-03 and C-04 approvals.",
         "Own only ui/internal/client/, ui/internal/shell/, ui/internal/config/, ui/cmd/, ui/internal/assets/ and docs/execution/handoffs/U-01.md.",
@@ -4069,23 +4067,17 @@
         "3e93e80503682f7c13de5a65a3a502af046b9de3 coordinator UI module metadata normalization makes GOWORK=off go mod tidy -diff clean and promotes env/v11 to a direct dependency."
       ],
       "review": {
-        "status": "changes_requested",
-        "decision": "changes_requested",
+        "status": "approved",
+        "decision": "approved",
         "reviewer": "/root/x05_reviewer",
-        "commit": "9ada4806d49bb3da71e0c8e3c1e50fdc98c2f5a6",
-        "findings": [
-          "R1 P2 static asset routes accept POST and return 200 because asset dispatch precedes the method gate.",
-          "R2 P2 unknown or future API readiness states with nil error render false HTTP 200 API-ready success instead of failing closed.",
-          "R3 P2 UI manually parses environment and drifts from the frozen root/generated bootstrap contract, including local HTTP origin handling.",
-          "R4 P2 UI executable suppresses sanitized variable-specific startup errors and restart guidance.",
-          "R5 P2 ui go mod tidy -diff is non-clean."
-        ],
-        "round": 1
+        "commit": "095a6b7b2aa87d8477a4d7ae6eb26df6fb8d33c1",
+        "findings": [],
+        "round": 2
       },
-      "implementationCommit": "2f86d298d890e466334ecaa6d0bd92dc4d50f64f",
-      "handoffCommit": "0ddb7fc75b00ec296879efca8f2b46720a81b56b",
-      "reviewSourceCommit": "2f86d298d890e466334ecaa6d0bd92dc4d50f64f",
-      "reviewIntegrationCommit": "7ef11c3072769c04ecd2679b373a08fcfc6df46",
+      "implementationCommit": "65a1c0e66764308ff95c2a70de10ace15712b695",
+      "handoffCommit": "f397aaf326ae18615e01d4d86be764da5502a158",
+      "reviewSourceCommit": "3e93e80503682f7c13de5a65a3a502af046b9de3",
+      "reviewIntegrationCommit": "2f861a0322e8a693550ed6069e19776a1149a48e",
       "dispatch": {
         "assignedAt": "2026-09-17",
         "model": "gpt-5.6-luna",
@@ -4115,21 +4107,21 @@
         "reviewPath": "docs/execution/handoffs/U-01-review-round1.md",
         "handoffPath": "docs/execution/handoffs/U-01.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "awaiting_review",
-        "waitingOn": "/root/x05_reviewer",
-        "waitingReason": "U-01 correction round two product, handoff and coordinator module metadata support are complete; independent review is required for R1-R5 and prior shell invariants.",
+        "status": "approved",
+        "waitingOn": null,
+        "waitingReason": null,
         "dependencyCommits": {
           "U-00": "508d88ef7e11d115d004cd48dae8bb9b2bb7608c",
           "C-03": "8c9bf9a6277e068f9ae6b859fab2c5f7aa4890a1",
           "C-04": "37326ef211c2f2141f412c1f3bbcada208ec6f46"
         },
-        "implementationCommit": "2f86d298d890e466334ecaa6d0bd92dc4d50f64f",
-        "handoffCommit": "0ddb7fc75b00ec296879efca8f2b46720a81b56b",
-        "reviewSourceCommit": "2f86d298d890e466334ecaa6d0bd92dc4d50f64f",
-        "reviewRound": 1,
-        "reviewCommit": "9ada4806d49bb3da71e0c8e3c1e50fdc98c2f5a6",
-        "reviewIntegrationCommit": "7ef11c3072769c04ecd2679b373a08fcfc6df46",
-        "correctionStatus": "awaiting_review",
+        "implementationCommit": "65a1c0e66764308ff95c2a70de10ace15712b695",
+        "handoffCommit": "f397aaf326ae18615e01d4d86be764da5502a158",
+        "reviewSourceCommit": "3e93e80503682f7c13de5a65a3a502af046b9de3",
+        "reviewRound": 2,
+        "reviewCommit": "095a6b7b2aa87d8477a4d7ae6eb26df6fb8d33c1",
+        "reviewIntegrationCommit": "2f861a0322e8a693550ed6069e19776a1149a48e",
+        "correctionStatus": "approved",
         "correctionRound": 2,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "e116df6a55bd1921be52dc134a0d5ae4dc53d34a",
@@ -4140,13 +4132,14 @@
         "correctionImplementationCommit": "65a1c0e66764308ff95c2a70de10ace15712b695",
         "correctionHandoffCommit": "f397aaf326ae18615e01d4d86be764da5502a158",
         "correctionReviewSourceCommit": "3e93e80503682f7c13de5a65a3a502af046b9de3",
-        "correctionReviewCommit": null,
-        "correctionReviewIntegrationCommit": null,
+        "correctionReviewCommit": "095a6b7b2aa87d8477a4d7ae6eb26df6fb8d33c1",
+        "correctionReviewIntegrationCommit": "2f861a0322e8a693550ed6069e19776a1149a48e",
         "correctionProductCommits": [
           "65a1c0e66764308ff95c2a70de10ace15712b695",
           "3e93e80503682f7c13de5a65a3a502af046b9de3"
         ],
-        "correctionDispatchCommit": "e116df6a55bd1921be52dc134a0d5ae4dc53d34a"
+        "correctionDispatchCommit": "e116df6a55bd1921be52dc134a0d5ae4dc53d34a",
+        "correctionReviewRound": 2
       },
       "reviewHistory": [
         {
@@ -4163,16 +4156,18 @@
         {
           "round": 2,
           "reviewer": "/root/x05_reviewer",
-          "commit": null,
-          "status": "pending",
+          "commit": "095a6b7b2aa87d8477a4d7ae6eb26df6fb8d33c1",
+          "status": "approved",
           "sourceCommit": "3e93e80503682f7c13de5a65a3a502af046b9de3",
           "receipt": "docs/execution/handoffs/U-01-review-round2.md",
           "handoff": "docs/execution/handoffs/U-01-correction-round2.md",
           "productCommit": "65a1c0e66764308ff95c2a70de10ace15712b695",
           "handoffCommit": "f397aaf326ae18615e01d4d86be764da5502a158",
-          "supportCommit": "3e93e80503682f7c13de5a65a3a502af046b9de3"
+          "supportCommit": "3e93e80503682f7c13de5a65a3a502af046b9de3",
+          "integratedCommit": "2f861a0322e8a693550ed6069e19776a1149a48e"
         }
-      ]
+      ],
+      "verificationNote": "U-01 correction round two approved by independent review. All R1-R5 closed; UI ordinary/race/vet/mod verify/tidy, generation, architecture/planning, HTTP/HTTPS metadata/header probes, Linux amd64/arm64 CGO-free builds, and full offline ./scripts/check-guardrails.sh --ci passed."
     },
     "U-02": {
       "status": "planned",
@@ -6026,7 +6021,7 @@
       ]
     }
   },
-  "nextAction": "U-01 correction round two product and module metadata support are recorded; dispatch independent review round two for the BFF boundary and tidy gate.",
+  "nextAction": "U-01 is approved and integrated at 2f861a0322e8a693550ed6069e19776a1149a48e; dispatch U-02 discovery, inventory and matching views from this clean checkpoint.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
