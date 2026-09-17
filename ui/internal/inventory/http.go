@@ -184,7 +184,14 @@ func (r *HTTPReader) GetDiscovery(parent context.Context, id string) (Discovery,
 	if err := requireDiscoveryFields(response.GetBody()); err != nil {
 		return Discovery{}, protocolError(err)
 	}
-	return convertDiscovery(source)
+	item, convertErr := convertDiscovery(source)
+	if convertErr != nil {
+		return Discovery{}, convertErr
+	}
+	if item.ID != parsedID.String() {
+		return Discovery{}, protocolError(errors.New("discovery response identity does not match request"))
+	}
+	return item, nil
 }
 
 func (r *HTTPReader) ListMedia(parent context.Context, query PageRequest) (MediaPage, error) {
@@ -238,7 +245,14 @@ func (r *HTTPReader) GetMedia(parent context.Context, id string) (Media, error) 
 	if err := requireMediaFields(response.GetBody()); err != nil {
 		return Media{}, protocolError(err)
 	}
-	return convertMedia(source)
+	item, convertErr := convertMedia(source)
+	if convertErr != nil {
+		return Media{}, convertErr
+	}
+	if item.ID != parsedID.String() {
+		return Media{}, protocolError(errors.New("media response identity does not match request"))
+	}
+	return item, nil
 }
 
 func (r *HTTPReader) ListDownloads(parent context.Context, query PageRequest) (DownloadPage, error) {
@@ -292,7 +306,14 @@ func (r *HTTPReader) GetDownload(parent context.Context, id string) (Download, e
 	if err := requiredObjectFields(response.GetBody(), "id", "connectionId", "state", "observedAt"); err != nil {
 		return Download{}, protocolError(err)
 	}
-	return convertDownload(source)
+	item, convertErr := convertDownload(source)
+	if convertErr != nil {
+		return Download{}, convertErr
+	}
+	if item.ID != parsedID.String() {
+		return Download{}, protocolError(errors.New("download response identity does not match request"))
+	}
+	return item, nil
 }
 
 func (r *HTTPReader) ListDescriptors(parent context.Context, query PageRequest) (DescriptorPage, error) {
@@ -346,7 +367,14 @@ func (r *HTTPReader) GetDescriptor(parent context.Context, id string) (Descripto
 	if err := requiredObjectFields(response.GetBody(), "id", "type", "size", "digest", "availability", "capturedAt"); err != nil {
 		return Descriptor{}, protocolError(err)
 	}
-	return convertDescriptor(source)
+	item, convertErr := convertDescriptor(source)
+	if convertErr != nil {
+		return Descriptor{}, convertErr
+	}
+	if item.ID != parsedID.String() {
+		return Descriptor{}, protocolError(errors.New("descriptor response identity does not match request"))
+	}
+	return item, nil
 }
 
 func discoveryParams(query PageRequest) *generated.ListDiscoveriesParams {

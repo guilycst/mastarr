@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -363,6 +364,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				h.handleReadError(w, readErr)
 				return
 			}
+			if item.ID != id {
+				h.handleReadError(w, validationError("discovery detail identity does not match request"))
+				return
+			}
 			if err := validateDiscovery(item); err != nil {
 				h.handleReadError(w, err)
 				return
@@ -385,6 +390,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			item, readErr := h.reader.GetMedia(ctx, id)
 			if readErr != nil {
 				h.handleReadError(w, readErr)
+				return
+			}
+			if item.ID != id {
+				h.handleReadError(w, validationError("media detail identity does not match request"))
 				return
 			}
 			if err := validateMedia(item); err != nil {
@@ -411,6 +420,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				h.handleReadError(w, readErr)
 				return
 			}
+			if item.ID != id {
+				h.handleReadError(w, validationError("download detail identity does not match request"))
+				return
+			}
 			if err := validateDownload(item); err != nil {
 				h.handleReadError(w, err)
 				return
@@ -433,6 +446,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			item, readErr := h.reader.GetDescriptor(ctx, id)
 			if readErr != nil {
 				h.handleReadError(w, readErr)
+				return
+			}
+			if item.ID != id {
+				h.handleReadError(w, validationError("descriptor detail identity does not match request"))
 				return
 			}
 			if err := validateDescriptor(item); err != nil {
@@ -678,6 +695,48 @@ func validIdentity(value string) bool {
 	return true
 }
 
+func validConfigID(value string) bool {
+	if value == "" || len(value) > 63 || !utf8.ValidString(value) {
+		return false
+	}
+	for index, character := range value {
+		alphaNumeric := (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9')
+		if index == 0 || index == len(value)-1 {
+			if !alphaNumeric {
+				return false
+			}
+			continue
+		}
+		if !alphaNumeric && character != '.' && character != '_' && character != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+func validBounded(value string, max int, allowEmpty bool) bool {
+	if !allowEmpty && value == "" {
+		return false
+	}
+	if len(value) > max || !utf8.ValidString(value) {
+		return false
+	}
+	for _, character := range value {
+		if character < 0x20 || character == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+func validOptionalIdentity(value string) bool {
+	return value == "" || validIdentity(value)
+}
+
+func validOptionalConfigID(value string) bool {
+	return value == "" || validConfigID(value)
+}
+
 func validRelativePath(value string) bool {
 	if value == "" || !utf8.ValidString(value) || strings.HasPrefix(value, "/") || strings.HasPrefix(value, `\`) || strings.ContainsRune(value, '\x00') {
 		return false
@@ -859,11 +918,19 @@ func validatePage(page PageInfo) error {
 }
 
 func validateCoverage(coverage Coverage) error {
-	if coverage.Completeness == "" || coverage.ObservedAt.IsZero() {
+	if !validCompleteness(coverage.Completeness) || coverage.ObservedAt.IsZero() {
 		return validationError("coverage evidence is incomplete")
+	}
+	if !validOptionalConfigID(coverage.ConnectionID) || !validOptionalConfigID(coverage.RootID) || !validOptionalIdentity(coverage.SourceID) || !validBounded(coverage.SnapshotRevision, MaxInputLength, true) {
+		return validationError("coverage identity or revision is invalid")
 	}
 	if len(coverage.ReasonCodes) > MaxTracking {
 		return validationError("coverage reasons exceed UI limit")
+	}
+	for _, reason := range coverage.ReasonCodes {
+		if !validBounded(reason, MaxInputLength, false) {
+			return validationError("coverage reason is invalid")
+		}
 	}
 	if coverage.ObservedCount != nil && *coverage.ObservedCount < 0 {
 		return validationError("coverage count is invalid")
@@ -890,7 +957,7 @@ func validateDiscovery(item Discovery) error {
 	if !validIdentity(item.ID) || len(item.Files) > MaxFilesPerDiscovery || len(item.Candidates) > MaxCandidates || len(item.Provenance) > MaxProvenance {
 		return validationError("discovery identity or size is invalid")
 	}
-	if item.Readiness == "" || item.ObservedAt.IsZero() {
+	if !validReadiness(item.Readiness) || item.ObservedAt.IsZero() {
 		return validationError("discovery readiness is missing")
 	}
 	if item.Coverage != nil {
@@ -899,8 +966,18 @@ func validateDiscovery(item Discovery) error {
 		}
 	}
 	for _, file := range item.Files {
-		if !validIdentity(file.RootID) || file.Type == "" || len(file.RelativePath) > MaxInputLength || !validRelativePath(file.RelativePath) || file.Size < 0 {
-			return validationError("discovery file is invalid")
+		if err := validateFile(file); err != nil {
+			return err
+		}
+	}
+	for _, provenance := range item.Provenance {
+		if err := validateProvenance(provenance); err != nil {
+			return err
+		}
+	}
+	for _, candidate := range item.Candidates {
+		if err := validateCandidate(candidate); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -922,12 +999,17 @@ func validateMediaPage(page MediaPage) error {
 }
 
 func validateMedia(item Media) error {
-	if !validIdentity(item.ID) || item.Kind == "" || item.ObservedAt.IsZero() || len(item.Tracking) > MaxTracking || len(item.DiscoveryIDs) > MaxFilesPerDiscovery {
+	if !validIdentity(item.ID) || !validKind(item.Kind) || !validBounded(item.ProviderID, MaxInputLength, false) || !validBounded(item.Title, MaxRenderedTextLength, true) || item.ObservedAt.IsZero() || len(item.Tracking) > MaxTracking || len(item.DiscoveryIDs) > MaxFilesPerDiscovery {
 		return validationError("media identity or size is invalid")
 	}
+	for _, discoveryID := range item.DiscoveryIDs {
+		if !validIdentity(discoveryID) {
+			return validationError("media discovery identity is invalid")
+		}
+	}
 	for _, tracking := range item.Tracking {
-		if len(tracking.Evidence) > MaxTracking || !validIdentity(tracking.ConnectionID) || tracking.Dimension == "" || tracking.Value == "" || tracking.ObservedAt.IsZero() {
-			return validationError("media tracking is invalid")
+		if err := validateTracking(tracking); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -949,8 +1031,11 @@ func validateDownloadPage(page DownloadPage) error {
 }
 
 func validateDownload(item Download) error {
-	if !validIdentity(item.ID) || !validIdentity(item.ConnectionID) || item.State == "" || item.ObservedAt.IsZero() {
+	if !validIdentity(item.ID) || !validConfigID(item.ConnectionID) || !validDownloadState(item.State) || item.ObservedAt.IsZero() {
 		return validationError("download identity or state is invalid")
+	}
+	if !validBounded(item.ClientItemID, MaxInputLength, true) || !validBounded(item.Hash, MaxInputLength, true) || !validBounded(item.NzbID, MaxInputLength, true) || !validBounded(item.DeprecatedID, MaxInputLength, true) || !validOptionalIdentity(item.DescriptorID) || !validOptionalTarget(item.SourcePath) || (item.CompletedAt != nil && item.CompletedAt.IsZero()) {
+		return validationError("download provenance is invalid")
 	}
 	if item.Coverage != nil {
 		if err := validateCoverage(*item.Coverage); err != nil {
@@ -976,10 +1061,146 @@ func validateDescriptorPage(page DescriptorPage) error {
 }
 
 func validateDescriptor(item Descriptor) error {
-	if !validIdentity(item.ID) || item.Size < 0 || item.Type == "" || item.Availability == "" || item.CapturedAt.IsZero() {
+	if !validIdentity(item.ID) || !validDescriptorType(item.Type) || item.Size < 0 || !validDescriptorAvailability(item.Availability) || !validBounded(item.Digest, MaxInputLength, false) || !validBounded(item.Source, MaxInputLength, true) || item.CapturedAt.IsZero() || (item.RetentionUntil != nil && item.RetentionUntil.IsZero()) {
 		return validationError("descriptor identity or state is invalid")
 	}
 	return nil
+}
+
+func validateFile(file File) error {
+	if !validConfigID(file.RootID) || !validRelativePath(file.RelativePath) || len(file.RelativePath) > MaxInputLength || !validFileType(file.Type) || !validFileRole(file.Role) || file.Size < 0 || !validBounded(file.Digest, MaxInputLength, true) || !validBounded(file.FileIdentity, MaxIdentityLength, true) || (file.ObservedAt != nil && file.ObservedAt.IsZero()) {
+		return validationError("discovery file is invalid")
+	}
+	return nil
+}
+
+func validateProvenance(provenance Provenance) error {
+	if !validOptionalConfigID(provenance.ConnectionID) || !validBounded(provenance.ClientItemID, MaxInputLength, true) || !validOptionalIdentity(provenance.DescriptorID) || !validBounded(provenance.Hash, MaxInputLength, true) || !validOptionalTarget(provenance.SourcePath) || (provenance.CompletedAt != nil && provenance.CompletedAt.IsZero()) {
+		return validationError("provenance evidence is invalid")
+	}
+	return nil
+}
+
+func validateCandidate(candidate Candidate) error {
+	if !validBounded(candidate.Title, MaxInputLength, false) || !validKind(candidate.Kind) || !validBounded(candidate.ProviderID, MaxInputLength, true) || !validBounded(candidate.ExternalID, MaxInputLength, true) || len(candidate.Episodes) > MaxAssociationInputs {
+		return validationError("candidate evidence is invalid")
+	}
+	if candidate.Season != nil && *candidate.Season < 0 {
+		return validationError("candidate season is invalid")
+	}
+	if candidate.Year != nil && *candidate.Year < 0 {
+		return validationError("candidate year is invalid")
+	}
+	for _, episode := range candidate.Episodes {
+		if episode < 0 {
+			return validationError("candidate episode is invalid")
+		}
+	}
+	if candidate.Score != nil && (math.IsNaN(float64(*candidate.Score)) || math.IsInf(float64(*candidate.Score), 0)) {
+		return validationError("candidate score is invalid")
+	}
+	return nil
+}
+
+func validateTracking(tracking Tracking) error {
+	if len(tracking.Evidence) > MaxTracking || !validConfigID(tracking.ConnectionID) || !validTrackingDimension(tracking.Dimension) || !validTrackingValue(tracking.Value) || !validBounded(tracking.ProviderID, MaxInputLength, true) || !validBounded(tracking.ExternalID, MaxInputLength, true) || !validOptionalIdentity(tracking.CoverageID) || tracking.ObservedAt.IsZero() {
+		return validationError("media tracking is invalid")
+	}
+	for _, evidence := range tracking.Evidence {
+		if !validBounded(evidence, MaxInputLength, false) {
+			return validationError("tracking evidence is invalid")
+		}
+	}
+	return nil
+}
+
+func validOptionalTarget(value string) bool {
+	if value == "" {
+		return true
+	}
+	root, relative, ok := strings.Cut(value, ":")
+	return ok && validConfigID(root) && validRelativePath(relative) && len(value) <= MaxInputLength && validBounded(value, MaxInputLength, false)
+}
+
+func validFileType(value string) bool {
+	switch value {
+	case "file", "directory", "subtitle", "companion":
+		return true
+	default:
+		return false
+	}
+}
+
+func validFileRole(value string) bool {
+	switch value {
+	case "", "video", "subtitle", "companion":
+		return true
+	default:
+		return false
+	}
+}
+
+func validReadiness(value string) bool {
+	switch value {
+	case "ready", "downloading", "processing", "changing", "unsupported", "unknown":
+		return true
+	default:
+		return false
+	}
+}
+
+func validCompleteness(value string) bool {
+	switch value {
+	case "complete", "partial", "unknown":
+		return true
+	default:
+		return false
+	}
+}
+
+func validTrackingDimension(value string) bool {
+	switch value {
+	case "registration", "import", "availability", "request":
+		return true
+	default:
+		return false
+	}
+}
+
+func validTrackingValue(value string) bool {
+	switch value {
+	case "present", "absent", "unknown":
+		return true
+	default:
+		return false
+	}
+}
+
+func validDownloadState(value string) bool {
+	switch value {
+	case "queued", "downloading", "seeding", "complete", "processing", "failed", "unknown":
+		return true
+	default:
+		return false
+	}
+}
+
+func validDescriptorType(value string) bool {
+	switch value {
+	case "torrent", "nzb", "unknown":
+		return true
+	default:
+		return false
+	}
+}
+
+func validDescriptorAvailability(value string) bool {
+	switch value {
+	case "available", "unavailable", "unknown":
+		return true
+	default:
+		return false
+	}
 }
 
 func writeListPageWithCount(w http.ResponseWriter, route string, query queryState, title, intro string, count int, renderRows func(*pageWriter), page PageInfo) {
@@ -996,6 +1217,7 @@ func writeListPageWithCount(w http.ResponseWriter, route string, query queryStat
 	p.text("</p><div class=\"inventory-table\">")
 	renderRows(&p)
 	p.text("</div>")
+	writeCoverageSet(&p, "Page coverage evidence", page.Coverage)
 	writePagination(&p, route, query, page)
 	p.text("</main></body></html>")
 	p.finish()
@@ -1013,12 +1235,17 @@ func writeFilterForm(p *pageWriter, route string, query queryState) {
 		writeInput(p, "connectionId", "Connection instance", query.ConnectionID)
 	}
 	if route == "media" {
-		p.text("<label for=\"inventory-kind\">Media kind</label><select id=\"inventory-kind\" name=\"kind\"><option value=\"\">All kinds</option>")
+		p.text("<label for=\"inventory-kind\">Media kind</label><select id=\"inventory-kind\" name=\"kind\"><option value=\"\"")
+		if query.Kind == "" {
+			p.text(" selected")
+		}
+		p.text(">All kinds</option>")
 		for _, kind := range []string{"movie", "episode", "season", "anime"} {
 			p.text("<option value=\"")
 			p.value(kind)
+			p.text("\"")
 			if query.Kind == kind {
-				p.text("\" selected")
+				p.text(" selected")
 			}
 			p.text(">")
 			p.value(kind)
@@ -1046,4 +1273,41 @@ func writePagination(p *pageWriter, route string, query queryState, page PageInf
 	p.text("<nav aria-label=\"Pagination\"><a rel=\"next\" href=\"")
 	p.value(query.pageLink(route, false, *page.NextCursor))
 	p.text("\">Next page</a></nav>")
+}
+
+func writeCoverageSet(p *pageWriter, title string, coverage []Coverage) {
+	p.text("<section aria-labelledby=\"page-coverage-title\"><h2 id=\"page-coverage-title\">")
+	p.value(title)
+	p.text("</h2>")
+	if len(coverage) == 0 {
+		p.text("<p>Coverage: unknown.</p></section>")
+		return
+	}
+	for index := range coverage {
+		p.text("<h3>Coverage observation ")
+		p.value(strconv.Itoa(index + 1))
+		p.text("</h3><dl>")
+		writeCoverageTerms(p, coverage[index])
+		p.text("</dl>")
+	}
+	p.text("</section>")
+}
+
+func writeCoverageTerms(p *pageWriter, coverage Coverage) {
+	detailTerm(p, "Completeness", coverage.Completeness)
+	detailTerm(p, "Connection ID", coverage.ConnectionID)
+	detailTerm(p, "Root ID", coverage.RootID)
+	detailTerm(p, "Source ID", coverage.SourceID)
+	detailTerm(p, "Observed at", timeLabel(coverage.ObservedAt))
+	count := "unknown"
+	if coverage.ObservedCount != nil {
+		count = countLabel(*coverage.ObservedCount)
+	}
+	detailTerm(p, "Observed count", count)
+	detailTerm(p, "Snapshot revision", coverage.SnapshotRevision)
+	reasons := "unknown"
+	if len(coverage.ReasonCodes) > 0 {
+		reasons = strings.Join(coverage.ReasonCodes, ", ")
+	}
+	detailTerm(p, "Reason codes", reasons)
 }

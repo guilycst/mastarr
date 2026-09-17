@@ -138,17 +138,17 @@ func TestHandlerDiscoveryPaginationEscapingAndReadOnlyQuery(t *testing.T) {
 		Items: []Discovery{{
 			ID:         "discovery-1",
 			ObservedAt: now,
-			Readiness:  "<script>alert(1)</script>",
+			Readiness:  "unknown",
 			Files: []File{{
 				RootID:       "root-a",
 				RelativePath: "Shows/<pilot>.mkv",
-				Type:         "video",
+				Type:         "file",
 				Role:         "video",
 				Size:         42,
 				FileIdentity: "inode-1",
 			}},
 			Candidates: []Candidate{{
-				Title:      "Candidate",
+				Title:      "<script>alert(1)</script>",
 				Kind:       "episode",
 				ProviderID: "tvdb:42",
 				Season:     intPtr(1),
@@ -171,8 +171,8 @@ func TestHandlerDiscoveryPaginationEscapingAndReadOnlyQuery(t *testing.T) {
 		t.Fatalf("page request = %#v", got)
 	}
 	body := recorder.Body.String()
-	if strings.Contains(body, "<script>") || !strings.Contains(body, "&lt;script&gt;alert(1)&lt;/script&gt;") {
-		t.Fatalf("state was not safely escaped: %s", body)
+	if strings.Contains(body, "<script>") {
+		t.Fatalf("unsafe markup was rendered: %s", body)
 	}
 	if !strings.Contains(body, `rel="next"`) || !strings.Contains(body, `/discoveries?cursor=cursor-next&amp;limit=2&amp;rootId=root-a`) {
 		t.Fatalf("pagination link did not preserve bounded query state: %s", body)
@@ -194,21 +194,21 @@ func TestHandlerDetailsPreserveDeepLinkIdentityAndAssociations(t *testing.T) {
 		Title:      "Observed title",
 		ObservedAt: now,
 		Tracking: []Tracking{
-			{ConnectionID: "sonarr-a", Dimension: "registration", Value: "registered", ProviderID: "tvdb:10", ObservedAt: now},
+			{ConnectionID: "sonarr-a", Dimension: "registration", Value: "present", ProviderID: "tvdb:10", ExternalID: "series-10", ObservedAt: now, CoverageID: "00000000-0000-0000-0000-000000000010"},
 			{ConnectionID: "jellyfin-b", Dimension: "availability", Value: "unknown", ObservedAt: now},
-			{ConnectionID: "seerr-c", Dimension: "request", Value: "approved", ObservedAt: now},
+			{ConnectionID: "seerr-c", Dimension: "request", Value: "present", ObservedAt: now},
 		},
 	}
 	fake := &fakeReader{media: map[string]Media{"media-1": media}}
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/media/media-1?identity=Draft+Title&selection=episode-3&kind=movie", nil)
+	request := httptest.NewRequest(http.MethodGet, "/media/media-1?identity=Draft+Title&providerId=tmdb%3A202&selection=episode-3&kind=anime&episode=3&subtitleLanguage=pt-BR&subtitleForced=true&subtitleSDH=false&subtitlePair=pair-a&limit=7&cursor=cursor-list", nil)
 	NewHandler(fake).ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d; body=%s", recorder.Code, recorder.Body.String())
 	}
 	body := recorder.Body.String()
-	for _, expected := range []string{"value=\"Draft Title\"", "sonarr-a", "jellyfin-b", "seerr-c", "registration", "availability", "request", "unknown", "/media/media-1"} {
+	for _, expected := range []string{"value=\"Draft Title\"", "value=\"tmdb:202\"", "<option value=\"anime\" selected>anime</option>", "name=\"selection\" value=\"episode-3\"", "name=\"episode\" value=\"3\"", "name=\"subtitleLanguage\" value=\"pt-BR\"", "name=\"subtitleForced\" value=\"true\"", "name=\"subtitleSDH\" value=\"false\"", "name=\"subtitlePair\" value=\"pair-a\"", "name=\"limit\" value=\"7\"", "name=\"cursor\" value=\"cursor-list\"", "sonarr-a", "jellyfin-b", "seerr-c", "registration", "availability", "request", "series-10", "00000000-0000-0000-0000-000000000010", "unknown", "/media/media-1"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("detail body missing %q: %s", expected, body)
 		}
@@ -221,21 +221,21 @@ func TestHandlerDetailsPreserveDeepLinkIdentityAndAssociations(t *testing.T) {
 		Files: []File{{
 			RootID:       "root-a",
 			RelativePath: "Season 1/Episode 01.mkv",
-			Type:         "video",
+			Type:         "file",
 			Role:         "video",
 			Size:         99,
 		}},
-		Candidates: []Candidate{{Title: "<b>unsafe</b>", Kind: "episode", ProviderID: "tvdb:44"}},
+		Candidates: []Candidate{{Title: "<b>unsafe</b>", Kind: "episode", ProviderID: "tvdb:44"}, {Title: "<b>unsafe</b>", Kind: "episode", ProviderID: "tvdb:45"}},
 	}
 	fake.discoveries = map[string]Discovery{"discovery-2": discovery}
 	recorder = httptest.NewRecorder()
-	request = httptest.NewRequest(http.MethodGet, "/discoveries/discovery-2?association-0-language=pt-BR&association-0-forced=true", nil)
+	request = httptest.NewRequest(http.MethodGet, "/discoveries/discovery-2?rootId=root-a&limit=9&cursor=cursor-list&association-0-identity=video-id&association-0-episode=3&association-0-language=pt-BR&association-0-forced=true&association-0-sdh=false&association-0-pair=pair-a&association-0-role=video&candidate-0-title=Draft+Candidate&candidate-0-provider=tvdb%3A99&candidate-0-external=episode-99&candidate-0-kind=anime&candidate-0-season=2&candidate-0-episodes=3%2C4&candidate-0-year=2025&candidate-0-score=0.91", nil)
 	NewHandler(fake).ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("discovery detail status = %d; body=%s", recorder.Code, recorder.Body.String())
 	}
 	body = recorder.Body.String()
-	for _, expected := range []string{"name=\"association-0-language\" value=\"pt-BR\"", "name=\"association-0-forced\" value=\"true\"", "value=\"&lt;b&gt;unsafe&lt;/b&gt;\"", "Read-only observation"} {
+	for _, expected := range []string{"name=\"association-0-identity\" value=\"video-id\"", "name=\"association-0-episode\" value=\"3\"", "name=\"association-0-language\" value=\"pt-BR\"", "name=\"association-0-forced\" value=\"true\"", "name=\"association-0-sdh\" value=\"false\"", "name=\"association-0-pair\" value=\"pair-a\"", "<option value=\"video\" selected>video</option>", "name=\"candidate-0-title\" value=\"Draft Candidate\"", "name=\"candidate-0-provider\" value=\"tvdb:99\"", "name=\"candidate-0-external\" value=\"episode-99\"", "<option value=\"anime\" selected>anime</option>", "name=\"candidate-0-season\" value=\"2\"", "name=\"candidate-0-episodes\" value=\"3,4\"", "name=\"candidate-0-year\" value=\"2025\"", "name=\"candidate-0-score\" value=\"0.91\"", "value=\"&lt;b&gt;unsafe&lt;/b&gt;\"", "Read-only observation"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("association body missing %q: %s", expected, body)
 		}
@@ -300,13 +300,13 @@ func TestHTTPReaderConvertsAllInventoryPagesAndPreservesQuery(t *testing.T) {
 			if r.URL.Query().Get("cursor") != "before" || r.URL.Query().Get("limit") != "7" || r.URL.Query().Get("rootId") != "root-a" {
 				t.Errorf("discovery query = %s", r.URL.RawQuery)
 			}
-			_, _ = io.WriteString(w, page(fmt.Sprintf(`[{"id":%q,"observedAt":%q,"readiness":"ready","files":[{"relativePath":"Show/E01.mkv","rootId":"root-a","size":42,"type":"video"}]}]`, idDiscovery, now)))
+			_, _ = io.WriteString(w, page(fmt.Sprintf(`[{"id":%q,"observedAt":%q,"readiness":"ready","files":[{"relativePath":"Show/E01.mkv","rootId":"root-a","size":42,"type":"file"}]}]`, idDiscovery, now)))
 		case "/api/v1/media":
 			_, _ = io.WriteString(w, page(fmt.Sprintf(`[{"id":%q,"kind":"movie","providerId":"tmdb:101","observedAt":%q,"tracking":[]}]`, idMedia, now)))
 		case "/api/v1/downloads":
 			_, _ = io.WriteString(w, page(fmt.Sprintf(`[{"id":%q,"connectionId":"qbit-a","state":"seeding","observedAt":%q}]`, idDownload, now)))
 		case "/api/v1/descriptors":
-			_, _ = io.WriteString(w, page(fmt.Sprintf(`[{"id":%q,"type":"original","size":42,"digest":"sha256:abc","availability":"available","capturedAt":%q}]`, idDescriptor, now)))
+			_, _ = io.WriteString(w, page(fmt.Sprintf(`[{"id":%q,"type":"torrent","size":42,"digest":"sha256:abc","availability":"available","capturedAt":%q}]`, idDescriptor, now)))
 		default:
 			http.NotFound(w, r)
 		}
@@ -487,6 +487,239 @@ func TestHTTPReaderBoundsRedirectAndContextIdentity(t *testing.T) {
 	_, err = reader.ListMedia(ctx, PageRequest{})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancel error = %v", err)
+	}
+}
+
+func TestHandlerRejectsForeignDetailIdentity(t *testing.T) {
+	now := time.Date(2026, 9, 17, 13, 0, 0, 0, time.UTC)
+	fake := &fakeReader{
+		discoveries: map[string]Discovery{"requested": {ID: "foreign", ObservedAt: now, Readiness: "unknown", Files: []File{}}},
+		media:       map[string]Media{"requested": {ID: "foreign", Kind: "movie", ProviderID: "tmdb:1", ObservedAt: now, Tracking: []Tracking{}}},
+		downloads:   map[string]Download{"requested": {ID: "foreign", ConnectionID: "qbit-a", State: "unknown", ObservedAt: now}},
+		descriptors: map[string]Descriptor{"requested": {ID: "foreign", Type: "unknown", Size: 0, Digest: "sha256:empty", Availability: "unknown", CapturedAt: now}},
+	}
+	for _, route := range []string{"discoveries", "media", "downloads", "descriptors"} {
+		t.Run(route, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			NewHandler(fake).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/"+route+"/requested", nil))
+			if recorder.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d; body=%s", recorder.Code, recorder.Body.String())
+			}
+			if strings.Contains(recorder.Body.String(), "foreign") {
+				t.Fatalf("foreign identity leaked: %s", recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestHandlerRendersEvidenceAndUnknownStates(t *testing.T) {
+	now := time.Date(2026, 9, 17, 13, 10, 0, 0, time.UTC)
+	fileObserved := now.Add(-time.Minute)
+	completed := now.Add(-2 * time.Minute)
+	count := 2
+	coverage := Coverage{
+		Completeness:     "partial",
+		ConnectionID:     "sonarr-a",
+		RootID:           "root-a",
+		SourceID:         "00000000-0000-0000-0000-000000000005",
+		SnapshotRevision: "snapshot-7",
+		ObservedAt:       now,
+		ObservedCount:    &count,
+		ReasonCodes:      []string{"page_tail", "manager_offline"},
+	}
+	discovery := Discovery{
+		ID:         "discovery-evidence",
+		ObservedAt: now,
+		Readiness:  "unknown",
+		Files:      []File{{RootID: "root-a", RelativePath: "Show/E01.mkv", Type: "file", Role: "video", Size: 42, FileIdentity: "inode-7", ObservedAt: &fileObserved}},
+		Provenance: []Provenance{{ConnectionID: "qbit-a", ClientItemID: "item-7", DescriptorID: "00000000-0000-0000-0000-000000000006", Hash: "sha256:download", SourcePath: "root-a:Show/E01.mkv", CompletedAt: &completed}},
+		Coverage:   &coverage,
+	}
+	fake := &fakeReader{discoveries: map[string]Discovery{"discovery-evidence": discovery}}
+	recorder := httptest.NewRecorder()
+	NewHandler(fake).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/discoveries/discovery-evidence", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("discovery status = %d; body=%s", recorder.Code, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	for _, expected := range []string{"2026-09-17T13:09:00Z", "sha256:download", "2026-09-17T13:08:00Z", "snapshot-7", "manager_offline", "2", "00000000-0000-0000-0000-000000000005"} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("discovery evidence missing %q: %s", expected, body)
+		}
+	}
+
+	trackingObserved := now.Add(-3 * time.Minute)
+	media := Media{
+		ID:         "media-evidence",
+		Kind:       "episode",
+		ProviderID: "tvdb:77",
+		ObservedAt: now,
+		Tracking:   []Tracking{{ConnectionID: "sonarr-a", Dimension: "registration", Value: "unknown", ProviderID: "tvdb:77", ExternalID: "series-77", ObservedAt: trackingObserved, CoverageID: "00000000-0000-0000-0000-000000000007"}},
+	}
+	fake.media = map[string]Media{"media-evidence": media}
+	recorder = httptest.NewRecorder()
+	NewHandler(fake).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/media/media-evidence", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("media status = %d; body=%s", recorder.Code, recorder.Body.String())
+	}
+	body = recorder.Body.String()
+	for _, expected := range []string{"series-77", "2026-09-17T13:07:00Z", "00000000-0000-0000-0000-000000000007"} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("tracking evidence missing %q: %s", expected, body)
+		}
+	}
+
+	download := Download{
+		ID: "download-evidence", ConnectionID: "qbit-a", ClientItemID: "item-7", Hash: "sha256:download", NzbID: "nzb-7", DeprecatedID: "legacy-7", DescriptorID: "00000000-0000-0000-0000-000000000006", SourcePath: "root-a:Show/E01.mkv", State: "seeding", ObservedAt: now, Coverage: &coverage,
+	}
+	fake.downloads = map[string]Download{"download-evidence": download}
+	recorder = httptest.NewRecorder()
+	NewHandler(fake).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/downloads/download-evidence", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("download status = %d; body=%s", recorder.Code, recorder.Body.String())
+	}
+	body = recorder.Body.String()
+	for _, expected := range []string{"legacy-7", "00000000-0000-0000-0000-000000000006", "snapshot-7", "manager_offline"} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("download evidence missing %q: %s", expected, body)
+		}
+	}
+}
+
+func TestHandlerOptionMarkupClosesEveryValueAndKeepsSelection(t *testing.T) {
+	now := time.Date(2026, 9, 17, 13, 20, 0, 0, time.UTC)
+	fake := &fakeReader{mediaPage: MediaPage{Items: []Media{{ID: "media-1", Kind: "anime", ProviderID: "tmdb:1", ObservedAt: now, Tracking: []Tracking{}}}, Page: fixturePage(now)}}
+	recorder := httptest.NewRecorder()
+	NewHandler(fake).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/media?kind=anime", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("media status = %d; body=%s", recorder.Code, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	for _, option := range []string{"movie", "episode", "season", "anime"} {
+		if !strings.Contains(body, "<option value=\""+option+"\"") {
+			t.Fatalf("media option %q is malformed: %s", option, body)
+		}
+	}
+	if !strings.Contains(body, `<option value="anime" selected>anime</option>`) {
+		t.Fatalf("selected media option missing: %s", body)
+	}
+
+	fake.discoveries = map[string]Discovery{"discovery-1": {ID: "discovery-1", ObservedAt: now, Readiness: "ready", Files: []File{{RootID: "root-a", RelativePath: "Show/E01.mkv", Type: "file", Role: "video", Size: 1}}}}
+	recorder = httptest.NewRecorder()
+	NewHandler(fake).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/discoveries/discovery-1", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("discovery status = %d; body=%s", recorder.Code, recorder.Body.String())
+	}
+	body = recorder.Body.String()
+	for _, option := range []string{"video", "subtitle", "companion"} {
+		if !strings.Contains(body, "<option value=\""+option+"\"") {
+			t.Fatalf("role option %q is malformed: %s", option, body)
+		}
+	}
+	if !strings.Contains(body, `<option value="video" selected>video</option>`) {
+		t.Fatalf("selected role option missing: %s", body)
+	}
+}
+
+func TestHTTPReaderRejectsForeignDetailIdentity(t *testing.T) {
+	const (
+		requested = "00000000-0000-0000-0000-000000000001"
+		foreign   = "00000000-0000-0000-0000-000000000002"
+	)
+	now := "2026-09-17T13:30:00Z"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var body string
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/api/v1/discoveries/"):
+			body = fmt.Sprintf(`{"id":%q,"files":[],"readiness":"unknown","observedAt":%q}`, foreign, now)
+		case strings.HasPrefix(r.URL.Path, "/api/v1/media/"):
+			body = fmt.Sprintf(`{"id":%q,"kind":"movie","providerId":"tmdb:1","tracking":[],"observedAt":%q}`, foreign, now)
+		case strings.HasPrefix(r.URL.Path, "/api/v1/downloads/"):
+			body = fmt.Sprintf(`{"id":%q,"connectionId":"qbit-a","state":"unknown","observedAt":%q}`, foreign, now)
+		case strings.HasPrefix(r.URL.Path, "/api/v1/descriptors/"):
+			body = fmt.Sprintf(`{"id":%q,"type":"unknown","size":0,"digest":"sha256:empty","availability":"unknown","capturedAt":%q}`, foreign, now)
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = io.WriteString(w, body)
+	}))
+	defer server.Close()
+	reader, err := NewHTTPReader(server.URL, server.Client(), time.Second)
+	if err != nil {
+		t.Fatalf("NewHTTPReader() error = %v", err)
+	}
+	checks := []struct {
+		name string
+		read func() error
+	}{
+		{name: "discovery", read: func() error { _, err := reader.GetDiscovery(context.Background(), requested); return err }},
+		{name: "media", read: func() error { _, err := reader.GetMedia(context.Background(), requested); return err }},
+		{name: "download", read: func() error { _, err := reader.GetDownload(context.Background(), requested); return err }},
+		{name: "descriptor", read: func() error { _, err := reader.GetDescriptor(context.Background(), requested); return err }},
+	}
+	for _, check := range checks {
+		t.Run(check.name, func(t *testing.T) {
+			readErr := check.read()
+			var apiErr *APIError
+			if !errors.As(readErr, &apiErr) || apiErr.Kind() != ErrorProtocol {
+				t.Fatalf("error = %T %v; APIError = %#v", readErr, readErr, apiErr)
+			}
+		})
+	}
+}
+
+func TestHTTPReaderRejectsMalformedNestedEvidence(t *testing.T) {
+	now := "2026-09-17T13:40:00Z"
+	page := func(items string) string {
+		return fmt.Sprintf(`{"items":%s,"page":{"nextCursor":null,"coverage":[],"observedAt":%q}}`, items, now)
+	}
+	cases := []struct {
+		name string
+		path string
+		body string
+		read func(*HTTPReader) error
+	}{
+		{name: "candidate kind", path: "/api/v1/discoveries", body: page(fmt.Sprintf(`[{"id":"00000000-0000-0000-0000-000000000001","files":[],"readiness":"unknown","observedAt":%q,"candidates":[{"kind":"","title":"title"}]}]`, now)), read: func(r *HTTPReader) error {
+			_, err := r.ListDiscoveries(context.Background(), PageRequest{})
+			return err
+		}},
+		{name: "provenance target", path: "/api/v1/discoveries", body: page(fmt.Sprintf(`[{"id":"00000000-0000-0000-0000-000000000001","files":[],"readiness":"unknown","observedAt":%q,"provenance":[{"sourcePath":{"rootId":"root-a","relativePath":"../secret"}}]}]`, now)), read: func(r *HTTPReader) error {
+			_, err := r.ListDiscoveries(context.Background(), PageRequest{})
+			return err
+		}},
+		{name: "file role", path: "/api/v1/discoveries", body: page(fmt.Sprintf(`[{"id":"00000000-0000-0000-0000-000000000001","files":[{"rootId":"root-a","relativePath":"Show/E01.mkv","type":"file","size":1,"role":"future"}],"readiness":"unknown","observedAt":%q}]`, now)), read: func(r *HTTPReader) error {
+			_, err := r.ListDiscoveries(context.Background(), PageRequest{})
+			return err
+		}},
+		{name: "tracking dimension", path: "/api/v1/media", body: page(fmt.Sprintf(`[{"id":"00000000-0000-0000-0000-000000000001","kind":"movie","providerId":"tmdb:1","tracking":[{"connectionId":"sonarr-a","dimension":"future","value":"unknown","observedAt":%q}],"observedAt":%q}]`, now, now)), read: func(r *HTTPReader) error { _, err := r.ListMedia(context.Background(), PageRequest{}); return err }},
+		{name: "download state", path: "/api/v1/downloads", body: page(fmt.Sprintf(`[{"id":"00000000-0000-0000-0000-000000000001","connectionId":"qbit-a","state":"future","observedAt":%q}]`, now)), read: func(r *HTTPReader) error { _, err := r.ListDownloads(context.Background(), PageRequest{}); return err }},
+		{name: "descriptor availability", path: "/api/v1/descriptors", body: page(fmt.Sprintf(`[{"id":"00000000-0000-0000-0000-000000000001","type":"torrent","size":1,"digest":"sha256:1","availability":"future","capturedAt":%q}]`, now)), read: func(r *HTTPReader) error {
+			_, err := r.ListDescriptors(context.Background(), PageRequest{})
+			return err
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != tc.path {
+					t.Errorf("request path = %q, want %q", r.URL.Path, tc.path)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer server.Close()
+			reader, err := NewHTTPReader(server.URL, server.Client(), time.Second)
+			if err != nil {
+				t.Fatalf("NewHTTPReader() error = %v", err)
+			}
+			readErr := tc.read(reader)
+			var apiErr *APIError
+			if !errors.As(readErr, &apiErr) || apiErr.Kind() != ErrorProtocol {
+				t.Fatalf("error = %T %v; APIError = %#v", readErr, readErr, apiErr)
+			}
+		})
 	}
 }
 

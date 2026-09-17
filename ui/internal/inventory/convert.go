@@ -51,7 +51,11 @@ func convertDiscovery(source generated.Discovery) (Discovery, error) {
 		}
 		provenance = make([]Provenance, 0, len(*source.Provenance))
 		for _, item := range *source.Provenance {
-			provenance = append(provenance, convertProvenance(item))
+			converted, err := convertProvenance(item)
+			if err != nil {
+				return Discovery{}, err
+			}
+			provenance = append(provenance, converted)
 		}
 	}
 	candidates := make([]Candidate, 0)
@@ -61,7 +65,11 @@ func convertDiscovery(source generated.Discovery) (Discovery, error) {
 		}
 		candidates = make([]Candidate, 0, len(*source.Candidates))
 		for _, item := range *source.Candidates {
-			candidates = append(candidates, convertCandidate(item))
+			converted, err := convertCandidate(item)
+			if err != nil {
+				return Discovery{}, err
+			}
+			candidates = append(candidates, converted)
 		}
 	}
 	var coverage *Coverage
@@ -72,7 +80,7 @@ func convertDiscovery(source generated.Discovery) (Discovery, error) {
 		}
 		coverage = &converted
 	}
-	return Discovery{
+	item := Discovery{
 		ID:         idString(source.Id),
 		ObservedAt: source.ObservedAt,
 		Readiness:  string(source.Readiness),
@@ -80,14 +88,18 @@ func convertDiscovery(source generated.Discovery) (Discovery, error) {
 		Provenance: provenance,
 		Candidates: candidates,
 		Coverage:   coverage,
-	}, nil
+	}
+	if err := validateDiscovery(item); err != nil {
+		return Discovery{}, err
+	}
+	return item, nil
 }
 
 func convertFile(source generated.FileManifestEntry) (File, error) {
 	if !validRelativePath(source.RelativePath) || source.RootId == "" || source.Type == "" || source.Size < 0 || !validIdentity(source.RootId) {
 		return File{}, validationError("file manifest entry is incomplete")
 	}
-	return File{
+	item := File{
 		RelativePath: source.RelativePath,
 		RootID:       source.RootId,
 		Type:         string(source.Type),
@@ -96,7 +108,11 @@ func convertFile(source generated.FileManifestEntry) (File, error) {
 		Digest:       optionalString(source.Digest),
 		FileIdentity: optionalString(source.FileIdentity),
 		ObservedAt:   copyTime(source.ObservedAt),
-	}, nil
+	}
+	if err := validateFile(item); err != nil {
+		return File{}, err
+	}
+	return item, nil
 }
 
 func optionalRole(value *generated.FileManifestEntryRole) string {
@@ -106,18 +122,38 @@ func optionalRole(value *generated.FileManifestEntryRole) string {
 	return string(*value)
 }
 
-func convertProvenance(source generated.Provenance) Provenance {
-	return Provenance{
+func convertProvenance(source generated.Provenance) (Provenance, error) {
+	if source.ConnectionId != nil && !validConfigID(*source.ConnectionId) {
+		return Provenance{}, validationError("provenance connection identity is invalid")
+	}
+	if source.DescriptorId != nil && !validIdentity(idString(*source.DescriptorId)) {
+		return Provenance{}, validationError("provenance descriptor identity is invalid")
+	}
+	if source.ClientItemId != nil && !validBounded(*source.ClientItemId, MaxInputLength, true) {
+		return Provenance{}, validationError("provenance client identity is invalid")
+	}
+	if source.Hash != nil && !validBounded(*source.Hash, MaxInputLength, true) {
+		return Provenance{}, validationError("provenance hash is invalid")
+	}
+	sourcePath, err := optionalTarget(source.SourcePath)
+	if err != nil {
+		return Provenance{}, err
+	}
+	item := Provenance{
 		ConnectionID: optionalString(source.ConnectionId),
 		ClientItemID: optionalString(source.ClientItemId),
 		DescriptorID: optionalID(source.DescriptorId),
 		Hash:         optionalString(source.Hash),
-		SourcePath:   optionalTarget(source.SourcePath),
+		SourcePath:   sourcePath,
 		CompletedAt:  copyTime(source.CompletedAt),
 	}
+	if err := validateProvenance(item); err != nil {
+		return Provenance{}, err
+	}
+	return item, nil
 }
 
-func convertCandidate(source generated.MetadataCandidate) Candidate {
+func convertCandidate(source generated.MetadataCandidate) (Candidate, error) {
 	var season *int
 	if source.Season != nil {
 		value := *source.Season
@@ -134,7 +170,7 @@ func convertCandidate(source generated.MetadataCandidate) Candidate {
 		score = &value
 	}
 	episodes := append([]int(nil), optionalInts(source.Episodes)...)
-	return Candidate{
+	item := Candidate{
 		Title:      source.Title,
 		Kind:       string(source.Kind),
 		ProviderID: optionalString(source.ProviderId),
@@ -144,6 +180,10 @@ func convertCandidate(source generated.MetadataCandidate) Candidate {
 		Year:       year,
 		Score:      score,
 	}
+	if err := validateCandidate(item); err != nil {
+		return Candidate{}, err
+	}
+	return item, nil
 }
 
 func convertMediaPage(source generated.MediaList, body []byte) (MediaPage, error) {
@@ -181,7 +221,15 @@ func convertMedia(source generated.Media) (Media, error) {
 		tracking = append(tracking, converted)
 	}
 	discoveryIDs := append([]string(nil), optionalIDs(source.DiscoveryIds)...)
-	return Media{
+	if source.Title != nil && !validBounded(*source.Title, MaxRenderedTextLength, true) {
+		return Media{}, validationError("media title is invalid")
+	}
+	for _, discoveryID := range discoveryIDs {
+		if !validIdentity(discoveryID) {
+			return Media{}, validationError("media discovery identity is invalid")
+		}
+	}
+	item := Media{
 		ID:           idString(source.Id),
 		Kind:         string(source.Kind),
 		ProviderID:   source.ProviderId,
@@ -189,14 +237,32 @@ func convertMedia(source generated.Media) (Media, error) {
 		ObservedAt:   source.ObservedAt,
 		DiscoveryIDs: discoveryIDs,
 		Tracking:     tracking,
-	}, nil
+	}
+	if err := validateMedia(item); err != nil {
+		return Media{}, err
+	}
+	return item, nil
 }
 
 func convertTracking(source generated.TrackingObservation) (Tracking, error) {
 	if !validIdentity(source.ConnectionId) || source.Dimension == "" || source.Value == "" || source.ObservedAt.IsZero() || len(optionalStrings(source.Evidence)) > MaxTracking {
 		return Tracking{}, validationError("tracking observation is incomplete")
 	}
-	return Tracking{
+	if source.ProviderId != nil && !validBounded(*source.ProviderId, MaxInputLength, true) {
+		return Tracking{}, validationError("tracking provider identity is invalid")
+	}
+	if source.ExternalId != nil && !validBounded(*source.ExternalId, MaxInputLength, true) {
+		return Tracking{}, validationError("tracking external identity is invalid")
+	}
+	if source.CoverageId != nil && !validIdentity(idString(*source.CoverageId)) {
+		return Tracking{}, validationError("tracking coverage identity is invalid")
+	}
+	for _, evidence := range optionalStrings(source.Evidence) {
+		if !validBounded(evidence, MaxInputLength, false) {
+			return Tracking{}, validationError("tracking evidence is invalid")
+		}
+	}
+	item := Tracking{
 		ConnectionID: source.ConnectionId,
 		Dimension:    string(source.Dimension),
 		Value:        string(source.Value),
@@ -205,7 +271,11 @@ func convertTracking(source generated.TrackingObservation) (Tracking, error) {
 		ObservedAt:   source.ObservedAt,
 		CoverageID:   optionalID(source.CoverageId),
 		Evidence:     append([]string(nil), optionalStrings(source.Evidence)...),
-	}, nil
+	}
+	if err := validateTracking(item); err != nil {
+		return Tracking{}, err
+	}
+	return item, nil
 }
 
 func convertDownloadPage(source generated.DownloadList, body []byte) (DownloadPage, error) {
@@ -234,6 +304,16 @@ func convertDownload(source generated.Download) (Download, error) {
 	if !validIdentity(idString(source.Id)) || !validIdentity(source.ConnectionId) || source.State == "" || source.ObservedAt.IsZero() {
 		return Download{}, validationError("download required evidence is missing")
 	}
+	if source.ClientItemId != nil && !validBounded(*source.ClientItemId, MaxInputLength, true) || source.Hash != nil && !validBounded(*source.Hash, MaxInputLength, true) || source.NzbId != nil && !validBounded(*source.NzbId, MaxInputLength, true) || source.DeprecatedId != nil && !validBounded(*source.DeprecatedId, MaxInputLength, true) {
+		return Download{}, validationError("download provenance is invalid")
+	}
+	if source.DescriptorId != nil && !validIdentity(idString(*source.DescriptorId)) {
+		return Download{}, validationError("download descriptor identity is invalid")
+	}
+	sourcePath, err := optionalTarget(source.SourcePath)
+	if err != nil {
+		return Download{}, err
+	}
 	var coverage *Coverage
 	if source.Coverage != nil {
 		converted, err := convertCoverage(*source.Coverage)
@@ -242,7 +322,7 @@ func convertDownload(source generated.Download) (Download, error) {
 		}
 		coverage = &converted
 	}
-	return Download{
+	item := Download{
 		ID:           idString(source.Id),
 		ConnectionID: source.ConnectionId,
 		ClientItemID: optionalString(source.ClientItemId),
@@ -250,12 +330,16 @@ func convertDownload(source generated.Download) (Download, error) {
 		NzbID:        optionalString(source.NzbId),
 		DeprecatedID: optionalString(source.DeprecatedId),
 		DescriptorID: optionalID(source.DescriptorId),
-		SourcePath:   optionalTarget(source.SourcePath),
+		SourcePath:   sourcePath,
 		State:        string(source.State),
 		ObservedAt:   source.ObservedAt,
 		CompletedAt:  copyTime(source.CompletedAt),
 		Coverage:     coverage,
-	}, nil
+	}
+	if err := validateDownload(item); err != nil {
+		return Download{}, err
+	}
+	return item, nil
 }
 
 func convertDescriptorPage(source generated.DescriptorList, body []byte) (DescriptorPage, error) {
@@ -284,7 +368,13 @@ func convertDescriptor(source generated.Descriptor) (Descriptor, error) {
 	if !validIdentity(idString(source.Id)) || source.Type == "" || source.Availability == "" || source.Size < 0 || source.CapturedAt.IsZero() {
 		return Descriptor{}, validationError("descriptor required evidence is missing")
 	}
-	return Descriptor{
+	if source.Source != nil && !validBounded(*source.Source, MaxInputLength, true) {
+		return Descriptor{}, validationError("descriptor source is invalid")
+	}
+	if !validBounded(source.Digest, MaxInputLength, false) {
+		return Descriptor{}, validationError("descriptor digest is invalid")
+	}
+	item := Descriptor{
 		ID:             idString(source.Id),
 		Type:           string(source.Type),
 		Size:           source.Size,
@@ -293,7 +383,11 @@ func convertDescriptor(source generated.Descriptor) (Descriptor, error) {
 		Source:         optionalString(source.Source),
 		CapturedAt:     source.CapturedAt,
 		RetentionUntil: copyTime(source.RetentionUntil),
-	}, nil
+	}
+	if err := validateDescriptor(item); err != nil {
+		return Descriptor{}, err
+	}
+	return item, nil
 }
 
 func convertPage(source generated.Page) (PageInfo, error) {
@@ -326,7 +420,15 @@ func convertCoverage(source generated.Coverage) (Coverage, error) {
 	if source.Completeness == "" || source.ObservedAt.IsZero() {
 		return Coverage{}, validationError("coverage evidence is incomplete")
 	}
-	return Coverage{
+	if source.ConnectionId != nil && !validConfigID(*source.ConnectionId) || source.RootId != nil && !validConfigID(*source.RootId) || source.SourceId != nil && !validIdentity(idString(*source.SourceId)) || source.SnapshotRevision != nil && !validBounded(*source.SnapshotRevision, MaxInputLength, true) {
+		return Coverage{}, validationError("coverage identity or revision is invalid")
+	}
+	for _, reason := range optionalStrings(source.ReasonCodes) {
+		if !validBounded(reason, MaxInputLength, false) {
+			return Coverage{}, validationError("coverage reason is invalid")
+		}
+	}
+	item := Coverage{
 		Completeness:     string(source.Completeness),
 		ConnectionID:     optionalString(source.ConnectionId),
 		RootID:           optionalString(source.RootId),
@@ -335,7 +437,11 @@ func convertCoverage(source generated.Coverage) (Coverage, error) {
 		ObservedAt:       source.ObservedAt,
 		ObservedCount:    copyInt(source.ObservedCount),
 		ReasonCodes:      append([]string(nil), optionalStrings(source.ReasonCodes)...),
-	}, nil
+	}
+	if err := validateCoverage(item); err != nil {
+		return Coverage{}, err
+	}
+	return item, nil
 }
 
 func optionalString(value *string) string {
@@ -356,14 +462,14 @@ func idString(value generated.Id) string {
 	return value.String()
 }
 
-func optionalTarget(value *generated.FileTarget) string {
+func optionalTarget(value *generated.FileTarget) (string, error) {
 	if value == nil {
-		return ""
+		return "", nil
 	}
-	if value.RootId == "" || value.RelativePath == "" {
-		return ""
+	if !validConfigID(value.RootId) || !validRelativePath(value.RelativePath) {
+		return "", validationError("file target is invalid")
 	}
-	return value.RootId + ":" + value.RelativePath
+	return value.RootId + ":" + value.RelativePath, nil
 }
 
 func optionalInts(value *[]int) []int {

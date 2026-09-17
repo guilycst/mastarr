@@ -3,6 +3,7 @@ package inventory
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -117,8 +118,8 @@ func (h *Handler) renderDiscoveryDetail(w http.ResponseWriter, route string, que
 	detailTerm(&p.pageWriter, "Identity", item.ID)
 	detailTerm(&p.pageWriter, "Readiness", stateLabel(item.Readiness))
 	detailTerm(&p.pageWriter, "Observed at", timeLabel(item.ObservedAt))
-	detailTerm(&p.pageWriter, "Coverage", coverageLabel(item.Coverage))
 	p.text("</dl>")
+	writeCoverageEvidence(&p.pageWriter, "Discovery coverage", item.Coverage)
 	writeDiscoveryFiles(&p.pageWriter, query, item.Files)
 	writeCandidates(&p.pageWriter, query, item.Candidates)
 	writeProvenance(&p.pageWriter, item.Provenance)
@@ -132,9 +133,19 @@ func (h *Handler) renderMediaDetail(w http.ResponseWriter, route string, query q
 	p.text("<p>Read-only observation; identity fields are editable local draft values only.</p><form method=\"get\" action=\"")
 	p.value(pathFor(route, item.ID))
 	p.text("\" aria-label=\"Media identity draft\"><fieldset><legend>Identity draft</legend>")
+	writeHiddenQueryValues(&p.pageWriter, query, map[string]struct{}{
+		"identity": {}, "providerId": {}, "kind": {}, "selection": {}, "episode": {},
+		"subtitleLanguage": {}, "subtitleForced": {}, "subtitleSDH": {}, "subtitlePair": {},
+	})
 	writeLabeledInput(&p.pageWriter, "identity", "Display title", query.value("identity", item.Title))
-	writeLabeledInput(&p.pageWriter, "providerId", "Provider ID", item.ProviderID)
-	writeLabeledInput(&p.pageWriter, "kind", "Media kind", item.Kind)
+	writeLabeledInput(&p.pageWriter, "providerId", "Provider ID", query.value("providerId", item.ProviderID))
+	writeLabeledSelect(&p.pageWriter, "kind", "Media kind", query.value("kind", item.Kind), []string{"movie", "episode", "season", "anime"}, true)
+	writeLabeledInput(&p.pageWriter, "selection", "Selection", query.value("selection", ""))
+	writeLabeledInput(&p.pageWriter, "episode", "Episode", query.value("episode", ""))
+	writeLabeledInput(&p.pageWriter, "subtitleLanguage", "Subtitle language", query.value("subtitleLanguage", ""))
+	writeLabeledInput(&p.pageWriter, "subtitleForced", "Subtitle forced", query.value("subtitleForced", ""))
+	writeLabeledInput(&p.pageWriter, "subtitleSDH", "Subtitle SDH", query.value("subtitleSDH", ""))
+	writeLabeledInput(&p.pageWriter, "subtitlePair", "Subtitle pair", query.value("subtitlePair", ""))
 	p.text("<button type=\"submit\">Keep draft in URL</button></fieldset></form><dl>")
 	detailTerm(&p.pageWriter, "Identity", item.ID)
 	detailTerm(&p.pageWriter, "Kind", stateLabel(item.Kind))
@@ -167,11 +178,14 @@ func (h *Handler) renderDownloadDetail(w http.ResponseWriter, route string, quer
 	detailTerm(&p.pageWriter, "State", stateLabel(item.State))
 	detailTerm(&p.pageWriter, "Hash", item.Hash)
 	detailTerm(&p.pageWriter, "NZB ID", item.NzbID)
+	detailTerm(&p.pageWriter, "Deprecated ID", item.DeprecatedID)
+	detailTerm(&p.pageWriter, "Descriptor ID", item.DescriptorID)
 	detailTerm(&p.pageWriter, "Source path", item.SourcePath)
-	detailTerm(&p.pageWriter, "Coverage", coverageLabel(item.Coverage))
 	detailTerm(&p.pageWriter, "Observed at", timeLabel(item.ObservedAt))
 	detailTerm(&p.pageWriter, "Completed at", optionalTimeLabel(item.CompletedAt))
-	p.text("</dl></main></body></html>")
+	p.text("</dl>")
+	writeCoverageEvidence(&p.pageWriter, "Download coverage", item.Coverage)
+	p.text("</main></body></html>")
 	p.finish()
 }
 
@@ -205,7 +219,7 @@ func newDetailWriter(w http.ResponseWriter, title, route string, query queryStat
 func (p *detailWriter) start(heading string) {
 	p.pageWriter.start()
 	p.text("<main id=\"inventory-content\" aria-labelledby=\"inventory-title\"><p><a href=\"")
-	p.value("/" + p.route + p.query.encoded(false))
+	p.value("/" + p.route + p.query.encoded(true))
 	p.text("\">Back to ")
 	p.value(titleForRoute(p.route, false))
 	p.text("</a></p><h1 id=\"inventory-title\">")
@@ -228,6 +242,14 @@ func writeDiscoveryFiles(p *pageWriter, query queryState, files []File) {
 		return
 	}
 	p.text("<form method=\"get\" aria-label=\"Editable file associations\"><p>These fields are local drafts. No write is sent by this view.</p>")
+	excluded := make(map[string]struct{}, len(files)*7)
+	for index := range files {
+		prefix := fmt.Sprintf("association-%d-", index)
+		for _, field := range []string{"identity", "episode", "language", "pair", "forced", "sdh", "role"} {
+			excluded[prefix+field] = struct{}{}
+		}
+	}
+	writeHiddenQueryValues(p, query, excluded)
 	for index, file := range files {
 		prefix := fmt.Sprintf("association-%d-", index)
 		p.text("<fieldset><legend>File ")
@@ -241,6 +263,7 @@ func writeDiscoveryFiles(p *pageWriter, query queryState, files []File) {
 		detailTerm(p, "Size", strconv.Itoa(file.Size))
 		detailTerm(p, "Digest", file.Digest)
 		detailTerm(p, "File identity", file.FileIdentity)
+		detailTerm(p, "Observed at", optionalTimeLabel(file.ObservedAt))
 		p.text("</dl>")
 		writeLabeledInput(p, prefix+"identity", "Identity", query.value(prefix+"identity", file.FileIdentity))
 		writeLabeledInput(p, prefix+"episode", "Episode or season", query.value(prefix+"episode", ""))
@@ -254,12 +277,18 @@ func writeDiscoveryFiles(p *pageWriter, query queryState, files []File) {
 		p.value(prefix + "role")
 		p.text("\" name=\"")
 		p.value(prefix + "role")
-		p.text("\"><option value=\"\">Unknown</option>")
+		p.text("\">")
+		p.text("<option value=\"\"")
+		if query.value(prefix+"role", file.Role) == "" {
+			p.text(" selected")
+		}
+		p.text(">Unknown</option>")
 		for _, role := range []string{"video", "subtitle", "companion"} {
 			p.text("<option value=\"")
 			p.value(role)
+			p.text("\"")
 			if query.value(prefix+"role", file.Role) == role {
-				p.text("\" selected")
+				p.text(" selected")
 			}
 			p.text(">")
 			p.value(role)
@@ -277,6 +306,14 @@ func writeCandidates(p *pageWriter, query queryState, candidates []Candidate) {
 		return
 	}
 	p.text("<form method=\"get\" aria-label=\"Editable identity suggestions\"><p>Suggestions are evidence for review and are not approvals.</p>")
+	excluded := make(map[string]struct{}, len(candidates)*8)
+	for index := range candidates {
+		prefix := fmt.Sprintf("candidate-%d-", index)
+		for _, field := range []string{"title", "provider", "external", "kind", "season", "episodes", "year", "score"} {
+			excluded[prefix+field] = struct{}{}
+		}
+	}
+	writeHiddenQueryValues(p, query, excluded)
 	for index, candidate := range candidates {
 		prefix := fmt.Sprintf("candidate-%d-", index)
 		p.text("<fieldset><legend>Suggestion ")
@@ -285,8 +322,11 @@ func writeCandidates(p *pageWriter, query queryState, candidates []Candidate) {
 		writeLabeledInput(p, prefix+"title", "Title", query.value(prefix+"title", candidate.Title))
 		writeLabeledInput(p, prefix+"provider", "Provider ID", query.value(prefix+"provider", candidate.ProviderID))
 		writeLabeledInput(p, prefix+"external", "External ID", query.value(prefix+"external", candidate.ExternalID))
+		writeLabeledSelect(p, prefix+"kind", "Kind", query.value(prefix+"kind", candidate.Kind), []string{"movie", "episode", "season", "anime"}, false)
 		writeLabeledInput(p, prefix+"season", "Season", query.value(prefix+"season", intPointerValue(candidate.Season)))
 		writeLabeledInput(p, prefix+"episodes", "Episodes", query.value(prefix+"episodes", joinInts(candidate.Episodes)))
+		writeLabeledInput(p, prefix+"year", "Year", query.value(prefix+"year", intPointerValue(candidate.Year)))
+		writeLabeledInput(p, prefix+"score", "Score", query.value(prefix+"score", floatPointerValue(candidate.Score)))
 		p.text("</fieldset>")
 	}
 	p.text("<button type=\"submit\">Keep suggestions in URL</button></form></section>")
@@ -306,6 +346,10 @@ func writeProvenance(p *pageWriter, provenance []Provenance) {
 		p.value(knownOrUnknown(item.ClientItemID))
 		p.text("; <strong>descriptor:</strong> ")
 		p.value(knownOrUnknown(item.DescriptorID))
+		p.text("; <strong>hash:</strong> ")
+		p.value(knownOrUnknown(item.Hash))
+		p.text("; <strong>completed at:</strong> ")
+		p.value(optionalTimeLabel(item.CompletedAt))
 		p.text("; <strong>source:</strong> ")
 		p.value(knownOrUnknown(item.SourcePath))
 		p.text("</li>")
@@ -330,7 +374,7 @@ func writeTrackingTable(p *detailWriter, tracking []Tracking) {
 		p.text("<p>Tracking: unknown; no instance observation was provided.</p>")
 		return
 	}
-	p.text("<table><caption>Per-instance tracking observations</caption><thead><tr><th scope=\"col\">Instance</th><th scope=\"col\">Dimension</th><th scope=\"col\">Value</th><th scope=\"col\">Provider ID</th><th scope=\"col\">Evidence</th></tr></thead><tbody>")
+	p.text("<table><caption>Per-instance tracking observations</caption><thead><tr><th scope=\"col\">Instance</th><th scope=\"col\">Dimension</th><th scope=\"col\">Value</th><th scope=\"col\">Provider ID</th><th scope=\"col\">External ID</th><th scope=\"col\">Observed at</th><th scope=\"col\">Coverage ID</th><th scope=\"col\">Evidence</th></tr></thead><tbody>")
 	for _, item := range tracking {
 		p.text("<tr><th scope=\"row\">")
 		p.value(knownOrUnknown(item.ConnectionID))
@@ -340,6 +384,12 @@ func writeTrackingTable(p *detailWriter, tracking []Tracking) {
 		p.value(stateLabel(item.Value))
 		p.text("</td><td>")
 		p.value(knownOrUnknown(item.ProviderID))
+		p.text("</td><td>")
+		p.value(knownOrUnknown(item.ExternalID))
+		p.text("</td><td>")
+		p.value(timeLabel(item.ObservedAt))
+		p.text("</td><td>")
+		p.value(knownOrUnknown(item.CoverageID))
 		p.text("</td><td>")
 		if len(item.Evidence) == 0 {
 			p.value("unknown")
@@ -363,6 +413,68 @@ func writeLabeledInput(p *pageWriter, name, label, value string) {
 	p.text("\" value=\"")
 	p.value(value)
 	p.text("\">")
+}
+
+func writeLabeledSelect(p *pageWriter, name, label, value string, options []string, includeUnknown bool) {
+	p.text("<label for=\"")
+	p.value(name)
+	p.text("\">")
+	p.value(label)
+	p.text("</label><select id=\"")
+	p.value(name)
+	p.text("\" name=\"")
+	p.value(name)
+	p.text("\">")
+	if includeUnknown {
+		p.text("<option value=\"\"")
+		if value == "" {
+			p.text(" selected")
+		}
+		p.text(">Unknown</option>")
+	}
+	for _, option := range options {
+		p.text("<option value=\"")
+		p.value(option)
+		p.text("\"")
+		if value == option {
+			p.text(" selected")
+		}
+		p.text(">")
+		p.value(option)
+		p.text("</option>")
+	}
+	p.text("</select>")
+}
+
+func writeHiddenQueryValues(p *pageWriter, query queryState, excluded map[string]struct{}) {
+	keys := make([]string, 0, len(query.Values))
+	for key := range query.Values {
+		if _, skip := excluded[key]; skip {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		p.text("<input type=\"hidden\" name=\"")
+		p.value(key)
+		p.text("\" value=\"")
+		p.value(query.Values[key])
+		p.text("\">")
+	}
+}
+
+func writeCoverageEvidence(p *pageWriter, title string, coverage *Coverage) {
+	p.text("<section aria-labelledby=\"coverage-title\"><h2 id=\"coverage-title\">")
+	p.value(title)
+	p.text("</h2>")
+	if coverage == nil {
+		p.text("<p>Coverage: unknown.</p></section>")
+		return
+	}
+	p.text("<dl>")
+	writeCoverageTerms(p, *coverage)
+	p.text("</dl></section>")
 }
 
 func timeLabel(value time.Time) string {
