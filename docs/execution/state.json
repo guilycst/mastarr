@@ -3782,18 +3782,22 @@
         "14b692080f763f36a800fda021374729a00d4d7f C-04 correction round three product: durable idempotency recovery owner, owner-bound append-only release/completion events, exact retry release after proven rollback absence, and ownership-safe credential manager reload/shutdown.",
         "f0c021a75bb4151766ab9cc435c88a5de7508438 C-04 correction round three handoff records R3c/R2b dispositions, owned paths, route limitations, and exact checks.",
         "Correction round three focused/repeated race tests, root tests, vet, module verification, generation, Vacuum, lint, architecture, and Linux amd64/arm64 CGO-free builds passed.",
-        "GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed from clean product checkpoint; final marker guardrail checks passed (ci)."
+        "GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed from clean product checkpoint; final marker guardrail checks passed (ci).",
+        "d9e36c574bb03991cb5607e12cd0255ddd940fe4 independent C-04 correction round four review receipt; R2b closed, R3d/R3e/R3f/R3g remain P1.",
+        "Reviewer full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed, but independent deterministic SQLite and fresh-process probes found release timestamp, PATCH classification/recovery, and nonconfiguration owner defects."
       ],
       "review": {
         "status": "changes_requested",
         "decision": "changes_requested",
         "reviewer": "/root/x05_reviewer",
-        "commit": "be8683bb8b9dd5031585478c480441674aa65c1f",
+        "commit": "d9e36c574bb03991cb5607e12cd0255ddd940fe4",
         "findings": [
-          "R3c P1 durable idempotency completion has no production recovery owner; same-key retries remain pending forever",
-          "R2b P2 configuration reload shares credential manager without ownership-safe close/zeroization"
+          "R3d P1 production SQLite release omits CreatedAt and cannot persist release events",
+          "R3e P1 PATCH rollback classifiers mistake unchanged durable resources for materialized mutations",
+          "R3f P1 successful PATCH lost-completion recovery requires stale If-Match to equal new revision",
+          "R3g P1 nonconfiguration mutations have no production recovery owner and burn durable keys"
         ],
-        "round": 3
+        "round": 4
       },
       "dispatch": {
         "assignedAt": "2026-09-16",
@@ -3823,39 +3827,37 @@
         "reviewPath": "docs/execution/handoffs/C-04-review-round4.md",
         "handoffPath": "docs/execution/handoffs/C-04-correction-round3.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "review_pending",
+        "status": "in_progress",
         "dependencyCommits": {
           "D-04": "036288114bcf303f98e0ee02e54ddce18384e504",
           "F-03": "b65f5d65d67e6fc823fbf54fa8ab4f2a4d17d191",
           "X-08": "8c770f779204a00c2d8cc6312a2c0fc04262ea35",
           "W-05": "ea3958b15508d13893b55674b59cfb0bf50d1ffe"
         },
-        "waitingOn": "/root/x05_reviewer",
-        "waitingReason": "Independent review of C-04 correction round three product and handoff is pending.",
+        "waitingOn": "/root/x05_implementer",
+        "waitingReason": "C-04 correction round four for R3d/R3e/R3f/R3g durable idempotency recovery defects.",
         "implementationCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
         "handoffCommit": "c46b84183f0723d0cbb439eb539cd600c235acf0",
         "reviewSourceCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
         "reviewRound": 3,
         "reviewCommit": "461b0c06b0a3094f5da28ca2920400b639e22a61",
         "reviewIntegrationCommit": "d593fd4",
-        "correctionStatus": "review_pending",
-        "correctionRound": 3,
+        "correctionStatus": "in_progress",
+        "correctionRound": 4,
         "correctionOwner": "/root/x05_implementer",
-        "correctionBaseSha": "6843deb95a67e205f5d48531cbb5c78d6ecb350f",
-        "correctionDispatchCheckpoint": "6843deb",
-        "correctionReviewPath": "docs/execution/handoffs/C-04-review-round4.md",
-        "correctionHandoffPath": "docs/execution/handoffs/C-04-correction-round3.md",
+        "correctionBaseSha": "c14663e53d70e39b126f4196d7b1ac2fdea3f667",
+        "correctionDispatchCheckpoint": "c14663e53d70e39b126f4196d7b1ac2fdea3f667",
+        "correctionReviewPath": "docs/execution/handoffs/C-04-review-round5.md",
+        "correctionHandoffPath": "docs/execution/handoffs/C-04-correction-round4.md",
         "correctionReviewer": "/root/x05_reviewer",
-        "priorReviewCommit": "be8683bb8b9dd5031585478c480441674aa65c1f",
-        "priorReviewIntegrationCommit": "6843deb",
-        "correctionImplementationCommit": "14b692080f763f36a800fda021374729a00d4d7f",
-        "correctionHandoffCommit": "f0c021a75bb4151766ab9cc435c88a5de7508438",
-        "correctionReviewSourceCommit": "14b692080f763f36a800fda021374729a00d4d7f",
+        "priorReviewCommit": "d9e36c574bb03991cb5607e12cd0255ddd940fe4",
+        "priorReviewIntegrationCommit": "c14663e53d70e39b126f4196d7b1ac2fdea3f667",
+        "correctionImplementationCommit": null,
+        "correctionHandoffCommit": null,
+        "correctionReviewSourceCommit": null,
         "correctionReviewCommit": null,
         "correctionReviewIntegrationCommit": null,
-        "correctionProductCommits": [
-          "14b692080f763f36a800fda021374729a00d4d7f"
-        ]
+        "correctionProductCommits": []
       },
       "implementationCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
       "handoffCommit": "c46b84183f0723d0cbb439eb539cd600c235acf0",
@@ -3899,10 +3901,19 @@
         {
           "round": 4,
           "reviewer": "/root/x05_reviewer",
+          "commit": "d9e36c574bb03991cb5607e12cd0255ddd940fe4",
+          "status": "changes_requested",
+          "sourceCommit": "14b692080f763f36a800fda021374729a00d4d7f",
+          "receipt": "docs/execution/handoffs/C-04-review-round4.md",
+          "integratedCommit": "c14663e53d70e39b126f4196d7b1ac2fdea3f667"
+        },
+        {
+          "round": 5,
+          "reviewer": "/root/x05_reviewer",
           "commit": null,
           "status": "pending",
-          "sourceCommit": "14b692080f763f36a800fda021374729a00d4d7f",
-          "receipt": "docs/execution/handoffs/C-04-review-round4.md"
+          "sourceCommit": null,
+          "receipt": "docs/execution/handoffs/C-04-review-round5.md"
         }
       ]
     },
@@ -5833,7 +5844,7 @@
       ]
     }
   },
-  "nextAction": "C-04 correction round three product 14b692080f763f36a800fda021374729a00d4d7f and handoff f0c021a75bb4151766ab9cc435c88a5de7508438 are pushed; independent review round four is pending.",
+  "nextAction": "C-04 correction round four is required for R3d/R3e/R3f/R3g; dispatch /root/x05_implementer from review receipt integration c14663e.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
