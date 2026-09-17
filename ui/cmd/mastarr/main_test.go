@@ -19,6 +19,20 @@ type fakeReader struct {
 	calls     int
 }
 
+func TestConfigurationFailureIncludesOnlySanitizedNameAndRestartGuidance(t *testing.T) {
+	message := configurationFailure(errors.New(`required environment variable "MASTARR_UI_API_URL" is not set`))
+	for _, want := range []string{"MASTARR_UI_API_URL", "restart the BFF"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("configuration failure missing %q: %s", want, message)
+		}
+	}
+	for _, forbidden := range []string{"secret", "https://", "token=", "private"} {
+		if strings.Contains(message, forbidden) {
+			t.Fatalf("configuration failure leaked %q: %s", forbidden, message)
+		}
+	}
+}
+
 func (f *fakeReader) Ready(context.Context) (client.Readiness, error) {
 	f.calls++
 	return f.readiness, f.err
@@ -106,6 +120,37 @@ func TestHandlerUnknownRouteDoesNotCallAPIAndReturnsShell404(t *testing.T) {
 	}
 	if strings.Contains(recorder.Body.String(), "private-id") {
 		t.Fatal("404 reflected private path")
+	}
+}
+
+func TestHandlerRejectsMutationMethodsBeforeEveryAssetPrefix(t *testing.T) {
+	reader := &fakeReader{readiness: client.Readiness{State: client.StateReady}}
+	handler := NewHandler(testConfig(), reader)
+	for _, path := range []string{"/preview.svg", "/assets/goshtoso.css", "/consoleshell/assets/shell.css"} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"secret":"value"}`)))
+		if recorder.Code != http.StatusMethodNotAllowed {
+			t.Errorf("POST %s status = %d, want %d", path, recorder.Code, http.StatusMethodNotAllowed)
+		}
+		if got := recorder.Header().Get("Allow"); got != "GET, HEAD" {
+			t.Errorf("POST %s Allow = %q", path, got)
+		}
+		if reader.calls != 0 {
+			t.Errorf("POST %s called API %d times", path, reader.calls)
+		}
+	}
+}
+
+func TestHandlerKeepsUnknownReadinessUnavailable(t *testing.T) {
+	reader := &fakeReader{readiness: client.Readiness{State: client.ReadinessState("future")}}
+	handler := NewHandler(testConfig(), reader)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/media", nil))
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unknown readiness status = %d", recorder.Code)
+	}
+	if !strings.Contains(recorder.Body.String(), "temporarily unavailable") {
+		t.Fatal("unknown readiness did not render unavailable state")
 	}
 }
 

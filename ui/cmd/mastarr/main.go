@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -24,7 +25,7 @@ import (
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
-		log.Print("mastarr UI configuration is invalid")
+		log.Print(configurationFailure(err))
 		os.Exit(1)
 	}
 	api, err := client.New(cfg.APIURL, nil, client.DefaultTimeout)
@@ -36,6 +37,13 @@ func main() {
 		log.Print("mastarr UI server stopped with an error")
 		os.Exit(1)
 	}
+}
+
+func configurationFailure(err error) string {
+	if err == nil {
+		return ""
+	}
+	return fmt.Sprintf("mastarr UI configuration is invalid: %v; %s", err, config.StartupRestartGuidance)
 }
 
 // NewHandler constructs the BFF handler from one startup configuration and a
@@ -64,6 +72,11 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", http.MethodGet+", "+http.MethodHead)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 
 	switch {
 	case r.URL.Path == uiassets.PreviewPath:
@@ -74,12 +87,6 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	case strings.HasPrefix(r.URL.Path, "/consoleshell/assets/"):
 		s.consoleAssets.ServeHTTP(w, r)
-		return
-	}
-
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		w.Header().Set("Allow", http.MethodGet+", "+http.MethodHead)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -107,11 +114,19 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.api != nil {
 		readiness, err := s.api.Ready(r.Context())
 		if err == nil {
-			status = http.StatusOK
-			if readiness.State == client.StateDegraded {
-				view.APIState = shell.APIDegraded
-			} else {
+			switch readiness.State {
+			case client.StateReady:
+				status = http.StatusOK
 				view.APIState = shell.APIAvailable
+			case client.StateDegraded:
+				status = http.StatusOK
+				view.APIState = shell.APIDegraded
+			default:
+				// A nil error from an injected reader is not enough to claim
+				// readiness. Unknown/future states remain unavailable until
+				// the client package explicitly understands them.
+				status = http.StatusServiceUnavailable
+				view.APIState = shell.APIUnavailable
 			}
 		}
 	}

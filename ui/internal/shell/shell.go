@@ -135,30 +135,40 @@ func Render(ctx context.Context, w io.Writer, requestPath, publicOrigin string, 
 		return errors.New("shell view text is required")
 	}
 
-	page := consoleshell.Page{
-		Metadata: &head.MetadataConfig{
-			Title:         view.Title,
-			Description:   view.Description,
-			CanonicalURL:  origin + canonicalPath,
-			OpenGraphType: head.OpenGraphTypeWebsite,
-			SiteName:      productName,
-			Locale:        "en_US",
-			Image: head.SocialImage{
-				URL:      origin + assets.PreviewPath,
-				MIMEType: assets.PreviewMIMEType,
-				Width:    assets.PreviewWidth,
-				Height:   assets.PreviewHeight,
-				Alt:      assets.PreviewAlt,
-			},
-			TwitterCard: head.TwitterCardSummaryLargeImage,
+	metadata := head.MetadataConfig{
+		Title:         view.Title,
+		Description:   view.Description,
+		CanonicalURL:  origin + canonicalPath,
+		OpenGraphType: head.OpenGraphTypeWebsite,
+		SiteName:      productName,
+		Locale:        "en_US",
+		Image: head.SocialImage{
+			URL:      origin + assets.PreviewPath,
+			MIMEType: assets.PreviewMIMEType,
+			Width:    assets.PreviewWidth,
+			Height:   assets.PreviewHeight,
+			Alt:      assets.PreviewAlt,
 		},
+		TwitterCard: head.TwitterCardSummaryLargeImage,
+	}
+	page := consoleshell.Page{
+		Metadata:      &metadata,
 		Title:         view.Title,
 		DocumentTitle: view.Title + " · " + productName,
 		Description:   view.Description,
-		CanonicalURL:  origin + canonicalPath,
+		CanonicalURL:  metadata.CanonicalURL,
 		Active:        validActiveID(view.Active),
 		Content:       content(view),
 		Head:          privateHead(),
+	}
+	if strings.HasPrefix(origin, "http://") {
+		// Goshtoso's public head component intentionally requires HTTPS for
+		// crawler-facing metadata. The configuration contract also supports
+		// loopback HTTP during local development, so keep the same escaped
+		// metadata set in this narrow local-only fallback while retaining the
+		// Goshtoso shell layout and runtime.
+		page.Metadata = nil
+		page.Head = localHTTPMetadata(metadata, privateHead())
 	}
 
 	var rendered bytes.Buffer
@@ -167,6 +177,48 @@ func Render(ctx context.Context, w io.Writer, requestPath, publicOrigin string, 
 	}
 	_, err = rendered.WriteTo(w)
 	return err
+}
+
+func localHTTPMetadata(metadata head.MetadataConfig, private templ.Component) templ.Component {
+	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		writeMeta := func(kind, name, value string) error {
+			if value == "" {
+				return nil
+			}
+			_, err := io.WriteString(w, `<meta `+kind+`="`+name+`" content="`+templ.EscapeString(value)+`">`)
+			return err
+		}
+		for _, item := range []struct {
+			kind  string
+			name  string
+			value string
+		}{
+			{kind: "property", name: "og:url", value: metadata.CanonicalURL},
+			{kind: "property", name: "og:type", value: string(metadata.OpenGraphType)},
+			{kind: "property", name: "og:title", value: metadata.Title},
+			{kind: "property", name: "og:description", value: metadata.Description},
+			{kind: "property", name: "og:site_name", value: metadata.SiteName},
+			{kind: "property", name: "og:locale", value: metadata.Locale},
+			{kind: "property", name: "og:image", value: metadata.Image.URL},
+			{kind: "property", name: "og:image:type", value: metadata.Image.MIMEType},
+			{kind: "property", name: "og:image:width", value: strconv.Itoa(metadata.Image.Width)},
+			{kind: "property", name: "og:image:height", value: strconv.Itoa(metadata.Image.Height)},
+			{kind: "property", name: "og:image:alt", value: metadata.Image.Alt},
+			{kind: "name", name: "twitter:card", value: string(metadata.TwitterCard)},
+			{kind: "name", name: "twitter:title", value: metadata.Title},
+			{kind: "name", name: "twitter:description", value: metadata.Description},
+			{kind: "name", name: "twitter:image", value: metadata.Image.URL},
+			{kind: "name", name: "twitter:image:alt", value: metadata.Image.Alt},
+		} {
+			if err := writeMeta(item.kind, item.name, item.value); err != nil {
+				return err
+			}
+		}
+		return private.Render(ctx, w)
+	})
 }
 
 func privateHead() templ.Component {
@@ -328,8 +380,8 @@ func normalizeOrigin(raw string) (string, error) {
 		return "", errors.New("public origin must be valid UTF-8 without surrounding whitespace")
 	}
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed == nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" {
-		return "", errors.New("public origin must be an absolute HTTPS origin")
+	if err != nil || parsed == nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" {
+		return "", errors.New("public origin must be an absolute HTTP(S) origin")
 	}
 	if parsed.Path != "" && parsed.Path != "/" {
 		return "", errors.New("public origin must not contain a path")

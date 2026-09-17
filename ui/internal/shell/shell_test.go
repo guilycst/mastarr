@@ -61,6 +61,26 @@ func TestRenderShowsRetriableOutageWithoutRawError(t *testing.T) {
 	}
 }
 
+func TestRenderAllowsLocalHTTPOriginWithConfiguredMetadata(t *testing.T) {
+	var output bytes.Buffer
+	if err := Render(context.Background(), &output, "/", "http://127.0.0.1:8081/", View{
+		Title:    "Overview",
+		APIState: APIAvailable,
+	}); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	body := output.String()
+	for _, want := range []string{
+		`<link rel="canonical" href="http://127.0.0.1:8081/">`,
+		`<meta property="og:url" content="http://127.0.0.1:8081/">`,
+		`<meta name="twitter:card" content="summary_large_image">`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("local HTTP shell missing %q", want)
+		}
+	}
+}
+
 func TestCanonicalPathDropsIdentifiersAndQueries(t *testing.T) {
 	if got := CanonicalPath("/discoveries/abc?root=/private"); got != "/discoveries" {
 		t.Fatalf("CanonicalPath() = %q", got)
@@ -75,7 +95,7 @@ func TestCanonicalPathDropsIdentifiersAndQueries(t *testing.T) {
 
 func TestRenderRejectsUntrustedOrigin(t *testing.T) {
 	for _, origin := range []string{
-		"http://ui.example.test",
+		"ftp://ui.example.test",
 		"https://user:secret@ui.example.test",
 		"https://ui.example.test?token=secret",
 		"https://ui.example.test/private",
