@@ -15,9 +15,7 @@
   "resumeDocument": "docs/execution/RESUME.md",
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
-  "activeImplementationTasks": [
-    "C-04"
-  ],
+  "activeImplementationTasks": [],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
   "guardrailBaseline": {
@@ -3746,10 +3744,10 @@
       "reviewSourceCommit": "37ecdde36b56a6cd3d7d147cd8af1b49eba3f45a"
     },
     "C-04": {
-      "status": "in_progress",
+      "status": "done",
       "owner": "/root/x05_implementer",
       "baseSha": "887e9ea2fa791720f9743d8a0ba89e1e49cb814b",
-      "integratedSha": null,
+      "integratedSha": "37326ef211c2f2141f412c1f3bbcada208ec6f46",
       "evidence": [
         "Dispatched from clean coordinator checkpoint 887e9ea2fa791720f9743d8a0ba89e1e49cb814b; dependencies D-04=036288114bcf303f98e0ee02e54ddce18384e504, F-03=b65f5d65d67e6fc823fbf54fa8ab4f2a4d17d191, X-08=8c770f779204a00c2d8cc6312a2c0fc04262ea35, W-05=ea3958b15508d13893b55674b59cfb0bf50d1ffe are approved and closed.",
         "Own only internal/transport/, cmd/mastarr/, and docs/execution/handoffs/C-04.md; generated API bindings, schemas, adapters, clients, UI, storage, and workflow packages remain outside this lane.",
@@ -3807,16 +3805,19 @@
         "C-04 correction round eight dispatched from clean coordinator checkpoint d646d967b8375528ce707debbe461a815c38b29e; scope is R3g-c built-in configuration recovery-owner removal with durable persistence.",
         "b031416f27e6819d454d8ec419e7a4ffa4e8eb12 C-04 correction round eight product fixes built-in recovery-owner removal with durable persistence and adds no-injected-dependency setter regressions.",
         "87d49e7cfee20fab62128b4f19e2d5a4fde76102 C-04 correction round eight handoff records R3g-c, exact owner/readiness behavior, checks and boundaries.",
-        "Correction round eight focused ordinary/race tests, full owned ordinary/race tests, vet, module verification, architecture, planning, product pre-commit and full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed."
+        "Correction round eight focused ordinary/race tests, full owned ordinary/race tests, vet, module verification, architecture, planning, product pre-commit and full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed.",
+        "4b55e48a463d3de74f8c936ed1312cc5ab43673d independent C-04 correction round eight review approved product b031416f27e6819d454d8ec419e7a4ffa4e8eb12; no P1/P2 findings and R3g-c plus all prior invariants pass.",
+        "Review receipt integrated as 37326ef211c2f2141f412c1f3bbcada208ec6f46; full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci, focused/race probes, vet, module verification, architecture, planning and Linux builds passed."
       ],
       "review": {
-        "status": "pending",
-        "decision": "pending",
+        "status": "approved",
+        "decision": "approved",
         "reviewer": "/root/x05_reviewer",
-        "commit": null,
+        "commit": "4b55e48a463d3de74f8c936ed1312cc5ab43673d",
         "findings": [],
         "round": 8,
-        "correctionCommit": "b031416f27e6819d454d8ec419e7a4ffa4e8eb12"
+        "correctionCommit": "b031416f27e6819d454d8ec419e7a4ffa4e8eb12",
+        "integratedCommit": "37326ef211c2f2141f412c1f3bbcada208ec6f46"
       },
       "dispatch": {
         "assignedAt": "2026-09-16",
@@ -3846,22 +3847,22 @@
         "reviewPath": "docs/execution/handoffs/C-04-review-round8.md",
         "handoffPath": "docs/execution/handoffs/C-04-correction-round8.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "awaiting_review",
+        "status": "done",
         "dependencyCommits": {
           "D-04": "036288114bcf303f98e0ee02e54ddce18384e504",
           "F-03": "b65f5d65d67e6fc823fbf54fa8ab4f2a4d17d191",
           "X-08": "8c770f779204a00c2d8cc6312a2c0fc04262ea35",
           "W-05": "ea3958b15508d13893b55674b59cfb0bf50d1ffe"
         },
-        "waitingOn": "/root/x05_reviewer",
-        "waitingReason": "C-04 correction round eight product and handoff are complete; independent review is required for R3g-c and all prior C-04 invariants.",
-        "implementationCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
-        "handoffCommit": "c46b84183f0723d0cbb439eb539cd600c235acf0",
-        "reviewSourceCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
-        "reviewRound": 7,
-        "reviewCommit": "0770b38dc318c776ffb33ad4063c51c5b5416a58",
-        "reviewIntegrationCommit": "03cd48e81aabd5279bb9ea701e6cd6d027856624",
-        "correctionStatus": "awaiting_review",
+        "waitingOn": null,
+        "waitingReason": "C-04 approved after eight correction rounds; transport and startup lane is closed.",
+        "implementationCommit": "b031416f27e6819d454d8ec419e7a4ffa4e8eb12",
+        "handoffCommit": "87d49e7cfee20fab62128b4f19e2d5a4fde76102",
+        "reviewSourceCommit": "b031416f27e6819d454d8ec419e7a4ffa4e8eb12",
+        "reviewRound": 8,
+        "reviewCommit": "4b55e48a463d3de74f8c936ed1312cc5ab43673d",
+        "reviewIntegrationCommit": "37326ef211c2f2141f412c1f3bbcada208ec6f46",
+        "correctionStatus": "approved",
         "correctionRound": 8,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "d646d967b8375528ce707debbe461a815c38b29e",
@@ -3874,17 +3875,17 @@
         "correctionImplementationCommit": "b031416f27e6819d454d8ec419e7a4ffa4e8eb12",
         "correctionHandoffCommit": "87d49e7cfee20fab62128b4f19e2d5a4fde76102",
         "correctionReviewSourceCommit": "b031416f27e6819d454d8ec419e7a4ffa4e8eb12",
-        "correctionReviewCommit": null,
-        "correctionReviewIntegrationCommit": null,
+        "correctionReviewCommit": "4b55e48a463d3de74f8c936ed1312cc5ab43673d",
+        "correctionReviewIntegrationCommit": "37326ef211c2f2141f412c1f3bbcada208ec6f46",
         "correctionProductCommits": [
           "23462380b004586c1e09794c937ae396ee18b394",
           "b031416f27e6819d454d8ec419e7a4ffa4e8eb12"
         ],
         "correctionDispatchCommit": "d646d967b8375528ce707debbe461a815c38b29e"
       },
-      "implementationCommit": "52f3654cd0a669dbc3dc59f5187bec828616c34e",
-      "handoffCommit": "21c54c7a288eb984fd122f475c41df03fe6c6a23",
-      "reviewSourceCommit": "52f3654cd0a669dbc3dc59f5187bec828616c34e",
+      "implementationCommit": "b031416f27e6819d454d8ec419e7a4ffa4e8eb12",
+      "handoffCommit": "87d49e7cfee20fab62128b4f19e2d5a4fde76102",
+      "reviewSourceCommit": "b031416f27e6819d454d8ec419e7a4ffa4e8eb12",
       "reviewHistory": [
         {
           "round": 1,
@@ -3963,15 +3964,17 @@
         {
           "round": 8,
           "reviewer": "/root/x05_reviewer",
-          "commit": null,
-          "status": "pending",
+          "commit": "4b55e48a463d3de74f8c936ed1312cc5ab43673d",
+          "status": "approved",
           "sourceCommit": "b031416f27e6819d454d8ec419e7a4ffa4e8eb12",
           "receipt": "docs/execution/handoffs/C-04-review-round8.md",
           "handoff": "docs/execution/handoffs/C-04-correction-round8.md",
           "productCommit": "b031416f27e6819d454d8ec419e7a4ffa4e8eb12",
-          "handoffCommit": "87d49e7cfee20fab62128b4f19e2d5a4fde76102"
+          "handoffCommit": "87d49e7cfee20fab62128b4f19e2d5a4fde76102",
+          "integratedCommit": "37326ef211c2f2141f412c1f3bbcada208ec6f46"
         }
-      ]
+      ],
+      "reviewIntegrationCommit": "37326ef211c2f2141f412c1f3bbcada208ec6f46"
     },
     "U-00": {
       "status": "done",
@@ -5900,7 +5903,7 @@
       ]
     }
   },
-  "nextAction": "C-04 correction round eight product and handoff are recorded; dispatch independent review round eight for R3g-c and prior invariants.",
+  "nextAction": "C-04 is closed and approved; run the clean coordinator guardrail, then dispatch U-01 BFF shell and generated-client boundary.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
