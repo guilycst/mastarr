@@ -19,14 +19,19 @@ import (
 )
 
 const (
-	DefaultPageSize      = 25
-	MaxPageSize          = 100
-	MaxCursorLength      = 256
-	MaxIdentityLength    = 128
-	MaxInputLength       = 240
-	MaxItemsPerPage      = 100
-	MaxFilesPerDiscovery = 1000
-	MaxCandidates        = 100
+	DefaultPageSize   = 25
+	MaxPageSize       = 100
+	MaxCursorLength   = 256
+	MaxIdentityLength = 128
+	// MaxInputLength is shared by normalized values and rendered draft
+	// controls. Keeping it at 128 bytes bounds a fully escaped maximum detail
+	// form below the default net/http Server header limit.
+	MaxInputLength  = 128
+	MaxItemsPerPage = 100
+	// These collection ceilings retain the reviewed 257-file/33-candidate
+	// boundary while keeping the complete generated form transport-safe.
+	MaxFilesPerDiscovery = 257
+	MaxCandidates        = 33
 	MaxProvenance        = 100
 	MaxTracking          = 200
 	MaxAssociationInputs = 256
@@ -43,10 +48,11 @@ const (
 	MaxCandidateEpisodesLength = MaxAssociationInputs*20 + (MaxAssociationInputs - 1)
 	MaxQueryValues             = MaxDynamicDetailInputs + 16
 	// MaxQueryRawLength bounds the encoded URL as well as its decoded field
-	// count. It is intentionally larger than the largest supported generated
-	// form because URL escaping can expand otherwise valid draft values.
-	MaxQueryRawLength     = 8 << 20
-	MaxRenderedTextLength = 240
+	// count. It remains below net/http's default 1 MiB request-header limit,
+	// leaving room for the request path and headers around the largest
+	// renderer-supported form.
+	MaxQueryRawLength     = 768 << 10
+	MaxRenderedTextLength = MaxInputLength
 )
 
 // ErrorKind identifies a sanitized inventory read failure.

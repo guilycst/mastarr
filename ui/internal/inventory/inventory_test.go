@@ -919,7 +919,7 @@ func TestMaximumRenderedCollectionsAcceptFullDraftSubmission(t *testing.T) {
 			FileIdentity: fmt.Sprintf("inode-%d", index),
 		}
 	}
-	candidates := make([]Candidate, MaxCandidates/3)
+	candidates := make([]Candidate, MaxCandidates)
 	for index := range candidates {
 		provider := fmt.Sprintf("tvdb:%d", index+1)
 		candidates[index] = Candidate{Title: fmt.Sprintf("Episode %d", index+1), Kind: "episode", ProviderID: provider}
@@ -986,6 +986,94 @@ func TestMaximumRenderedCollectionsAcceptFullDraftSubmission(t *testing.T) {
 	if strings.Index(body, `name="candidate-31-title"`) >= strings.Index(body, `name="candidate-32-title"`) {
 		t.Fatalf("candidate controls are not stable at the collection boundary")
 	}
+}
+
+func TestMaximumDraftFitsDefaultHTTPServerHeaderBudget(t *testing.T) {
+	now := time.Date(2026, 9, 17, 16, 0, 0, 0, time.UTC)
+	files := make([]File, MaxFilesPerDiscovery)
+	for index := range files {
+		files[index] = File{
+			RootID:       "root-a",
+			RelativePath: fmt.Sprintf("Show/%03d.mkv", index),
+			Type:         "file",
+			Role:         "video",
+			Size:         1,
+			FileIdentity: fmt.Sprintf("inode-%d", index),
+		}
+	}
+	candidates := make([]Candidate, MaxCandidates)
+	for index := range candidates {
+		candidates[index] = Candidate{Title: "Episode", Kind: "episode", ProviderID: fmt.Sprintf("tvdb:%d", index+1)}
+	}
+	discovery := Discovery{ID: "discovery-transport-boundary", ObservedAt: now, Readiness: "ready", Files: files, Candidates: candidates}
+	fake := &fakeReader{discoveries: map[string]Discovery{discovery.ID: discovery}}
+	values := maximumTransportDraftValues(len(files), len(candidates))
+	rawQuery := values.Encode()
+	if len(rawQuery) > MaxQueryRawLength {
+		t.Fatalf("maximum rendered query length = %d, exceeds parser bound %d", len(rawQuery), MaxQueryRawLength)
+	}
+
+	// ServeHTTP bypasses the net/http request-line/header parser. Keep this
+	// direct assertion alongside the real server request so both boundaries
+	// are covered.
+	direct := httptest.NewRecorder()
+	NewHandler(fake).ServeHTTP(direct, httptest.NewRequest(http.MethodGet, "/discoveries/"+discovery.ID+"?"+rawQuery, nil))
+	if direct.Code != http.StatusOK {
+		t.Fatalf("direct maximum request status = %d; body length=%d", direct.Code, direct.Body.Len())
+	}
+	directCalls := fake.callCount()
+
+	server := httptest.NewServer(NewHandler(fake))
+	defer server.Close()
+	request, err := http.NewRequest(http.MethodGet, server.URL+"/discoveries/"+discovery.ID+"?"+rawQuery, nil)
+	if err != nil {
+		t.Fatalf("maximum request construction failed: %v", err)
+	}
+	response, err := server.Client().Do(request)
+	if err != nil {
+		t.Fatalf("default http.Server rejected maximum rendered request: %v", err)
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, response.Body)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("default http.Server maximum request status = %d; want 200", response.StatusCode)
+	}
+	if fake.callCount() <= directCalls {
+		t.Fatalf("real server request did not reach the inventory reader: calls before=%d after=%d", directCalls, fake.callCount())
+	}
+}
+
+func maximumTransportDraftValues(files, candidates int) url.Values {
+	values := url.Values{}
+	values.Set("rootId", "root-a")
+	values.Set("limit", "7")
+	values.Set("cursor", "cursor-list")
+	// Ampersands exercise the escaped-value expansion while remaining valid
+	// bounded draft text after url.ParseQuery decodes them.
+	scalar := strings.Repeat("&", MaxInputLength)
+	for index := 0; index < files; index++ {
+		prefix := fmt.Sprintf("association-%d-", index)
+		values.Set(prefix+"identity", scalar)
+		values.Set(prefix+"episode", scalar)
+		values.Set(prefix+"language", scalar)
+		values.Set(prefix+"pair", scalar)
+		values.Set(prefix+"forced", "false")
+		values.Set(prefix+"sdh", "false")
+		values.Set(prefix+"role", "video")
+	}
+	episodes := strings.Repeat("2147483647,", MaxAssociationInputs-1) + "2147483647"
+	for index := 0; index < candidates; index++ {
+		prefix := fmt.Sprintf("candidate-%d-", index)
+		values.Set(prefix+"title", scalar)
+		values.Set(prefix+"provider", scalar)
+		values.Set(prefix+"external", scalar)
+		values.Set(prefix+"kind", "episode")
+		values.Set(prefix+"season", "2147483647")
+		values.Set(prefix+"episodes", episodes)
+		values.Set(prefix+"year", "2147483647")
+		values.Set(prefix+"score", "0.9137")
+	}
+	return values
 }
 
 func TestFixedDetailDraftVocabularyIsRouteScopedAndValidated(t *testing.T) {
