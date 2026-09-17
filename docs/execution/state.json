@@ -3746,7 +3746,7 @@
       "reviewSourceCommit": "37ecdde36b56a6cd3d7d147cd8af1b49eba3f45a"
     },
     "C-04": {
-      "status": "in_progress",
+      "status": "in_review",
       "owner": "/root/x05_implementer",
       "baseSha": "887e9ea2fa791720f9743d8a0ba89e1e49cb814b",
       "integratedSha": null,
@@ -3765,23 +3765,21 @@
         "GOWORK=off ./scripts/check-guardrails.sh --fast",
         "33014ad84ea69f7a3f7960de2278001d63b6c3cb independent C-04 round-one review receipt; integrated as a617151",
         "Review findings R1-R6: route assembly, durable API configuration and credential FK ordering, durable idempotency, strong If-Match, typed limits/nested bounds, managed credential-state mapping.",
-        "Reviewer full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed; focused/race/vet/mod/architecture/planning/Linux checks passed; functional findings remain."
+        "Reviewer full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed; focused/race/vet/mod/architecture/planning/Linux checks passed; functional findings remain.",
+        "81e329a812c5b535a849db5250b89232c6b89ad3 C-04 correction route assembly product",
+        "b5b3e521618405d8b51deb10ff40de4d2d0de37a C-04 correction persistence and boundary product",
+        "56005a180f57bea44fd3e55a4202b557728d5e32 C-04 correction round-one handoff",
+        "C-04 correction product checks: focused/race transport and startup tests, vet, mod verify, lint, architecture, planning, Linux amd64/arm64 CGO-free builds, and product pre-commit guardrails passed.",
+        "Full offline aggregate was started with GOWORK=off GOPROXY=off GOSUMDB=off and interrupted after successful generation, API/Vacuum, architecture, lint, root ordinary, and nested ordinary/race phases; final marker not claimed."
       ],
       "review": {
-        "status": "changes_requested",
-        "decision": "changes_requested",
+        "status": "pending",
+        "decision": "pending",
         "reviewer": "/root/x05_reviewer",
-        "commit": "33014ad84ea69f7a3f7960de2278001d63b6c3cb",
-        "findings": [
-          "R1 P1 documented routes remain fallback 503 instead of explicit service assembly",
-          "R2 P1 API-owned configuration is not durable and managed credential create fails SQLite FK ordering",
-          "R3 P1 process-local idempotency eviction/restart permits changed-payload mutation",
-          "R4 P2 weak If-Match accepted as strong",
-          "R5 P2 invalid limit maps to 500 and nested manifest bounds are bypassed",
-          "R6 P2 API-managed credentials are reported as static_reference"
-        ],
-        "round": 1,
-        "integratedCommit": "a617151"
+        "commit": null,
+        "findings": [],
+        "round": 2,
+        "integratedCommit": null
       },
       "dispatch": {
         "assignedAt": "2026-09-16",
@@ -3808,39 +3806,43 @@
           "generation/API/Vacuum/lint/architecture/planning/full offline guardrails",
           "Linux amd64/arm64 CGO-free builds"
         ],
-        "reviewPath": "docs/execution/handoffs/C-04-review-round1.md",
-        "handoffPath": "docs/execution/handoffs/C-04.md",
+        "reviewPath": "docs/execution/handoffs/C-04-review-round2.md",
+        "handoffPath": "docs/execution/handoffs/C-04-correction-round1.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "in_progress",
+        "status": "review_pending",
         "dependencyCommits": {
           "D-04": "036288114bcf303f98e0ee02e54ddce18384e504",
           "F-03": "b65f5d65d67e6fc823fbf54fa8ab4f2a4d17d191",
           "X-08": "8c770f779204a00c2d8cc6312a2c0fc04262ea35",
           "W-05": "ea3958b15508d13893b55674b59cfb0bf50d1ffe"
         },
-        "waitingOn": "/root/x05_implementer",
-        "waitingReason": "C-04 correction round 1 for independent review findings R1-R6",
+        "waitingOn": "/root/x05_reviewer",
+        "waitingReason": "independent C-04 correction review round 2",
         "implementationCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
         "handoffCommit": "c46b84183f0723d0cbb439eb539cd600c235acf0",
         "reviewSourceCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
-        "reviewRound": 1,
-        "reviewCommit": "33014ad84ea69f7a3f7960de2278001d63b6c3cb",
-        "reviewIntegrationCommit": "a617151",
-        "correctionStatus": "in_progress",
+        "reviewRound": 2,
+        "reviewCommit": null,
+        "reviewIntegrationCommit": null,
+        "correctionStatus": "review_pending",
         "correctionRound": 1,
         "correctionOwner": "/root/x05_implementer",
-        "correctionBaseSha": "a617151",
-        "correctionDispatchCheckpoint": "a617151",
+        "correctionBaseSha": "8fbbe1d09687f54b0d2015cde27134295e097d65",
+        "correctionDispatchCheckpoint": "8fbbe1d09687f54b0d2015cde27134295e097d65",
         "correctionReviewPath": "docs/execution/handoffs/C-04-review-round2.md",
         "correctionHandoffPath": "docs/execution/handoffs/C-04-correction-round1.md",
         "correctionReviewer": "/root/x05_reviewer",
         "priorReviewCommit": "33014ad84ea69f7a3f7960de2278001d63b6c3cb",
         "priorReviewIntegrationCommit": "a617151",
-        "correctionImplementationCommit": null,
-        "correctionHandoffCommit": null,
-        "correctionReviewSourceCommit": null,
+        "correctionImplementationCommit": "b5b3e521618405d8b51deb10ff40de4d2d0de37a",
+        "correctionHandoffCommit": "56005a180f57bea44fd3e55a4202b557728d5e32",
+        "correctionReviewSourceCommit": "b5b3e521618405d8b51deb10ff40de4d2d0de37a",
         "correctionReviewCommit": null,
-        "correctionReviewIntegrationCommit": null
+        "correctionReviewIntegrationCommit": null,
+        "correctionProductCommits": [
+          "81e329a812c5b535a849db5250b89232c6b89ad3",
+          "b5b3e521618405d8b51deb10ff40de4d2d0de37a"
+        ]
       },
       "implementationCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
       "handoffCommit": "c46b84183f0723d0cbb439eb539cd600c235acf0",
@@ -3854,6 +3856,14 @@
           "sourceCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
           "receipt": "docs/execution/handoffs/C-04-review-round1.md",
           "integratedCommit": "a617151"
+        },
+        {
+          "round": 2,
+          "reviewer": "/root/x05_reviewer",
+          "commit": null,
+          "status": "pending",
+          "sourceCommit": "b5b3e521618405d8b51deb10ff40de4d2d0de37a",
+          "receipt": "docs/execution/handoffs/C-04-review-round2.md"
         }
       ]
     },
@@ -5784,7 +5794,7 @@
       ]
     }
   },
-  "nextAction": "C-04 review 33014ad84ea69f7a3f7960de2278001d63b6c3cb integrated as a617151 requested corrections R1-R6. Dispatch correction round 1 from a617151 to /root/x05_implementer; preserve route fail-closed semantics, G-01/F-05/Seerr gates, and record product/handoff before review round 2.",
+  "nextAction": "C-04 correction products 81e329a812c5b535a849db5250b89232c6b89ad3 and b5b3e521618405d8b51deb10ff40de4d2d0de37a, handoff 56005a180f57bea44fd3e55a4202b557728d5e32, pushed from base 8fbbe1d09687f54b0d2015cde27134295e097d65; queue independent review round 2 with /root/x05_reviewer. Rerun full offline guardrails and preserve G-01/F-05/Seerr gates.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
