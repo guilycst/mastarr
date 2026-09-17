@@ -3788,20 +3788,22 @@
         "1b5cb04be4dab3ade4e8f433e0a1aa7f6e3da475 C-04 correction round four product fixes timestamped SQLite release, conservative rollback classification, post-mutation PATCH recovery, retired mapping readback, and known unassembled-route release.",
         "33bdebe24f45167deef317d0a45b219ed41e5304 C-04 correction round four handoff records exact scope, synthetic regressions, checks, and remaining route-owner boundary.",
         "Correction round four focused and repeated race probes, root tests, vet, module verification, generation, Vacuum, lint, architecture, and Linux builds passed.",
-        "Full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed with final marker guardrail checks passed (ci)."
+        "Full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed with final marker guardrail checks passed (ci).",
+        "c5c1baf1b6511b28693b8e3758d6597d28bd50e1 independent C-04 correction round five review receipt; R3d/R3e and narrow R3f/R3g paths closed, R3f-a/R3f-b/R3f-c/R3g-a remain P1.",
+        "Reviewer full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed; real-SQLite fresh-manager and race probes reproduced false-success recovery and missing ETag."
       ],
       "review": {
         "status": "changes_requested",
         "decision": "changes_requested",
         "reviewer": "/root/x05_reviewer",
-        "commit": "d9e36c574bb03991cb5607e12cd0255ddd940fe4",
+        "commit": "c5c1baf1b6511b28693b8e3758d6597d28bd50e1",
         "findings": [
-          "R3d P1 production SQLite release omits CreatedAt and cannot persist release events",
-          "R3e P1 PATCH rollback classifiers mistake unchanged durable resources for materialized mutations",
-          "R3f P1 successful PATCH lost-completion recovery requires stale If-Match to equal new revision",
-          "R3g P1 nonconfiguration mutations have no production recovery owner and burn durable keys"
+          "R3f-a P1 built-in recovery falsely terminalizes rejected stale PATCH as 200 after completion loss",
+          "R3f-b P1 CREATE recovery falsely terminalizes duplicate conflict as 201 after completion loss",
+          "R3f-c P1 durable and recovered PATCH replay drops ETag due Go canonical header allowlist mismatch",
+          "R3g-a P1 cmd/mastarr has no terminal owner for nonconfiguration mutations or connection credential PATCH recovery"
         ],
-        "round": 4
+        "round": 5
       },
       "dispatch": {
         "assignedAt": "2026-09-16",
@@ -3831,22 +3833,22 @@
         "reviewPath": "docs/execution/handoffs/C-04-review-round4.md",
         "handoffPath": "docs/execution/handoffs/C-04-correction-round3.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "review_pending",
+        "status": "review_complete",
         "dependencyCommits": {
           "D-04": "036288114bcf303f98e0ee02e54ddce18384e504",
           "F-03": "b65f5d65d67e6fc823fbf54fa8ab4f2a4d17d191",
           "X-08": "8c770f779204a00c2d8cc6312a2c0fc04262ea35",
           "W-05": "ea3958b15508d13893b55674b59cfb0bf50d1ffe"
         },
-        "waitingOn": "/root/x05_reviewer",
-        "waitingReason": "Independent review of C-04 correction round four product and handoff is pending.",
+        "waitingOn": "/root/x05_implementer",
+        "waitingReason": "Round-five review requests correction of false-success recovery, ETag replay, and production recovery ownership.",
         "implementationCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
         "handoffCommit": "c46b84183f0723d0cbb439eb539cd600c235acf0",
         "reviewSourceCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
         "reviewRound": 3,
         "reviewCommit": "461b0c06b0a3094f5da28ca2920400b639e22a61",
         "reviewIntegrationCommit": "d593fd4",
-        "correctionStatus": "review_pending",
+        "correctionStatus": "pending_dispatch",
         "correctionRound": 4,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "326d07b16f7527cd1995bc88c965daf059ec28d4",
@@ -3916,10 +3918,11 @@
         {
           "round": 5,
           "reviewer": "/root/x05_reviewer",
-          "commit": null,
-          "status": "pending",
+          "commit": "c5c1baf1b6511b28693b8e3758d6597d28bd50e1",
+          "status": "changes_requested",
           "sourceCommit": "1b5cb04be4dab3ade4e8f433e0a1aa7f6e3da475",
-          "receipt": "docs/execution/handoffs/C-04-review-round5.md"
+          "receipt": "docs/execution/handoffs/C-04-review-round5.md",
+          "integratedCommit": "e52dde661391dd7792c9278b42e26be1a7cea9f9"
         }
       ]
     },
@@ -5850,7 +5853,7 @@
       ]
     }
   },
-  "nextAction": "C-04 correction round four product 1b5cb04be4dab3ade4e8f433e0a1aa7f6e3da475 and handoff 33bdebe24f45167deef317d0a45b219ed41e5304 are pushed; independent review round five is pending.",
+  "nextAction": "Record C-04 round-five changes_requested receipt and dispatch correction round six for false-success recovery, ETag replay, and terminal recovery owners.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
