@@ -205,6 +205,70 @@ func TestDurableMutationSettersKeepRecoveryAssemblyAtomic(t *testing.T) {
 	}
 }
 
+func TestBuiltInConfigurationRecoveryOwnerCannotBeRemovedWithDurablePersistence(t *testing.T) {
+	store := newTestDurableIdempotency()
+	server, err := New(Options{IdempotencyPersistence: store.persistence(), Ready: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if server.idempotencyRecoveryCallback() == nil || !server.recoveryOwnerReady.Load() {
+		t.Fatal("built-in configuration recovery owner was not ready")
+	}
+	if err := server.SetIdempotencyRecovery(nil); !errors.Is(err, ErrIdempotencyRecoveryRequired) {
+		t.Fatalf("removing built-in recovery owner = %v, want %v", err, ErrIdempotencyRecoveryRequired)
+	}
+	if server.idempotencyRecoveryCallback() == nil || !server.recoveryOwnerReady.Load() {
+		t.Fatal("failed built-in owner removal left a nil or unready recovery owner")
+	}
+
+	withoutPersistence, err := New(Options{Ready: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := withoutPersistence.SetIdempotencyRecovery(nil); err != nil {
+		t.Fatalf("removing owner before durable startup = %v", err)
+	}
+	if err := withoutPersistence.SetIdempotencyPersistence(store.persistence()); !errors.Is(err, ErrIdempotencyRecoveryRequired) {
+		t.Fatalf("attaching durable persistence without an effective owner = %v, want %v", err, ErrIdempotencyRecoveryRequired)
+	}
+	if withoutPersistence.idempotencyPersistence() != nil {
+		t.Fatal("rejected durable persistence replaced the previous nil store")
+	}
+}
+
+func TestBuiltInConfigurationRecoveryOwnerRemovalIsRaceSafe(t *testing.T) {
+	for iteration := 0; iteration < 20; iteration++ {
+		server, err := New(Options{IdempotencyPersistence: newTestDurableIdempotency().persistence(), Ready: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		var failures atomic.Int32
+		for worker := 0; worker < 8; worker++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				if err := server.SetIdempotencyRecovery(nil); !errors.Is(err, ErrIdempotencyRecoveryRequired) {
+					failures.Add(1)
+				}
+				if server.idempotencyRecoveryCallback() == nil || !server.recoveryOwnerReady.Load() {
+					failures.Add(1)
+				}
+			}()
+		}
+		close(start)
+		wg.Wait()
+		if failures.Load() != 0 {
+			t.Fatalf("iteration %d observed a nil or unready built-in owner", iteration)
+		}
+		if server.idempotencyRecoveryCallback() == nil || !server.recoveryOwnerReady.Load() {
+			t.Fatalf("iteration %d ended without an effective recovery owner", iteration)
+		}
+	}
+}
+
 func TestConfigurationRecoveryAuthenticatesManagedCredentialIdentity(t *testing.T) {
 	crypt, err := credentials.NewManager(bytes.Repeat([]byte{0x31}, 32))
 	if err != nil {

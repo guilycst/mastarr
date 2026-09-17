@@ -292,10 +292,11 @@ func (server *Server) SetIdempotencyRecovery(recovery IdempotencyRecovery) error
 	}
 	server.idempotencyAssemblyMu.Lock()
 	defer server.idempotencyAssemblyMu.Unlock()
-	if recovery == nil && hasDurableMutationDependency(server.dependencies) {
+	if recovery == nil && server.requiresDurableMutationRecovery() {
+		// A durable mutation owner cannot be removed while either an injected
+		// mutation or the built-in configuration handlers are backed by durable
+		// idempotency. Preserve the currently installed owner atomically.
 		if server.idempotencyPersistence() != nil {
-			// A durable mutation owner cannot be removed while its persistence is
-			// attached. Preserve the currently installed owner atomically.
 			return ErrIdempotencyRecoveryRequired
 		}
 		// Publish the closed state before removing the callback so a concurrent
@@ -423,6 +424,13 @@ func (server *Server) SetIdempotencyPersistence(persistence *IdempotencyPersiste
 		if persistence.Load == nil || persistence.Reserve == nil || persistence.Release == nil || persistence.Complete == nil {
 			return errors.New("transport idempotency persistence lacks reservation protocol")
 		}
+		if server.idempotencyRecoveryCallback() == nil {
+			// A late durable store cannot be published while the effective
+			// recovery callback is absent. This also covers built-in
+			// configuration handlers after a caller removed their owner before
+			// storage startup completed.
+			return ErrIdempotencyRecoveryRequired
+		}
 		if hasDurableMutationDependency(server.dependencies) && !server.recoveryOwnerReady.Load() {
 			// Keep the previously assembled state intact. A late durable store
 			// cannot be published until an explicit owner is present.
@@ -445,6 +453,18 @@ func (server *Server) idempotencyPersistence() *IdempotencyPersistence {
 	server.persistenceMu.RLock()
 	defer server.persistenceMu.RUnlock()
 	return server.idempotencyStore
+}
+
+// requiresDurableMutationRecovery reports whether the current server has a
+// mutation path whose reservation may outlive the process. The built-in
+// configuration handlers are always part of Server, so attaching durable
+// idempotency makes them dependencies even when no application handlers have
+// been injected.
+func (server *Server) requiresDurableMutationRecovery() bool {
+	if server == nil {
+		return false
+	}
+	return hasDurableMutationDependency(server.dependencies) || server.idempotencyPersistence() != nil
 }
 
 // SetManagedCredentialIDs updates redacted credential ownership metadata after
@@ -1513,7 +1533,7 @@ func (server *Server) policy(next http.Handler) http.Handler {
 			return
 		}
 		server.setCORS(w, r)
-		if isMutation(r.Method) && server.idempotencyPersistence() != nil && !server.recoveryOwnerReady.Load() {
+		if isMutation(r.Method) && server.idempotencyPersistence() != nil && (!server.recoveryOwnerReady.Load() || server.idempotencyRecoveryCallback() == nil) {
 			writeProblem(w, r, ErrIdempotencyRecoveryRequired)
 			return
 		}
