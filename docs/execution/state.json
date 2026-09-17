@@ -3803,7 +3803,8 @@
         "911e67ac291f7e096eea46f9210a40232eb3fd21 C-04 correction round seven handoff records exact regressions, checks, owned paths and product boundary.",
         "Correction round seven focused/repeated race tests, vet, module verification, product pre-commit and full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed.",
         "0770b38dc318c776ffb33ad4063c51c5b5416a58 independent C-04 correction round seven review receipt, integrated as 03cd48e81aabd5279bb9ea701e6cd6d027856624; R3f-d/R3g-b closed and R3g-c remains P1.",
-        "Reviewer full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed; independent built-in owner-removal probe failed 20/20 ordinary and 10/10 race."
+        "Reviewer full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed; independent built-in owner-removal probe failed 20/20 ordinary and 10/10 race.",
+        "C-04 correction round eight dispatched from clean coordinator checkpoint 61f0d1d5c6db7cb7f468b967008748bd07f6ba8e; scope is R3g-c built-in configuration recovery-owner removal with durable persistence."
       ],
       "review": {
         "status": "changes_requested",
@@ -3851,32 +3852,33 @@
           "X-08": "8c770f779204a00c2d8cc6312a2c0fc04262ea35",
           "W-05": "ea3958b15508d13893b55674b59cfb0bf50d1ffe"
         },
-        "waitingOn": "/root",
-        "waitingReason": "Round-seven review is integrated with one P1 R3g-c; coordinator is recording the finding before dispatching correction round eight.",
+        "waitingOn": "/root/x05_implementer",
+        "waitingReason": "Implement correction round eight for R3g-c: built-in configuration mutations must keep an effective recovery owner whenever durable idempotency persistence is attached.",
         "implementationCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
         "handoffCommit": "c46b84183f0723d0cbb439eb539cd600c235acf0",
         "reviewSourceCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
         "reviewRound": 7,
         "reviewCommit": "0770b38dc318c776ffb33ad4063c51c5b5416a58",
         "reviewIntegrationCommit": "03cd48e81aabd5279bb9ea701e6cd6d027856624",
-        "correctionStatus": "awaiting_review",
-        "correctionRound": 7,
+        "correctionStatus": "in_progress",
+        "correctionRound": 8,
         "correctionOwner": "/root/x05_implementer",
-        "correctionBaseSha": "720c1c10a9c7cad550e353b8798380664c10b7a7",
-        "correctionDispatchCheckpoint": "720c1c10a9c7cad550e353b8798380664c10b7a7",
-        "correctionReviewPath": "docs/execution/handoffs/C-04-review-round7.md",
-        "correctionHandoffPath": "docs/execution/handoffs/C-04-correction-round7.md",
+        "correctionBaseSha": "61f0d1d5c6db7cb7f468b967008748bd07f6ba8e",
+        "correctionDispatchCheckpoint": "61f0d1d5c6db7cb7f468b967008748bd07f6ba8e",
+        "correctionReviewPath": "docs/execution/handoffs/C-04-review-round8.md",
+        "correctionHandoffPath": "docs/execution/handoffs/C-04-correction-round8.md",
         "correctionReviewer": "/root/x05_reviewer",
         "priorReviewCommit": "8598d5619509706cac383697d22fe93345de1573",
         "priorReviewIntegrationCommit": "b75e14faa55f3826bc856a09660bb36239d44b0d",
-        "correctionImplementationCommit": "23462380b004586c1e09794c937ae396ee18b394",
-        "correctionHandoffCommit": "911e67ac291f7e096eea46f9210a40232eb3fd21",
-        "correctionReviewSourceCommit": "23462380b004586c1e09794c937ae396ee18b394",
+        "correctionImplementationCommit": null,
+        "correctionHandoffCommit": null,
+        "correctionReviewSourceCommit": null,
         "correctionReviewCommit": null,
         "correctionReviewIntegrationCommit": null,
         "correctionProductCommits": [
           "23462380b004586c1e09794c937ae396ee18b394"
-        ]
+        ],
+        "correctionDispatchCommit": "61f0d1d5c6db7cb7f468b967008748bd07f6ba8e"
       },
       "implementationCommit": "52f3654cd0a669dbc3dc59f5187bec828616c34e",
       "handoffCommit": "21c54c7a288eb984fd122f475c41df03fe6c6a23",
@@ -3955,6 +3957,15 @@
           "productCommit": "23462380b004586c1e09794c937ae396ee18b394",
           "handoffCommit": "911e67ac291f7e096eea46f9210a40232eb3fd21",
           "integratedCommit": "03cd48e81aabd5279bb9ea701e6cd6d027856624"
+        },
+        {
+          "round": 8,
+          "reviewer": "/root/x05_reviewer",
+          "commit": null,
+          "status": "pending",
+          "sourceCommit": null,
+          "receipt": "docs/execution/handoffs/C-04-review-round8.md",
+          "handoff": "docs/execution/handoffs/C-04-correction-round8.md"
         }
       ]
     },
@@ -5885,7 +5896,7 @@
       ]
     }
   },
-  "nextAction": "C-04 round-seven review is recorded and integrated at 03cd48e81aabd5279bb9ea701e6cd6d027856624 with P1 R3g-c; dispatch correction round eight from the next clean state checkpoint.",
+  "nextAction": "C-04 correction round eight is dispatched from clean checkpoint 61f0d1d5c6db7cb7f468b967008748bd07f6ba8e; implementer owns R3g-c and reviewer round eight follows.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
