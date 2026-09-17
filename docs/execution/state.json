@@ -4060,6 +4060,8 @@
         "2f86d298d890e466334ecaa6d0bd92dc4d50f64f U-01 product adds HTTP-only BFF config, generated-client wrapper, server-rendered shell/routes/errors, safe metadata and preview asset.",
         "0ddb7fc75b00ec296879efca8f2b46720a81b56b U-01 handoff records owned paths, UI-only boundary, frozen ui module limitation, checks and deferred browser/full-CI evidence.",
         "9ada4806d49bb3da71e0c8e3c1e50fdc98c2f5a6 independent U-01 round-one review receipt, integrated as 7ef11c3072769c04ecd2679b373a08fcfc6df46; five P2 findings remain.",
+        "Reviewer full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed; UI tests/race/vet/mod, generation, architecture, planning, metadata/header probes and Linux builds passed while findings remain.",
+        "9ada4806d49bb3da71e0c8e3c1e50fdc98c2f5a6 independent U-01 round-one review receipt, integrated as 7ef11c3072769c04ecd2679b373a08fcfc6df46; five P2 findings remain.",
         "Reviewer full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed; UI tests/race/vet/mod, generation, architecture, planning, metadata/header probes and Linux builds passed while findings remain."
       ],
       "review": {
@@ -4111,7 +4113,7 @@
         "nextReviewer": "/root/x05_reviewer",
         "status": "in_progress",
         "waitingOn": "/root",
-        "waitingReason": "Round-one review is integrated with five P2 UI findings; coordinator is recording them before dispatching correction round two.",
+        "waitingReason": "Round-one review is integrated with five P2 UI findings; coordinator is recording them and will normalize UI module metadata before correction round two.",
         "dependencyCommits": {
           "U-00": "508d88ef7e11d115d004cd48dae8bb9b2bb7608c",
           "C-03": "8c9bf9a6277e068f9ae6b859fab2c5f7aa4890a1",
@@ -6004,7 +6006,7 @@
       ]
     }
   },
-  "nextAction": "U-01 review round one is recorded and integrated; dispatch correction round two for method gates, readiness/config parity, startup errors and UI module tidy.",
+  "nextAction": "U-01 review round one is recorded and integrated; normalize the UI module metadata, then dispatch correction round two for the remaining shell/config/readiness findings.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
