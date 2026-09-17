@@ -3845,8 +3845,8 @@
         "correctionStatus": "in_progress",
         "correctionRound": 4,
         "correctionOwner": "/root/x05_implementer",
-        "correctionBaseSha": "c14663e53d70e39b126f4196d7b1ac2fdea3f667",
-        "correctionDispatchCheckpoint": "c14663e53d70e39b126f4196d7b1ac2fdea3f667",
+        "correctionBaseSha": "d4011a9dd64b9ac2e6379a5663d89dca0b9ea034",
+        "correctionDispatchCheckpoint": "d4011a9dd64b9ac2e6379a5663d89dca0b9ea034",
         "correctionReviewPath": "docs/execution/handoffs/C-04-review-round5.md",
         "correctionHandoffPath": "docs/execution/handoffs/C-04-correction-round4.md",
         "correctionReviewer": "/root/x05_reviewer",
@@ -5844,7 +5844,7 @@
       ]
     }
   },
-  "nextAction": "C-04 correction round four is required for R3d/R3e/R3f/R3g; dispatch /root/x05_implementer from review receipt integration c14663e.",
+  "nextAction": "C-04 correction round four dispatched to /root/x05_implementer from clean checkpoint d4011a9dd64b9ac2e6379a5663d89dca0b9ea034 for R3d/R3e/R3f/R3g.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
