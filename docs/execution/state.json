@@ -3570,7 +3570,8 @@
         "Independent W-05 correction round-two receipt 5954ee826f56a1f9558417fdde614b62387a1ae0 integrated as 118720ddf571698c5403bfb58558bbc56b3d201f: changes requested for R1a/R2a/R3a/R2b; exact ordinary and race probes reproduced all four findings, and full offline guardrails passed.",
         "W-05 correction round two dispatched from state checkpoint 8df72860d4ef56e69393753a3814c288bb9860d2 to /root/x05_implementer. Scope is R1a approval-bound early-purge recovery, R2a unresolved foreign-effect retention, R3a planned replay read-only reconciliation, and R2b exact directory bookkeeping; product paths remain internal/trash/ with synthetic regressions and no schema/API/adapters/clients changes.",
         "W-05 correction round two product 730b3774fb412c2d9dcecce5a5dec292d11f63eb and handoff daa7df6d2612439b07556e9e776e1dd4a17f0983 complete from dispatch checkpoint 8df72860d4ef56e69393753a3814c288bb9860d2; R1a/R2a/R3a/R2b regressions, focused/race/vet/root checks and fast guardrails passed. Full aggregate race and cross-build remain coordinator/reviewer gates.",
-        "Independent W-05 correction round-three receipt eee4fa2dac2dd201316e79f6a898cea20c0071f8 integrated as 08f8672: R1a/R2a/R2b closed, R3b remains blocking; planned trash crash-window probes reproduced the stuck state 10/10 ordinary and 5/5 race, and full offline guardrails passed."
+        "Independent W-05 correction round-three receipt eee4fa2dac2dd201316e79f6a898cea20c0071f8 integrated as 08f8672: R1a/R2a/R2b closed, R3b remains blocking; planned trash crash-window probes reproduced the stuck state 10/10 ordinary and 5/5 race, and full offline guardrails passed.",
+        "W-05 correction round three dispatched from state checkpoint a68fafb29f07ff0561f1e28b6857a1c3fa0ab311 to /root/x05_implementer. Scope is R3b only: explicit durable read-only reconciliation for planned trash intents across pre-dispatch, post-dispatch, partial, collision, identity-change, directory-leaf, and restart states; no schema/API/adapter/client/worker changes."
       ],
       "review": {
         "status": "changes_requested",
@@ -3608,10 +3609,10 @@
           "GOWORK=off focused tests/race/vet/module verification and full offline guardrails",
           "generation/API/Vacuum/lint/architecture checks and Linux amd64/arm64 CGO-free builds"
         ],
-        "reviewPath": "docs/execution/handoffs/W-05-review-round3.md",
-        "handoffPath": "docs/execution/handoffs/W-05-correction-round2.md",
+        "reviewPath": "docs/execution/handoffs/W-05-review-round4.md",
+        "handoffPath": "docs/execution/handoffs/W-05-correction-round3.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "changes_requested",
+        "status": "in_progress",
         "dependencyCommits": {
           "W-04-product": "780c00e92498660c08b6ac67259bbb4147c58531",
           "W-04-review": "2aef896fd5d3e10dcefc80f8f5a094852d73fd27",
@@ -3623,29 +3624,29 @@
           "X-14": "qBittorrent removal remains metadata-only with deleteFiles=false; stop and read-back are required before payload mutation."
         },
         "waitingOn": "/root/x05_implementer",
-        "waitingReason": "correction round three for R3b planned trash reconciliation",
+        "waitingReason": "W-05 correction round three implementation for R3b planned trash reconciliation",
         "implementationCommit": "37ecdde36b56a6cd3d7d147cd8af1b49eba3f45a",
         "handoffCommit": "91038f799d894b58d1c7f149606ac2c686515beb",
         "reviewSourceCommit": "730b3774fb412c2d9dcecce5a5dec292d11f63eb",
         "reviewRound": 3,
-        "reviewCommit": "eee4fa2dac2dd201316e79f6a898cea20c0071f8",
-        "reviewIntegrationCommit": "08f8672",
-        "correctionStatus": "changes_requested",
-        "correctionRound": 2,
+        "reviewCommit": null,
+        "reviewIntegrationCommit": null,
+        "correctionStatus": "in_progress",
+        "correctionRound": 3,
         "correctionOwner": "/root/x05_implementer",
-        "correctionBaseSha": "8df72860d4ef56e69393753a3814c288bb9860d2",
-        "correctionDispatchCheckpoint": "8df72860d4ef56e69393753a3814c288bb9860d2",
-        "correctionReviewPath": "docs/execution/handoffs/W-05-review-round3.md",
-        "correctionHandoffPath": "docs/execution/handoffs/W-05-correction-round2.md",
+        "correctionBaseSha": "a68fafb29f07ff0561f1e28b6857a1c3fa0ab311",
+        "correctionDispatchCheckpoint": "a68fafb29f07ff0561f1e28b6857a1c3fa0ab311",
+        "correctionReviewPath": "docs/execution/handoffs/W-05-review-round4.md",
+        "correctionHandoffPath": "docs/execution/handoffs/W-05-correction-round3.md",
         "correctionReviewer": "/root/x05_reviewer",
         "priorReviewCommit": "eee4fa2dac2dd201316e79f6a898cea20c0071f8",
         "priorReviewIntegrationCommit": "08f8672",
-        "correctionImplementationCommit": "730b3774fb412c2d9dcecce5a5dec292d11f63eb",
-        "correctionHandoffCommit": "daa7df6d2612439b07556e9e776e1dd4a17f0983",
-        "correctionReviewSourceCommit": "730b3774fb412c2d9dcecce5a5dec292d11f63eb",
-        "priorCorrectionRound": 1,
-        "priorCorrectionImplementationCommit": "2f843b3e678d86e9300ce60f48f31e3c87f18791",
-        "priorCorrectionHandoffCommit": "c8c862f92e32dc894f5273e657323720af777694"
+        "correctionImplementationCommit": null,
+        "correctionHandoffCommit": null,
+        "correctionReviewSourceCommit": null,
+        "priorCorrectionRound": 2,
+        "priorCorrectionImplementationCommit": "730b3774fb412c2d9dcecce5a5dec292d11f63eb",
+        "priorCorrectionHandoffCommit": "daa7df6d2612439b07556e9e776e1dd4a17f0983"
       },
       "reviewHistory": [
         {
@@ -5624,7 +5625,7 @@
       ]
     }
   },
-  "nextAction": "Record and dispatch W-05 correction round three for R3b: add explicit durable read-only trash reconciliation for planned intents before any retry; keep other feature lanes paused.",
+  "nextAction": "W-05 correction round three is dispatched from a68fafb29f07ff0561f1e28b6857a1c3fa0ab311; await the product and handoff commits for R3b, then queue independent review round four.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
