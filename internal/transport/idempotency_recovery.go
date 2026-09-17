@@ -46,6 +46,9 @@ func (server *Server) recoverConfigurationIdempotency(ctx context.Context, reque
 		if body.Credentials != nil && (!server.hasManagedCredentials(connection.ID) || !sameManagedCredentialInput(ctx, manager, connection, body.Credentials)) {
 			return IdempotencyRecord{}, false, nil
 		}
+		if !configurationEffectMatches(request, "create", "connection", connection.ID.String(), connection.Revision) {
+			return IdempotencyRecord{}, false, nil
+		}
 		return server.configurationRecoveryRecord(request, http.StatusCreated, connection.ID.String(), server.mapConnection(connection), map[string][]string{
 			"ETag":     {quoteETagValue(connection.Revision)},
 			"Location": {"/api/v1/connections/" + url.PathEscape(connection.ID.String())},
@@ -66,6 +69,9 @@ func (server *Server) recoverConfigurationIdempotency(ctx context.Context, reque
 		if body.Credentials != nil && (!server.hasManagedCredentials(connection.ID) || !sameManagedCredentialInput(ctx, manager, connection, body.Credentials)) {
 			return IdempotencyRecord{}, false, nil
 		}
+		if !configurationEffectMatches(request, "patch", "connection", connection.ID.String(), connection.Revision) {
+			return IdempotencyRecord{}, false, nil
+		}
 		return server.configurationRecoveryRecord(request, http.StatusOK, connection.ID.String(), mapConnection(connection), map[string][]string{
 			"ETag": {quoteETagValue(connection.Revision)},
 		}), true, nil
@@ -78,6 +84,9 @@ func (server *Server) recoverConfigurationIdempotency(ctx context.Context, reque
 		if err != nil || connection.RetiredAt == nil || !strongRecoveryMatch(request.IfMatch, connection.Revision) {
 			return IdempotencyRecord{}, false, nil
 		}
+		if !configurationEffectMatches(request, "delete", "connection", connection.ID.String(), connection.Revision) {
+			return IdempotencyRecord{}, false, nil
+		}
 		return server.configurationRecoveryRecord(request, http.StatusNoContent, connection.ID.String(), nil, nil), true, nil
 	case request.Method == http.MethodPost && request.Path == "/api/v1/storage-roots":
 		var body api.StorageRootCreate
@@ -86,6 +95,9 @@ func (server *Server) recoverConfigurationIdempotency(ctx context.Context, reque
 		}
 		root, err := manager.GetStorageRoot(ctx, domain.ConfigID(body.Id), false)
 		if err != nil || !sameStorageRootCreate(root, body) {
+			return IdempotencyRecord{}, false, nil
+		}
+		if !configurationEffectMatches(request, "create", "storage_root", root.ID.String(), root.Revision) {
 			return IdempotencyRecord{}, false, nil
 		}
 		return server.configurationRecoveryRecord(request, http.StatusCreated, root.ID.String(), mapStorageRoot(root), map[string][]string{
@@ -105,6 +117,9 @@ func (server *Server) recoverConfigurationIdempotency(ctx context.Context, reque
 		if err != nil || !sameStorageRootPatch(root, body, request.IfMatch) {
 			return IdempotencyRecord{}, false, nil
 		}
+		if !configurationEffectMatches(request, "patch", "storage_root", root.ID.String(), root.Revision) {
+			return IdempotencyRecord{}, false, nil
+		}
 		return server.configurationRecoveryRecord(request, http.StatusOK, root.ID.String(), mapStorageRoot(root), map[string][]string{
 			"ETag": {quoteETagValue(root.Revision)},
 		}), true, nil
@@ -117,6 +132,9 @@ func (server *Server) recoverConfigurationIdempotency(ctx context.Context, reque
 		if err != nil || root.RetiredAt == nil || !strongRecoveryMatch(request.IfMatch, root.Revision) {
 			return IdempotencyRecord{}, false, nil
 		}
+		if !configurationEffectMatches(request, "delete", "storage_root", root.ID.String(), root.Revision) {
+			return IdempotencyRecord{}, false, nil
+		}
 		return server.configurationRecoveryRecord(request, http.StatusNoContent, root.ID.String(), nil, nil), true, nil
 	case request.Method == http.MethodPost && request.Path == "/api/v1/path-mappings":
 		var body api.PathMappingCreate
@@ -125,6 +143,9 @@ func (server *Server) recoverConfigurationIdempotency(ctx context.Context, reque
 		}
 		mapping, err := manager.GetPathMapping(ctx, domain.ConfigID(body.Id), false)
 		if err != nil || !samePathMappingCreate(mapping, body) {
+			return IdempotencyRecord{}, false, nil
+		}
+		if !configurationEffectMatches(request, "create", "path_mapping", mapping.ID.String(), mapping.Revision) {
 			return IdempotencyRecord{}, false, nil
 		}
 		return server.configurationRecoveryRecord(request, http.StatusCreated, mapping.ID.String(), mapPathMapping(mapping), map[string][]string{
@@ -142,6 +163,9 @@ func (server *Server) recoverConfigurationIdempotency(ctx context.Context, reque
 		}
 		mapping, err := manager.GetPathMapping(ctx, domain.ConfigID(id), false)
 		if err != nil || !samePathMappingPatch(mapping, body, request.IfMatch) {
+			return IdempotencyRecord{}, false, nil
+		}
+		if !configurationEffectMatches(request, "patch", "path_mapping", mapping.ID.String(), mapping.Revision) {
 			return IdempotencyRecord{}, false, nil
 		}
 		return server.configurationRecoveryRecord(request, http.StatusOK, mapping.ID.String(), mapPathMapping(mapping), map[string][]string{
@@ -163,6 +187,9 @@ func (server *Server) recoverConfigurationIdempotency(ctx context.Context, reque
 		}
 		mapping, err := manager.GetPathMapping(ctx, domain.ConfigID(id), true)
 		if err != nil || mapping.Source.Source != domain.SourceAPI || !strongRecoveryMatch(request.IfMatch, mapping.Revision) {
+			return IdempotencyRecord{}, false, nil
+		}
+		if !configurationEffectMatches(request, "delete", "path_mapping", mapping.ID.String(), mapping.Revision) {
 			return IdempotencyRecord{}, false, nil
 		}
 		return server.configurationRecoveryRecord(request, http.StatusNoContent, mapping.ID.String(), nil, nil), true, nil
@@ -192,7 +219,21 @@ func (server *Server) configurationRecoveryRecord(request IdempotencyRecoveryReq
 		State:        IdempotencyStateCompleted,
 		Replayable:   true,
 		AttemptID:    request.Record.AttemptID,
+		Effect:       request.Record.Effect,
 	}
+}
+
+// configurationEffectMatches is deliberately conservative for SQLite-backed
+// production recovery. A markerless reservation can have coincident current
+// fields after a rejected request or a different process, so read-back alone
+// cannot authorize a terminal response. Older injected stores may opt out
+// while they provide their own route-specific evidence contract.
+func configurationEffectMatches(request IdempotencyRecoveryRequest, operation, resourceKind, resourceID, revision string) bool {
+	if !request.RequireEffectEvidence {
+		return true
+	}
+	effect := request.Record.Effect
+	return effect != nil && effect.Scope == request.Scope && effect.Key == request.Key && effect.Digest == request.Digest && effect.AttemptID == request.Record.AttemptID && effect.Operation == operation && effect.ResourceKind == resourceKind && effect.ResourceID == resourceID && effect.Revision == revision
 }
 
 func decodeRecoveryBody(data []byte, target any) bool {

@@ -45,14 +45,15 @@ type ConfigurationReload func(context.Context) (*configuration.Manager, []domain
 // it must never be persisted or logged. Record is the durable pending attempt
 // that must be reconciled before a terminal completion is written.
 type IdempotencyRecoveryRequest struct {
-	Scope   string
-	Key     string
-	Digest  string
-	Method  string
-	Path    string
-	IfMatch string
-	Body    []byte
-	Record  IdempotencyRecord
+	Scope                 string
+	Key                   string
+	Digest                string
+	Method                string
+	Path                  string
+	IfMatch               string
+	Body                  []byte
+	Record                IdempotencyRecord
+	RequireEffectEvidence bool
 }
 
 // IdempotencyRecovery reconciles a pending post-dispatch attempt using
@@ -95,6 +96,49 @@ type IdempotencyRecord struct {
 	// AttemptID binds reservation, release and completion events to one
 	// dispatch owner. It is opaque and contains no request or secret data.
 	AttemptID string
+	// Effect is an optional attempt-bound durable mutation marker. It is
+	// populated by storage-backed configuration transactions only after the
+	// manager mutation and before the transaction commits. Recovery must match
+	// every field before reconstructing a response.
+	Effect *IdempotencyEffect
+}
+
+// IdempotencyEffect binds a durable configuration mutation to the exact
+// reservation that caused it. It contains no request body, credentials or
+// transport details beyond the stable route scope and resource identity.
+type IdempotencyEffect struct {
+	Scope        string `json:"scope"`
+	Key          string `json:"key"`
+	Digest       string `json:"digest"`
+	AttemptID    string `json:"attemptId"`
+	Operation    string `json:"operation"`
+	ResourceKind string `json:"resourceKind"`
+	ResourceID   string `json:"resourceId"`
+	Revision     string `json:"revision"`
+}
+
+// MutationAttempt is the request-local identity available to a storage
+// transaction. It intentionally excludes body and credential data.
+type MutationAttempt struct {
+	Scope     string
+	Key       string
+	Digest    string
+	AttemptID string
+	CreatedAt string
+}
+
+// MutationAttemptFromContext returns the exact idempotency attempt currently
+// dispatching a handler. Storage adapters use it to bind an effect marker in
+// the same transaction as the durable mutation.
+func MutationAttemptFromContext(ctx context.Context) (MutationAttempt, bool) {
+	if ctx == nil {
+		return MutationAttempt{}, false
+	}
+	state, ok := ctx.Value(idempotencyRequestStateKey{}).(*idempotencyRequestState)
+	if !ok || state == nil || state.scope == "" || state.key == "" || state.digest == "" || state.attempt == "" || state.createdAt == "" {
+		return MutationAttempt{}, false
+	}
+	return MutationAttempt{Scope: state.scope, Key: state.key, Digest: state.digest, AttemptID: state.attempt, CreatedAt: state.createdAt}, true
 }
 
 const (
@@ -123,6 +167,11 @@ type IdempotencyPersistence struct {
 	Release  func(context.Context, IdempotencyRecord) error
 	Complete func(context.Context, IdempotencyRecord) error
 	Save     func(context.Context, IdempotencyRecord) error
+	// RequireRecoveryEvidence makes built-in configuration recovery accept only
+	// an attempt-bound Effect marker. SQLite sets this for its append-only
+	// marker protocol; lightweight test stores may retain the older read-back
+	// behavior when they cannot persist effect markers.
+	RequireRecoveryEvidence bool
 }
 
 func cloneIdempotencyPersistence(value *IdempotencyPersistence) *IdempotencyPersistence {

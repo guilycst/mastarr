@@ -118,6 +118,12 @@ type Server struct {
 	configurationReload   ConfigurationReload
 	idempotencyRecoveryMu sync.RWMutex
 	idempotencyRecovery   IdempotencyRecovery
+	recoveryOwnerReady    atomic.Bool
+	// idempotencyAssemblyMu serializes persistence/owner publication with an
+	// HTTP mutation. Holding its read lock for the policy request means a
+	// setter cannot attach durable state or remove its recovery owner between
+	// the readiness check and dispatch.
+	idempotencyAssemblyMu sync.RWMutex
 	dependencies          *RouteDependencies
 	persistenceMu         sync.RWMutex
 	configurationStore    *ConfigurationPersistence
@@ -209,6 +215,7 @@ func New(options Options) (*Server, error) {
 	if options.IdempotencyPersistence != nil && hasDurableMutationDependency(dependencies) && options.IdempotencyRecovery == nil {
 		return nil, ErrIdempotencyRecoveryRequired
 	}
+	recoveryOwnerReady := !hasDurableMutationDependency(dependencies) || options.IdempotencyRecovery != nil
 	server := &Server{
 		configuration:        options.Configuration,
 		configurationReload:  options.ConfigurationReload,
@@ -225,6 +232,7 @@ func New(options Options) (*Server, error) {
 		idempotency:          make(map[string]idempotencyEntry),
 		pending:              make(map[string]*idempotencyPending),
 	}
+	server.recoveryOwnerReady.Store(recoveryOwnerReady)
 	for _, id := range options.ManagedCredentialIDs {
 		if id.Valid() {
 			server.managedCredentialIDs[id] = struct{}{}
@@ -278,13 +286,36 @@ func (server *Server) configurationReloadCallback() ConfigurationReload {
 // SetIdempotencyRecovery publishes the durable recovery owner used for
 // pending post-dispatch attempts. The callback is copied so the caller may
 // discard its assembly value after startup.
-func (server *Server) SetIdempotencyRecovery(recovery IdempotencyRecovery) {
+func (server *Server) SetIdempotencyRecovery(recovery IdempotencyRecovery) error {
 	if server == nil {
-		return
+		return ErrIdempotencyRecoveryRequired
+	}
+	server.idempotencyAssemblyMu.Lock()
+	defer server.idempotencyAssemblyMu.Unlock()
+	if recovery == nil && hasDurableMutationDependency(server.dependencies) {
+		if server.idempotencyPersistence() != nil {
+			// A durable mutation owner cannot be removed while its persistence is
+			// attached. Preserve the currently installed owner atomically.
+			return ErrIdempotencyRecoveryRequired
+		}
+		// Publish the closed state before removing the callback so a concurrent
+		// request cannot observe durable persistence with no recovery owner.
+		server.recoveryOwnerReady.Store(false)
+	} else if recovery != nil {
+		// Install the replacement before publishing readiness; requests that see
+		// true can therefore resolve the callback immediately.
+		server.idempotencyRecoveryMu.Lock()
+		server.idempotencyRecovery = recovery
+		server.idempotencyRecoveryMu.Unlock()
+		server.recoveryOwnerReady.Store(true)
+		return nil
+	} else {
+		server.recoveryOwnerReady.Store(true)
 	}
 	server.idempotencyRecoveryMu.Lock()
 	server.idempotencyRecovery = recovery
 	server.idempotencyRecoveryMu.Unlock()
+	return nil
 }
 
 func (server *Server) idempotencyRecoveryCallback() IdempotencyRecovery {
@@ -382,13 +413,29 @@ func (server *Server) configurationPersistence() *ConfigurationPersistence {
 // SetIdempotencyPersistence publishes the durable idempotency repository
 // after storage startup. Existing in-flight requests continue to use the
 // copied repository safely; production callers set it before readiness.
-func (server *Server) SetIdempotencyPersistence(persistence *IdempotencyPersistence) {
+func (server *Server) SetIdempotencyPersistence(persistence *IdempotencyPersistence) error {
 	if server == nil {
-		return
+		return ErrIdempotencyStore
+	}
+	server.idempotencyAssemblyMu.Lock()
+	defer server.idempotencyAssemblyMu.Unlock()
+	if persistence != nil {
+		if persistence.Load == nil || persistence.Reserve == nil || persistence.Release == nil || persistence.Complete == nil {
+			return errors.New("transport idempotency persistence lacks reservation protocol")
+		}
+		if hasDurableMutationDependency(server.dependencies) && !server.recoveryOwnerReady.Load() {
+			// Keep the previously assembled state intact. A late durable store
+			// cannot be published until an explicit owner is present.
+			return ErrIdempotencyRecoveryRequired
+		}
 	}
 	server.persistenceMu.Lock()
 	server.idempotencyStore = cloneIdempotencyPersistence(persistence)
 	server.persistenceMu.Unlock()
+	if persistence == nil && !hasDurableMutationDependency(server.dependencies) {
+		server.recoveryOwnerReady.Store(true)
+	}
+	return nil
 }
 
 func (server *Server) idempotencyPersistence() *IdempotencyPersistence {
@@ -1292,6 +1339,8 @@ func problemFor(ctx context.Context, err error, status int) api.Problem {
 		code, title, retryable = "service_unavailable", "Service is unavailable", true
 	case errors.Is(err, ErrIdempotencyStore):
 		code, title, retryable = "persistence_unavailable", "Durable persistence is unavailable", true
+	case errors.Is(err, ErrIdempotencyRecoveryRequired):
+		code, title, retryable = "service_unavailable", "Mutation recovery is unavailable", true
 	case errors.Is(err, ErrIdempotencyPending):
 		code, title, retryable = "idempotency_pending", "Earlier request outcome requires reconciliation", true
 	case errors.Is(err, ErrConfigurationStore):
@@ -1371,6 +1420,8 @@ func statusFor(err error) int {
 		return http.StatusServiceUnavailable
 	case errors.Is(err, ErrIdempotencyStore):
 		return http.StatusServiceUnavailable
+	case errors.Is(err, ErrIdempotencyRecoveryRequired):
+		return http.StatusServiceUnavailable
 	case errors.Is(err, ErrConfigurationStore):
 		return http.StatusServiceUnavailable
 	case errors.Is(err, context.Canceled):
@@ -1440,6 +1491,11 @@ func normalizeError(err error) error {
 // idempotent HTTP responses without changing the generated contract.
 func (server *Server) policy(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Keep the persistence/owner pair stable for the whole mutation. A
+		// startup setter may not attach a durable repository or remove its
+		// recovery owner between this gate and the handler dispatch.
+		server.idempotencyAssemblyMu.RLock()
+		defer server.idempotencyAssemblyMu.RUnlock()
 		id := requestID()
 		ctx := context.WithValue(r.Context(), requestIDKey{}, id)
 		r = r.WithContext(ctx)
@@ -1457,6 +1513,10 @@ func (server *Server) policy(next http.Handler) http.Handler {
 			return
 		}
 		server.setCORS(w, r)
+		if isMutation(r.Method) && server.idempotencyPersistence() != nil && !server.recoveryOwnerReady.Load() {
+			writeProblem(w, r, ErrIdempotencyRecoveryRequired)
+			return
+		}
 		if !isMutation(r.Method) || strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
 			next.ServeHTTP(w, r)
 			return
@@ -2319,14 +2379,15 @@ func (server *Server) recoverPendingIdempotency(ctx context.Context, scope, key 
 		return nil, false, nil
 	}
 	request := IdempotencyRecoveryRequest{
-		Scope:   scope,
-		Key:     key,
-		Digest:  hex.EncodeToString(digest),
-		Method:  method,
-		Path:    path,
-		IfMatch: ifMatch,
-		Body:    append([]byte(nil), body...),
-		Record:  record,
+		Scope:                 scope,
+		Key:                   key,
+		Digest:                hex.EncodeToString(digest),
+		Method:                method,
+		Path:                  path,
+		IfMatch:               ifMatch,
+		Body:                  append([]byte(nil), body...),
+		Record:                record,
+		RequireEffectEvidence: persistence.RequireRecoveryEvidence,
 	}
 	terminal, ok, err := recovery(ctx, request)
 	if err != nil {

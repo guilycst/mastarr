@@ -108,6 +108,9 @@ func (persistence *sqliteConfigurationPersistence) createConnection(ctx context.
 	if err := persistConnection(ctx, tx, result, "pending", now); err != nil {
 		return domain.Connection{}, err
 	}
+	if err := persistConfigurationEffect(ctx, tx, "create", "connection", result.ID.String(), result.Revision); err != nil {
+		return domain.Connection{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.Connection{}, errConfigurationPersistence
 	}
@@ -125,6 +128,9 @@ func (persistence *sqliteConfigurationPersistence) updateConnection(ctx context.
 		return domain.Connection{}, err
 	}
 	if err := persistConnection(ctx, tx, result, expectedRevision, persistence.clock()().UTC()); err != nil {
+		return domain.Connection{}, err
+	}
+	if err := persistConfigurationEffect(ctx, tx, "patch", "connection", result.ID.String(), result.Revision); err != nil {
 		return domain.Connection{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -149,6 +155,9 @@ func (persistence *sqliteConfigurationPersistence) retireConnection(ctx context.
 	}
 	if count, err := result.RowsAffected(); err != nil || count != 1 {
 		return errConfigurationPersistence
+	}
+	if err := persistConfigurationEffect(ctx, tx, "delete", "connection", id.String(), expectedRevision); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return errConfigurationPersistence
@@ -186,6 +195,9 @@ func (persistence *sqliteConfigurationPersistence) createStorageRoot(ctx context
 	if err := persistStorageRoot(ctx, tx, result, "pending", now); err != nil {
 		return domain.StorageRoot{}, err
 	}
+	if err := persistConfigurationEffect(ctx, tx, "create", "storage_root", result.ID.String(), result.Revision); err != nil {
+		return domain.StorageRoot{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.StorageRoot{}, errConfigurationPersistence
 	}
@@ -203,6 +215,9 @@ func (persistence *sqliteConfigurationPersistence) updateStorageRoot(ctx context
 		return domain.StorageRoot{}, err
 	}
 	if err := persistStorageRoot(ctx, tx, result, expectedRevision, persistence.clock()().UTC()); err != nil {
+		return domain.StorageRoot{}, err
+	}
+	if err := persistConfigurationEffect(ctx, tx, "patch", "storage_root", result.ID.String(), result.Revision); err != nil {
 		return domain.StorageRoot{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -227,6 +242,9 @@ func (persistence *sqliteConfigurationPersistence) retireStorageRoot(ctx context
 	}
 	if count, err := result.RowsAffected(); err != nil || count != 1 {
 		return errConfigurationPersistence
+	}
+	if err := persistConfigurationEffect(ctx, tx, "delete", "storage_root", id.String(), expectedRevision); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return errConfigurationPersistence
@@ -257,6 +275,9 @@ func (persistence *sqliteConfigurationPersistence) createPathMapping(ctx context
 	if err := persistPathMapping(ctx, tx, result, "pending", now); err != nil {
 		return domain.PathMapping{}, err
 	}
+	if err := persistConfigurationEffect(ctx, tx, "create", "path_mapping", result.ID.String(), result.Revision); err != nil {
+		return domain.PathMapping{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.PathMapping{}, errConfigurationPersistence
 	}
@@ -274,6 +295,9 @@ func (persistence *sqliteConfigurationPersistence) updatePathMapping(ctx context
 		return domain.PathMapping{}, err
 	}
 	if err := persistPathMapping(ctx, tx, result, expectedRevision, persistence.clock()().UTC()); err != nil {
+		return domain.PathMapping{}, err
+	}
+	if err := persistConfigurationEffect(ctx, tx, "patch", "path_mapping", result.ID.String(), result.Revision); err != nil {
 		return domain.PathMapping{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -298,6 +322,9 @@ func (persistence *sqliteConfigurationPersistence) retirePathMapping(ctx context
 	}
 	if count, err := result.RowsAffected(); err != nil || count != 1 {
 		return errConfigurationPersistence
+	}
+	if err := persistConfigurationEffect(ctx, tx, "delete", "path_mapping", id.String(), expectedRevision); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return errConfigurationPersistence
@@ -447,17 +474,84 @@ type sqliteIdempotencyPersistence struct {
 
 func newSQLiteIdempotencyPersistence(db *sql.DB, now func() time.Time) *transport.IdempotencyPersistence {
 	persistence := &sqliteIdempotencyPersistence{db: db, now: now}
-	return &transport.IdempotencyPersistence{Load: persistence.load, Reserve: persistence.reserve, Release: persistence.release, Complete: persistence.complete, Save: persistence.save}
+	return &transport.IdempotencyPersistence{Load: persistence.load, Reserve: persistence.reserve, Release: persistence.release, Complete: persistence.complete, Save: persistence.save, RequireRecoveryEvidence: true}
 }
 
 type sqliteIdempotencyResponse struct {
-	State      string              `json:"state,omitempty"`
-	Replayable bool                `json:"replayable,omitempty"`
-	Digest     string              `json:"digest,omitempty"`
-	AttemptID  string              `json:"attemptId,omitempty"`
-	Status     int                 `json:"status"`
-	Headers    map[string][]string `json:"headers,omitempty"`
-	Body       []byte              `json:"body,omitempty"`
+	State      string                       `json:"state,omitempty"`
+	Replayable bool                         `json:"replayable,omitempty"`
+	Digest     string                       `json:"digest,omitempty"`
+	AttemptID  string                       `json:"attemptId,omitempty"`
+	Status     int                          `json:"status"`
+	Headers    map[string][]string          `json:"headers,omitempty"`
+	Body       []byte                       `json:"body,omitempty"`
+	Effect     *transport.IdempotencyEffect `json:"effect,omitempty"`
+}
+
+const idempotencyEffectState = "effect"
+
+// persistConfigurationEffect appends an attempt-bound marker in the same
+// SQLite transaction as the configuration mutation. A marker is intentionally
+// absent for direct manager calls that do not carry an HTTP idempotency
+// attempt; those calls have no pending HTTP reservation to recover.
+func persistConfigurationEffect(ctx context.Context, tx *sql.Tx, operation, resourceKind, resourceID, revision string) error {
+	if tx == nil {
+		return errConfigurationPersistence
+	}
+	attempt, ok := transport.MutationAttemptFromContext(ctx)
+	if !ok {
+		return nil
+	}
+	if strings.TrimSpace(operation) == "" || strings.TrimSpace(resourceKind) == "" || strings.TrimSpace(resourceID) == "" || strings.TrimSpace(revision) == "" || strings.TrimSpace(attempt.Scope) == "" || strings.TrimSpace(attempt.Key) == "" || strings.TrimSpace(attempt.Digest) == "" || validateAttemptID(attempt.AttemptID) != nil {
+		return errConfigurationPersistence
+	}
+	if _, err := hex.DecodeString(attempt.Digest); err != nil {
+		return errConfigurationPersistence
+	}
+	effect := &transport.IdempotencyEffect{
+		Scope:        attempt.Scope,
+		Key:          attempt.Key,
+		Digest:       attempt.Digest,
+		AttemptID:    attempt.AttemptID,
+		Operation:    operation,
+		ResourceKind: resourceKind,
+		ResourceID:   resourceID,
+		Revision:     revision,
+	}
+	responseJSON, err := json.Marshal(sqliteIdempotencyResponse{
+		State:     transport.IdempotencyStateReserved,
+		Digest:    attempt.Digest,
+		AttemptID: attempt.AttemptID,
+		Status:    http.StatusProcessing,
+		Effect:    effect,
+	})
+	if err != nil || len(responseJSON) > maxPersistedIdempotencyBody*2 {
+		return errConfigurationPersistence
+	}
+	scope := idempotencyEventScope(attempt.Scope, attempt.AttemptID, idempotencyEffectState)
+	resourceIDForAttempt := sqliteIdempotencyResourceID(attempt.Scope, attempt.Key)
+	result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO idempotency_records (scope, idempotency_key, request_digest, status_code, resource_kind, resource_id, response_json, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, scope, attempt.Key, attempt.Digest, http.StatusProcessing, "idempotency_effect", resourceIDForAttempt, string(responseJSON), attempt.CreatedAt, nil)
+	if err != nil {
+		return errConfigurationPersistence
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return errConfigurationPersistence
+	}
+	if inserted == 0 {
+		row, response, found, loadErr := loadSQLiteIdempotencyRow(ctx, tx, scope, attempt.Key)
+		if loadErr != nil || !found || row.Digest != attempt.Digest || response.State != transport.IdempotencyStateReserved || !sameIdempotencyEffect(row.Effect, effect) {
+			return errConfigurationPersistence
+		}
+	}
+	return nil
+}
+
+func sameIdempotencyEffect(left, right *transport.IdempotencyEffect) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return *left == *right
 }
 
 const maxPersistedIdempotencyBody = 4 << 20
@@ -567,6 +661,16 @@ func loadSQLiteIdempotencyRowFromValues(_ context.Context, record transport.Idem
 		return transport.IdempotencyRecord{}, sqliteIdempotencyResponse{}, false, errConfigurationPersistence
 	}
 	record.AttemptID = response.AttemptID
+	if response.Effect != nil {
+		if !validIdempotencyEffect(response.Effect, record) {
+			return transport.IdempotencyRecord{}, sqliteIdempotencyResponse{}, false, errConfigurationPersistence
+		}
+		effect := *response.Effect
+		record.Effect = &effect
+	}
+	if record.ResourceKind == "idempotency_effect" && response.Effect == nil {
+		return transport.IdempotencyRecord{}, sqliteIdempotencyResponse{}, false, errConfigurationPersistence
+	}
 	switch response.State {
 	case "":
 		record.Replayable = true
@@ -590,6 +694,17 @@ func loadSQLiteIdempotencyRowFromValues(_ context.Context, record transport.Idem
 	record.Headers = sanitizeIdempotencyHeaders(response.Headers)
 	record.Body = append([]byte(nil), response.Body...)
 	return record, response, true, nil
+}
+
+func validIdempotencyEffect(effect *transport.IdempotencyEffect, record transport.IdempotencyRecord) bool {
+	if effect == nil || strings.TrimSpace(effect.Scope) == "" || strings.TrimSpace(effect.Key) == "" || strings.TrimSpace(effect.Digest) == "" || strings.TrimSpace(effect.AttemptID) == "" || strings.TrimSpace(effect.Operation) == "" || strings.TrimSpace(effect.ResourceKind) == "" || strings.TrimSpace(effect.ResourceID) == "" || strings.TrimSpace(effect.Revision) == "" {
+		return false
+	}
+	if effect.Digest != record.Digest || effect.AttemptID != record.AttemptID || validateAttemptID(effect.AttemptID) != nil {
+		return false
+	}
+	_, err := hex.DecodeString(effect.Digest)
+	return err == nil
 }
 
 func (persistence *sqliteIdempotencyPersistence) reserve(ctx context.Context, record transport.IdempotencyRecord) (bool, error) {
@@ -652,10 +767,6 @@ func (persistence *sqliteIdempotencyPersistence) complete(ctx context.Context, r
 	if record.AttemptID != "" && validateAttemptID(record.AttemptID) != nil {
 		return errConfigurationPersistence
 	}
-	responseJSON, err := json.Marshal(sqliteIdempotencyResponse{State: transport.IdempotencyStateCompleted, Replayable: record.Replayable, Digest: record.Digest, AttemptID: record.AttemptID, Status: record.Status, Headers: sanitizeIdempotencyHeaders(record.Headers), Body: append([]byte(nil), record.Body...)})
-	if err != nil || len(responseJSON) > maxPersistedIdempotencyBody*2 {
-		return errConfigurationPersistence
-	}
 	tx, err := persistence.db.BeginTx(ctx, nil)
 	if err != nil {
 		return errConfigurationPersistence
@@ -663,6 +774,14 @@ func (persistence *sqliteIdempotencyPersistence) complete(ctx context.Context, r
 	defer rollbackConfiguration(tx)
 	reservation, reservationResponse, found, err := loadSQLiteIdempotencyLatest(ctx, tx, record.Scope, record.Key)
 	if err != nil || !found || reservation.Digest != record.Digest || reservationResponse.State != transport.IdempotencyStateReserved || reservation.AttemptID != record.AttemptID {
+		return errConfigurationPersistence
+	}
+	effect := record.Effect
+	if effect == nil {
+		effect = reservation.Effect
+	}
+	responseJSON, err := json.Marshal(sqliteIdempotencyResponse{State: transport.IdempotencyStateCompleted, Replayable: record.Replayable, Digest: record.Digest, AttemptID: record.AttemptID, Status: record.Status, Headers: sanitizeIdempotencyHeaders(record.Headers), Body: append([]byte(nil), record.Body...), Effect: effect})
+	if err != nil || len(responseJSON) > maxPersistedIdempotencyBody*2 {
 		return errConfigurationPersistence
 	}
 	completionScope := idempotencyCompletionScope(record.Scope)

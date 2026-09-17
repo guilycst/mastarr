@@ -80,6 +80,17 @@ func httpJSON(t *testing.T, address, method, path string, body []byte, headers m
 	return response.StatusCode, response.Header, data
 }
 
+func serveJSON(handler http.Handler, method, path, body string, headers map[string]string) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	for key, value := range headers {
+		request.Header.Set(key, value)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	return response
+}
+
 func TestRunBootstrapsPersistentKeyAndGracefullyShutsDown(t *testing.T) {
 	dataDir := t.TempDir()
 	address := freeListenAddr(t)
@@ -594,6 +605,118 @@ func TestSQLiteRejectedConfigurationOutcomesStayRejectedAcrossFreshManager(t *te
 	freshServer.Handler().ServeHTTP(freshDuplicate, freshDuplicateRequest)
 	if freshDuplicate.Code != http.StatusConflict || strings.Contains(freshDuplicate.Body.String(), `"status":201`) {
 		t.Fatalf("fresh duplicate SQLite create = %d: %s; rejected attempt must not recover as 201", freshDuplicate.Code, freshDuplicate.Body.String())
+	}
+}
+
+func TestSQLiteConfigurationEffectMarkersBlockFalseRecoveryDuringMarkerOutage(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), databaseName)
+	store, err := storage.Open(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 9, 17, 10, 0, 0, 0, time.UTC)
+	manager, err := configuration.New(configuration.Options{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	configurationPersistence := newSQLiteConfigurationPersistence(store.DB(), func() time.Time { return now })
+	baseIdempotency := newSQLiteIdempotencyPersistence(store.DB(), func() time.Time { return now })
+	newServer := func(value *configuration.Manager, idempotency *transport.IdempotencyPersistence) *transport.Server {
+		server, serverErr := transport.New(transport.Options{
+			Configuration:            value,
+			ConfigurationPersistence: configurationPersistence,
+			IdempotencyPersistence:   idempotency,
+			Ready:                    true,
+			Now:                      func() time.Time { return now },
+		})
+		if serverErr != nil {
+			t.Fatal(serverErr)
+		}
+		return server
+	}
+	server := newServer(manager, baseIdempotency)
+	createBody := `{"id":"marker-outage","kind":"qbittorrent","label":"before","endpoint":"http://qbt.test"}`
+	created := serveJSON(server.Handler(), http.MethodPost, "/api/v1/connections", createBody, map[string]string{"Idempotency-Key": "marker-create"})
+	if created.Code != http.StatusCreated || created.Header().Get("ETag") == "" {
+		t.Fatalf("marker setup create = %d etag=%q: %s", created.Code, created.Header().Get("ETag"), created.Body.String())
+	}
+	initialETag := created.Header().Get("ETag")
+	failingMarkers := &transport.IdempotencyPersistence{
+		Load:    baseIdempotency.Load,
+		Reserve: baseIdempotency.Reserve,
+		Release: func(context.Context, transport.IdempotencyRecord) error {
+			return errors.New("synthetic marker release outage")
+		},
+		Complete: func(context.Context, transport.IdempotencyRecord) error {
+			return errors.New("synthetic marker completion outage")
+		},
+		RequireRecoveryEvidence: true,
+	}
+	markerServer := newServer(manager, failingMarkers)
+	patchBody := `{"label":"after-marker"}`
+	lostPatch := serveJSON(markerServer.Handler(), http.MethodPatch, "/api/v1/connections/marker-outage", patchBody, map[string]string{
+		"Idempotency-Key": "marker-success",
+		"If-Match":        initialETag,
+	})
+	if lostPatch.Code != http.StatusServiceUnavailable || !strings.Contains(lostPatch.Body.String(), "persistence_unavailable") {
+		t.Fatalf("lost successful patch = %d: %s", lostPatch.Code, lostPatch.Body.String())
+	}
+	marked, found, err := baseIdempotency.Load(context.Background(), "PATCH /api/v1/connections/marker-outage", "marker-success")
+	if err != nil || !found || !marked.Pending || marked.Effect == nil {
+		t.Fatalf("successful mutation marker = %#v found=%t err=%v; want pending effect marker", marked, found, err)
+	}
+	if marked.Effect.Scope != "PATCH /api/v1/connections/marker-outage" || marked.Effect.Key != "marker-success" || marked.Effect.Digest != marked.Digest || marked.Effect.AttemptID != marked.AttemptID || marked.Effect.Operation != "patch" || marked.Effect.ResourceKind != "connection" || marked.Effect.ResourceID != "marker-outage" || marked.Effect.Revision == "" {
+		t.Fatalf("successful mutation marker identity = %#v; want exact attempt/resource binding", marked.Effect)
+	}
+	lostStalePatch := serveJSON(markerServer.Handler(), http.MethodPatch, "/api/v1/connections/marker-outage", patchBody, map[string]string{
+		"Idempotency-Key": "markerless-stale",
+		"If-Match":        initialETag,
+	})
+	if lostStalePatch.Code != http.StatusServiceUnavailable || !strings.Contains(lostStalePatch.Body.String(), "persistence_unavailable") {
+		t.Fatalf("lost rejected patch = %d: %s", lostStalePatch.Code, lostStalePatch.Body.String())
+	}
+	markerlessStale, found, err := baseIdempotency.Load(context.Background(), "PATCH /api/v1/connections/marker-outage", "markerless-stale")
+	if err != nil || !found || !markerlessStale.Pending || markerlessStale.Effect != nil {
+		t.Fatalf("markerless rejected patch = %#v found=%t err=%v; want markerless pending reservation", markerlessStale, found, err)
+	}
+	lostDuplicate := serveJSON(markerServer.Handler(), http.MethodPost, "/api/v1/connections", `{"id":"marker-outage","kind":"qbittorrent","label":"after-marker","endpoint":"http://qbt.test"}`, map[string]string{"Idempotency-Key": "markerless-duplicate"})
+	if lostDuplicate.Code != http.StatusServiceUnavailable || !strings.Contains(lostDuplicate.Body.String(), "persistence_unavailable") {
+		t.Fatalf("lost rejected duplicate = %d: %s", lostDuplicate.Code, lostDuplicate.Body.String())
+	}
+	markerlessDuplicate, found, err := baseIdempotency.Load(context.Background(), "POST /api/v1/connections", "markerless-duplicate")
+	if err != nil || !found || !markerlessDuplicate.Pending || markerlessDuplicate.Effect != nil {
+		t.Fatalf("markerless rejected duplicate = %#v found=%t err=%v; want markerless pending reservation", markerlessDuplicate, found, err)
+	}
+
+	state, err := loadAPIState(context.Background(), store, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	freshManager, err := configuration.New(configuration.Options{Now: func() time.Time { return now }, APIState: state})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer freshManager.Close()
+	freshServer := newServer(freshManager, baseIdempotency)
+	recoveredPatch := serveJSON(freshServer.Handler(), http.MethodPatch, "/api/v1/connections/marker-outage", patchBody, map[string]string{
+		"Idempotency-Key": "marker-success",
+		"If-Match":        initialETag,
+	})
+	if recoveredPatch.Code != http.StatusOK || !strings.Contains(recoveredPatch.Body.String(), "after-marker") {
+		t.Fatalf("marker-backed fresh recovery = %d: %s", recoveredPatch.Code, recoveredPatch.Body.String())
+	}
+	freshStale := serveJSON(freshServer.Handler(), http.MethodPatch, "/api/v1/connections/marker-outage", patchBody, map[string]string{
+		"Idempotency-Key": "markerless-stale",
+		"If-Match":        initialETag,
+	})
+	if freshStale.Code != http.StatusConflict || !strings.Contains(freshStale.Body.String(), "idempotency_pending") || strings.Contains(freshStale.Body.String(), `"status":200`) {
+		t.Fatalf("markerless stale fresh recovery = %d: %s; must remain pending", freshStale.Code, freshStale.Body.String())
+	}
+	freshDuplicate := serveJSON(freshServer.Handler(), http.MethodPost, "/api/v1/connections", `{"id":"marker-outage","kind":"qbittorrent","label":"after-marker","endpoint":"http://qbt.test"}`, map[string]string{"Idempotency-Key": "markerless-duplicate"})
+	if freshDuplicate.Code != http.StatusConflict || !strings.Contains(freshDuplicate.Body.String(), "idempotency_pending") || strings.Contains(freshDuplicate.Body.String(), `"status":201`) {
+		t.Fatalf("markerless duplicate fresh recovery = %d: %s; must remain pending", freshDuplicate.Code, freshDuplicate.Body.String())
 	}
 }
 

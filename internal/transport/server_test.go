@@ -158,6 +158,53 @@ func TestDurableMutationsRequireAnExplicitRecoveryOwner(t *testing.T) {
 	}
 }
 
+func TestDurableMutationSettersKeepRecoveryAssemblyAtomic(t *testing.T) {
+	store := newTestDurableIdempotency()
+	var dispatches atomic.Int32
+	dependency := func(context.Context, api.CreateConnectionRequestObject) (api.CreateConnectionResponseObject, error) {
+		dispatches.Add(1)
+		return syntheticConnectionResponse("late-owner"), nil
+	}
+	server, err := New(Options{
+		Dependencies: &RouteDependencies{CreateConnection: dependency},
+		Ready:        true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := server.SetIdempotencyPersistence(store.persistence()); !errors.Is(err, ErrIdempotencyRecoveryRequired) {
+		t.Fatalf("late persistence without owner = %v, want %v", err, ErrIdempotencyRecoveryRequired)
+	}
+	if server.idempotencyPersistence() != nil {
+		t.Fatal("rejected late persistence replaced the previous nil store")
+	}
+	if err := server.SetIdempotencyPersistence(&IdempotencyPersistence{Load: store.load}); err == nil {
+		t.Fatal("incomplete late persistence was accepted")
+	}
+	if err := server.SetIdempotencyRecovery(testPendingRecovery); err != nil {
+		t.Fatalf("install recovery owner = %v", err)
+	}
+	if err := server.SetIdempotencyPersistence(store.persistence()); err != nil {
+		t.Fatalf("late persistence with owner = %v", err)
+	}
+	if err := server.SetIdempotencyRecovery(nil); !errors.Is(err, ErrIdempotencyRecoveryRequired) {
+		t.Fatalf("removing live recovery owner = %v, want %v", err, ErrIdempotencyRecoveryRequired)
+	}
+	response := doJSON(server.Handler(), http.MethodPost, "/api/v1/connections", `{"id":"late-owner","kind":"qbittorrent","label":"late-owner","endpoint":"http://qbt.test"}`, map[string]string{"Idempotency-Key": "late-owner"})
+	if response.Code != http.StatusCreated || dispatches.Load() != 1 {
+		t.Fatalf("request after rejected owner removal = %d dispatches=%d: %s", response.Code, dispatches.Load(), response.Body.String())
+	}
+	if err := server.SetIdempotencyRecovery(func(context.Context, IdempotencyRecoveryRequest) (IdempotencyRecord, bool, error) {
+		return IdempotencyRecord{}, false, nil
+	}); err != nil {
+		t.Fatalf("replace recovery owner = %v", err)
+	}
+	second := doJSON(server.Handler(), http.MethodPost, "/api/v1/connections", `{"id":"late-owner-2","kind":"qbittorrent","label":"late-owner-2","endpoint":"http://qbt.test"}`, map[string]string{"Idempotency-Key": "late-owner-2"})
+	if second.Code != http.StatusCreated || dispatches.Load() != 2 {
+		t.Fatalf("request after owner replacement = %d dispatches=%d: %s", second.Code, dispatches.Load(), second.Body.String())
+	}
+}
+
 func TestConfigurationRecoveryAuthenticatesManagedCredentialIdentity(t *testing.T) {
 	crypt, err := credentials.NewManager(bytes.Repeat([]byte{0x31}, 32))
 	if err != nil {
@@ -1260,6 +1307,10 @@ func cloneTestIdempotencyRecord(record IdempotencyRecord) IdempotencyRecord {
 		clone.Headers[key] = append([]string(nil), values...)
 	}
 	clone.Body = append([]byte(nil), record.Body...)
+	if record.Effect != nil {
+		effect := *record.Effect
+		clone.Effect = &effect
+	}
 	return clone
 }
 
