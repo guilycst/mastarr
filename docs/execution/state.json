@@ -3798,29 +3798,30 @@
         "Correction round six product focused/repeated race tests, vet, module verification, Linux builds, and full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed.",
         "8598d5619509706cac383697d22fe93345de1573 independent C-04 correction round six review receipt; ETag, managed credential identity, ordinary rejected release, and constructor owner gate pass, R3f-d/R3g-b remain P1.",
         "Reviewer full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed; real-SQLite marker-outage and late-persistence owner probes reproduced both findings under ordinary and race runs.",
-        "C-04 correction round seven dispatch pinned to clean coordinator checkpoint ea4b5e24391dc1a00f443d7f93bd53003adeaafd; scope is durable marker-outage safety and atomic recovery-owner setter enforcement."
+        "C-04 correction round seven dispatch pinned to clean coordinator checkpoint ea4b5e24391dc1a00f443d7f93bd53003adeaafd; scope is durable marker-outage safety and atomic recovery-owner setter enforcement.",
+        "23462380b004586c1e09794c937ae396ee18b394 C-04 correction round seven product: attempt-bound SQLite effect markers block markerless false recovery and atomic recovery-owner setter assembly.",
+        "911e67ac291f7e096eea46f9210a40232eb3fd21 C-04 correction round seven handoff records exact regressions, checks, owned paths and product boundary.",
+        "Correction round seven focused/repeated race tests, vet, module verification, product pre-commit and full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed."
       ],
       "review": {
-        "status": "changes_requested",
-        "decision": "changes_requested",
+        "status": "pending",
+        "decision": "pending",
         "reviewer": "/root/x05_reviewer",
-        "commit": "8598d5619509706cac383697d22fe93345de1573",
-        "findings": [
-          "R3f-d P1 if both exact no-effect release and rejected-response completion fail, fresh recovery still infers stale PATCH 200 or duplicate CREATE 201 from coincident state",
-          "R3g-b P1 late SetIdempotencyPersistence and SetIdempotencyRecovery(nil) bypass or remove the durable mutation recovery-owner invariant"
-        ],
-        "round": 6
+        "commit": null,
+        "findings": [],
+        "round": 7,
+        "correctionCommit": "23462380b004586c1e09794c937ae396ee18b394"
       },
       "dispatch": {
         "assignedAt": "2026-09-16",
         "model": "gpt-5.6-luna",
         "reasoning": "max",
         "role": "implementer",
-        "baseSha": "887e9ea2fa791720f9743d8a0ba89e1e49cb814b",
+        "baseSha": "720c1c10a9c7cad550e353b8798380664c10b7a7",
         "ownedPaths": [
           "internal/transport/",
           "cmd/mastarr/",
-          "docs/execution/handoffs/C-04.md"
+          "docs/execution/handoffs/C-04-correction-round7.md"
         ],
         "checkout": "shared main",
         "expectedChecks": [
@@ -3836,40 +3837,42 @@
           "generation/API/Vacuum/lint/architecture/planning/full offline guardrails",
           "Linux amd64/arm64 CGO-free builds"
         ],
-        "reviewPath": "docs/execution/handoffs/C-04-review-round4.md",
-        "handoffPath": "docs/execution/handoffs/C-04-correction-round3.md",
+        "reviewPath": "docs/execution/handoffs/C-04-review-round7.md",
+        "handoffPath": "docs/execution/handoffs/C-04-correction-round7.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "in_progress",
+        "status": "awaiting_review",
         "dependencyCommits": {
           "D-04": "036288114bcf303f98e0ee02e54ddce18384e504",
           "F-03": "b65f5d65d67e6fc823fbf54fa8ab4f2a4d17d191",
           "X-08": "8c770f779204a00c2d8cc6312a2c0fc04262ea35",
           "W-05": "ea3958b15508d13893b55674b59cfb0bf50d1ffe"
         },
-        "waitingOn": "/root/x05_implementer",
-        "waitingReason": "Implement correction round seven for R3f-d/R3g-b, then provide product and handoff commits for independent review round seven.",
+        "waitingOn": "/root/x05_reviewer",
+        "waitingReason": "C-04 correction round seven product and handoff are complete; independent review is required for R3f-d and R3g-b.",
         "implementationCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
         "handoffCommit": "c46b84183f0723d0cbb439eb539cd600c235acf0",
         "reviewSourceCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
         "reviewRound": 3,
         "reviewCommit": "461b0c06b0a3094f5da28ca2920400b639e22a61",
         "reviewIntegrationCommit": "d593fd4",
-        "correctionStatus": "in_progress",
-        "correctionRound": 6,
+        "correctionStatus": "awaiting_review",
+        "correctionRound": 7,
         "correctionOwner": "/root/x05_implementer",
-        "correctionBaseSha": "ea4b5e24391dc1a00f443d7f93bd53003adeaafd",
-        "correctionDispatchCheckpoint": "ea4b5e24391dc1a00f443d7f93bd53003adeaafd",
+        "correctionBaseSha": "720c1c10a9c7cad550e353b8798380664c10b7a7",
+        "correctionDispatchCheckpoint": "720c1c10a9c7cad550e353b8798380664c10b7a7",
         "correctionReviewPath": "docs/execution/handoffs/C-04-review-round7.md",
-        "correctionHandoffPath": "docs/execution/handoffs/C-04-correction-round6.md",
+        "correctionHandoffPath": "docs/execution/handoffs/C-04-correction-round7.md",
         "correctionReviewer": "/root/x05_reviewer",
         "priorReviewCommit": "8598d5619509706cac383697d22fe93345de1573",
         "priorReviewIntegrationCommit": "b75e14faa55f3826bc856a09660bb36239d44b0d",
-        "correctionImplementationCommit": null,
-        "correctionHandoffCommit": null,
-        "correctionReviewSourceCommit": null,
+        "correctionImplementationCommit": "23462380b004586c1e09794c937ae396ee18b394",
+        "correctionHandoffCommit": "911e67ac291f7e096eea46f9210a40232eb3fd21",
+        "correctionReviewSourceCommit": "23462380b004586c1e09794c937ae396ee18b394",
         "correctionReviewCommit": null,
         "correctionReviewIntegrationCommit": null,
-        "correctionProductCommits": []
+        "correctionProductCommits": [
+          "23462380b004586c1e09794c937ae396ee18b394"
+        ]
       },
       "implementationCommit": "52f3654cd0a669dbc3dc59f5187bec828616c34e",
       "handoffCommit": "21c54c7a288eb984fd122f475c41df03fe6c6a23",
@@ -3942,8 +3945,11 @@
           "reviewer": "/root/x05_reviewer",
           "commit": null,
           "status": "pending",
-          "sourceCommit": null,
-          "receipt": "docs/execution/handoffs/C-04-review-round7.md"
+          "sourceCommit": "23462380b004586c1e09794c937ae396ee18b394",
+          "receipt": "docs/execution/handoffs/C-04-review-round7.md",
+          "handoff": "docs/execution/handoffs/C-04-correction-round7.md",
+          "productCommit": "23462380b004586c1e09794c937ae396ee18b394",
+          "handoffCommit": "911e67ac291f7e096eea46f9210a40232eb3fd21"
         }
       ]
     },
@@ -5874,7 +5880,7 @@
       ]
     }
   },
-  "nextAction": "C-04 correction round seven is dispatched from clean checkpoint ea4b5e24391dc1a00f443d7f93bd53003adeaafd; implementer owns R3f-d and R3g-b and reviewer round seven follows.",
+  "nextAction": "C-04 correction round seven product and handoff are recorded from clean checkpoint 720c1c10a9c7cad550e353b8798380664c10b7a7; dispatch independent review round seven.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
