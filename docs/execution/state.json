@@ -3791,7 +3791,8 @@
         "Full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed with final marker guardrail checks passed (ci).",
         "c5c1baf1b6511b28693b8e3758d6597d28bd50e1 independent C-04 correction round five review receipt; R3d/R3e and narrow R3f/R3g paths closed, R3f-a/R3f-b/R3f-c/R3g-a remain P1.",
         "Reviewer full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed; real-SQLite fresh-manager and race probes reproduced false-success recovery and missing ETag.",
-        "C-04 correction round six dispatch pinned to clean coordinator checkpoint fc2e848caf87fd370b821cbfddc863b69d611852; scope is false-success recovery fencing, ETag replay preservation, and production terminal recovery ownership."
+        "C-04 correction round six dispatch pinned to clean coordinator checkpoint fc2e848caf87fd370b821cbfddc863b69d611852; scope is false-success recovery fencing, ETag replay preservation, and production terminal recovery ownership.",
+        "C-04 correction round six product base corrected to exact clean dispatch checkpoint ecea16b62844083d06c7a491d7ccbfad12dcd89f; no product files changed."
       ],
       "review": {
         "status": "changes_requested",
@@ -3852,8 +3853,8 @@
         "correctionStatus": "in_progress",
         "correctionRound": 5,
         "correctionOwner": "/root/x05_implementer",
-        "correctionBaseSha": "fc2e848caf87fd370b821cbfddc863b69d611852",
-        "correctionDispatchCheckpoint": "fc2e848caf87fd370b821cbfddc863b69d611852",
+        "correctionBaseSha": "ecea16b62844083d06c7a491d7ccbfad12dcd89f",
+        "correctionDispatchCheckpoint": "ecea16b62844083d06c7a491d7ccbfad12dcd89f",
         "correctionReviewPath": "docs/execution/handoffs/C-04-review-round6.md",
         "correctionHandoffPath": "docs/execution/handoffs/C-04-correction-round5.md",
         "correctionReviewer": "/root/x05_reviewer",
@@ -5860,7 +5861,7 @@
       ]
     }
   },
-  "nextAction": "C-04 correction round six is dispatched from clean checkpoint fc2e848caf87fd370b821cbfddc863b69d611852; implementer owns the four round-five P1 corrections and reviewer round six follows.",
+  "nextAction": "C-04 correction round six is dispatched from clean checkpoint ecea16b62844083d06c7a491d7ccbfad12dcd89f; implementer owns the four round-five P1 corrections and reviewer round six follows.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
