@@ -17,6 +17,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"sync"
 	"syscall"
 	"time"
 
@@ -49,6 +50,50 @@ var (
 // key is private to this package so an arbitrary caller cannot smuggle a
 // transaction into configuration operations.
 type sqliteTransactionKey struct{}
+
+// runtimeConfigurationOwner keeps the credential manager and the
+// configuration manager that owns it together. Reload swaps both as one
+// ownership unit; closing a replaced configuration therefore zeroes only its
+// own credential cache and cannot close the crypt manager used by its
+// replacement. Shutdown detaches the current pair before closing it, making
+// repeated shutdown paths harmless and ensuring the active manager closes
+// exactly once.
+type runtimeConfigurationOwner struct {
+	mu      sync.Mutex
+	manager *configuration.Manager
+	crypt   *credentials.Manager
+}
+
+func (owner *runtimeConfigurationOwner) swap(manager *configuration.Manager, crypt *credentials.Manager) *configuration.Manager {
+	if owner == nil {
+		return nil
+	}
+	owner.mu.Lock()
+	old := owner.manager
+	owner.manager = manager
+	owner.crypt = crypt
+	owner.mu.Unlock()
+	return old
+}
+
+func (owner *runtimeConfigurationOwner) close() {
+	if owner == nil {
+		return
+	}
+	owner.mu.Lock()
+	manager := owner.manager
+	crypt := owner.crypt
+	owner.manager = nil
+	owner.crypt = nil
+	owner.mu.Unlock()
+	if manager != nil {
+		_ = manager.Close()
+		return
+	}
+	if crypt != nil {
+		crypt.Close()
+	}
+}
 
 func withSQLiteTx(ctx context.Context, tx *sql.Tx) context.Context {
 	if tx == nil {
@@ -156,13 +201,7 @@ func Run(ctx context.Context, environment bootstrap.Environment) error {
 		_ = stopHTTP(httpServer)
 		return failStartup("storage", err)
 	}
-	var manager *configuration.Manager
-	defer func() {
-		if manager != nil {
-			_ = manager.Close()
-		}
-		_ = store.Close()
-	}()
+	defer func() { _ = store.Close() }()
 
 	existingCredentials, err := encryptedCredentialData(ctx, store.DB())
 	if err != nil {
@@ -196,7 +235,7 @@ func Run(ctx context.Context, environment bootstrap.Environment) error {
 		_ = stopHTTP(httpServer)
 		return failStartup("credential readiness", err)
 	}
-	manager, err = configuration.New(configuration.Options{
+	manager, err := configuration.New(configuration.Options{
 		Now:               time.Now,
 		YAMLPath:          environment.ConfigFile,
 		APIState:          apiState,
@@ -210,30 +249,43 @@ func Run(ctx context.Context, environment bootstrap.Environment) error {
 		_ = stopHTTP(httpServer)
 		return failStartup("configuration", err)
 	}
+	owner := &runtimeConfigurationOwner{manager: manager, crypt: crypt}
+	defer owner.close()
 	httpHandler.SetConfigurationPersistence(newSQLiteConfigurationPersistence(store.DB(), time.Now))
 	httpHandler.SetIdempotencyPersistence(newSQLiteIdempotencyPersistence(store.DB(), time.Now))
 	httpHandler.SetConfigurationReload(func(reloadCtx context.Context) (*configuration.Manager, []domain.ConfigID, error) {
-		// Rebuild from the committed SQLite rows while the transport write
-		// gate is held. The same YAML/key/credential services are reused; no
-		// request can observe the failed in-memory candidate.
+		// Rebuild from committed SQLite rows while the transport write gate is
+		// held. Open a new crypt manager for every generation; sharing the old
+		// manager would make Manager.Close on replacement invalidate active
+		// credential operations.
+		reloadedCrypt, reloadedKeySource, reloadedKeyPath, openErr := openRuntimeCredentials(reloadCtx, environment, store.DB())
+		if openErr != nil {
+			return nil, nil, openErr
+		}
 		reloadedState, reloadErr := loadAPIState(reloadCtx, store, time.Now().UTC())
 		if reloadErr != nil {
+			reloadedCrypt.Close()
 			return nil, nil, reloadErr
 		}
-		if reloadErr := verifyManagedCredentials(reloadCtx, crypt, credentialStore, reloadedState); reloadErr != nil {
+		if reloadErr := verifyManagedCredentials(reloadCtx, reloadedCrypt, credentialStore, reloadedState); reloadErr != nil {
+			reloadedCrypt.Close()
 			return nil, nil, reloadErr
 		}
 		reloadedManager, reloadErr := configuration.New(configuration.Options{
 			Now:               time.Now,
 			YAMLPath:          environment.ConfigFile,
 			APIState:          reloadedState,
-			CredentialManager: crypt,
+			CredentialManager: reloadedCrypt,
 			CredentialStore:   credentialStore,
-			KeySource:         keySource,
-			KeyPath:           keyPath,
+			KeySource:         reloadedKeySource,
+			KeyPath:           reloadedKeyPath,
 		})
 		if reloadErr != nil {
+			reloadedCrypt.Close()
 			return nil, nil, reloadErr
+		}
+		if previous := owner.swap(reloadedManager, reloadedCrypt); previous != nil {
+			_ = previous.Close()
 		}
 		managedIDs := make([]domain.ConfigID, 0, len(reloadedState.ManagedCredentialFields))
 		for id := range reloadedState.ManagedCredentialFields {
@@ -298,6 +350,27 @@ func encryptedCredentialData(ctx context.Context, db *sql.DB) (bool, error) {
 		return false, errors.New("encrypted credential inventory failed")
 	}
 	return present, nil
+}
+
+func openRuntimeCredentials(ctx context.Context, environment bootstrap.Environment, db *sql.DB) (*credentials.Manager, string, string, error) {
+	existing, err := encryptedCredentialData(ctx, db)
+	if err != nil {
+		return nil, "", "", err
+	}
+	crypt, key, err := credentials.Open(credentials.KeyOptions{
+		DataDir:                environment.DataDir,
+		EnvironmentValue:       environment.CredentialKey,
+		EnvironmentProvided:    environment.CredentialKey != "",
+		KeyFile:                environment.CredentialKeyFile,
+		KeyFileProvided:        environment.CredentialKeyFile != "",
+		ExistingCredentialData: existing,
+	})
+	if err != nil {
+		return nil, "", "", err
+	}
+	keySource, keyPath := string(key.Source()), key.Path()
+	key.Close()
+	return crypt, keySource, keyPath, nil
 }
 
 // loadAPIState translates durable SQL rows into configuration's domain state.

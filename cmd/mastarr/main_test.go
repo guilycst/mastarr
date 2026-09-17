@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/guilycst/mastarr/internal/bootstrap"
+	"github.com/guilycst/mastarr/internal/configuration"
+	"github.com/guilycst/mastarr/internal/credentials"
 	"github.com/guilycst/mastarr/internal/storage"
 	"github.com/guilycst/mastarr/internal/transport"
 )
@@ -340,5 +342,101 @@ func TestSQLiteIdempotencyReservationAndCompletionSurviveRestart(t *testing.T) {
 	}
 	if !bytes.Equal(reloaded.Body, completed.Body) || reloaded.Status != http.StatusCreated || reloaded.Digest != digest {
 		t.Fatalf("completed response after restart = %#v; want status/body/digest preserved", reloaded)
+	}
+}
+
+func TestSQLiteIdempotencyReleaseAllowsExactRetryAndPreservesConflict(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), databaseName)
+	store, err := storage.Open(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := func() time.Time { return time.Date(2026, 9, 17, 10, 0, 0, 0, time.UTC) }
+	persistence := newSQLiteIdempotencyPersistence(store.DB(), now)
+	reservation := transport.IdempotencyRecord{
+		Scope:        "POST /api/v1/connections",
+		Key:          "release-and-retry",
+		Digest:       strings.Repeat("cd", 32),
+		Status:       http.StatusProcessing,
+		ResourceKind: "idempotency_reservation",
+		ResourceID:   "http-release-and-retry",
+		CreatedAt:    now().Format(time.RFC3339Nano),
+		State:        transport.IdempotencyStateReserved,
+		AttemptID:    "attempt-one",
+	}
+	if acquired, err := persistence.Reserve(context.Background(), reservation); err != nil || !acquired {
+		t.Fatalf("initial reserve = %t, %v", acquired, err)
+	}
+	if err := persistence.Release(context.Background(), reservation); err != nil {
+		t.Fatal(err)
+	}
+	if released, found, err := persistence.Load(context.Background(), reservation.Scope, reservation.Key); err != nil || found || released.State != transport.IdempotencyStateReleased {
+		t.Fatalf("released load = %#v, found=%t, err=%v; want no active reservation", released, found, err)
+	}
+	retry := reservation
+	retry.AttemptID = "attempt-two"
+	if acquired, err := persistence.Reserve(context.Background(), retry); err != nil || !acquired {
+		t.Fatalf("retry reserve = %t, %v", acquired, err)
+	}
+	completed := retry
+	completed.State = transport.IdempotencyStateCompleted
+	completed.Status = http.StatusCreated
+	completed.ResourceKind = "connection"
+	completed.ResourceID = "release-and-retry"
+	completed.Replayable = true
+	completed.Body = []byte(`{"id":"release-and-retry"}`)
+	if err := persistence.Complete(context.Background(), completed); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, found, err := persistence.Load(context.Background(), reservation.Scope, reservation.Key)
+	if err != nil || !found || reloaded.State != transport.IdempotencyStateCompleted || !reloaded.Replayable {
+		t.Fatalf("reloaded completion = %#v, found=%t, err=%v", reloaded, found, err)
+	}
+	conflict := retry
+	conflict.Digest = strings.Repeat("ef", 32)
+	if acquired, err := persistence.Reserve(context.Background(), conflict); !errors.Is(err, transport.ErrIdempotencyConflict) || acquired {
+		t.Fatalf("changed digest reserve = %t, %v; want conflict", acquired, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRuntimeConfigurationOwnerSwapsAndClosesCredentialManagers(t *testing.T) {
+	firstCrypt, err := credentials.NewManager(bytes.Repeat([]byte{0x11}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := configuration.New(configuration.Options{CredentialManager: firstCrypt})
+	if err != nil {
+		firstCrypt.Close()
+		t.Fatal(err)
+	}
+	secondCrypt, err := credentials.NewManager(bytes.Repeat([]byte{0x22}, 32))
+	if err != nil {
+		_ = first.Close()
+		t.Fatal(err)
+	}
+	second, err := configuration.New(configuration.Options{CredentialManager: secondCrypt})
+	if err != nil {
+		_ = first.Close()
+		secondCrypt.Close()
+		t.Fatal(err)
+	}
+	owner := &runtimeConfigurationOwner{manager: first, crypt: firstCrypt}
+	replaced := owner.swap(second, secondCrypt)
+	if replaced != first {
+		t.Fatalf("replaced manager = %p, want first manager %p", replaced, first)
+	}
+	if err := replaced.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := secondCrypt.Seal("synthetic-connection", "token", []byte("synthetic-secret")); err != nil {
+		t.Fatalf("replacement credential manager was closed by old manager: %v", err)
+	}
+	owner.close()
+	owner.close()
+	if _, err := secondCrypt.Seal("synthetic-connection", "token", []byte("synthetic-secret")); !errors.Is(err, credentials.ErrInvalidKey) {
+		t.Fatalf("active credential manager after shutdown = %v, want invalid key", err)
 	}
 }

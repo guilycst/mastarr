@@ -40,6 +40,26 @@ type ConfigurationPersistence struct {
 // not contain credential material.
 type ConfigurationReload func(context.Context) (*configuration.Manager, []domain.ConfigID, error)
 
+// IdempotencyRecoveryRequest is the bounded in-memory input to a production
+// recovery owner. Body is request data already validated by the HTTP policy;
+// it must never be persisted or logged. Record is the durable pending attempt
+// that must be reconciled before a terminal completion is written.
+type IdempotencyRecoveryRequest struct {
+	Scope   string
+	Key     string
+	Digest  string
+	Method  string
+	Path    string
+	IfMatch string
+	Body    []byte
+	Record  IdempotencyRecord
+}
+
+// IdempotencyRecovery reconciles a pending post-dispatch attempt using
+// read-only observations. It returns a terminal response only when the
+// handler effect is proven; false leaves the durable attempt pending.
+type IdempotencyRecovery func(context.Context, IdempotencyRecoveryRequest) (IdempotencyRecord, bool, error)
+
 func cloneConfigurationPersistence(value *ConfigurationPersistence) *ConfigurationPersistence {
 	if value == nil {
 		return nil
@@ -72,11 +92,18 @@ type IdempotencyRecord struct {
 	// Pending reports a reservation or non-replayable completion. It is derived
 	// by the persistence implementation and is never trusted as an HTTP body.
 	Pending bool
+	// AttemptID binds reservation, release and completion events to one
+	// dispatch owner. It is opaque and contains no request or secret data.
+	AttemptID string
 }
 
 const (
 	// IdempotencyStateReserved is durable before a handler is dispatched.
 	IdempotencyStateReserved = "reserved"
+	// IdempotencyStateReleased records a durable pre-dispatch/no-effect
+	// terminal transition. A later request with the same digest may reserve a
+	// new attempt; a changed digest remains a conflict.
+	IdempotencyStateReleased = "released"
 	// IdempotencyStateCompleted records the handler result in an immutable
 	// completion record. Replayable=false means the outcome remains held for
 	// reconciliation rather than authorizing a blind retry.
@@ -93,6 +120,7 @@ const (
 type IdempotencyPersistence struct {
 	Load     func(context.Context, string, string) (IdempotencyRecord, bool, error)
 	Reserve  func(context.Context, IdempotencyRecord) (bool, error)
+	Release  func(context.Context, IdempotencyRecord) error
 	Complete func(context.Context, IdempotencyRecord) error
 	Save     func(context.Context, IdempotencyRecord) error
 }

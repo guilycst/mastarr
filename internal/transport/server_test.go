@@ -372,6 +372,158 @@ func TestDurableIdempotencyReservationSurvivesLostCompletion(t *testing.T) {
 	}
 }
 
+func TestDurableIdempotencyRecoveryOwnerCompletesWithoutRedispatch(t *testing.T) {
+	store := newTestDurableIdempotency()
+	store.failCompletion.Store(true)
+	var dispatches atomic.Int32
+	var recoveryCalls atomic.Int32
+	dependency := func(context.Context, api.CreateConnectionRequestObject) (api.CreateConnectionResponseObject, error) {
+		dispatches.Add(1)
+		return syntheticConnectionResponse("recovered-after-readback"), nil
+	}
+	recovery := func(_ context.Context, request IdempotencyRecoveryRequest) (IdempotencyRecord, bool, error) {
+		recoveryCalls.Add(1)
+		if request.Method != http.MethodPost || request.Path != "/api/v1/connections" || len(request.Body) == 0 || request.Record.AttemptID == "" {
+			return IdempotencyRecord{}, false, nil
+		}
+		recovered := request.Record
+		recovered.State = IdempotencyStateCompleted
+		recovered.Status = http.StatusCreated
+		recovered.ResourceKind = "connection"
+		recovered.ResourceID = "recovered-after-readback"
+		recovered.Replayable = true
+		recovered.Body = []byte(`{"id":"recovered-after-readback"}` + "\n")
+		return recovered, true, nil
+	}
+	options := func() Options {
+		return Options{
+			Ready:                  true,
+			Dependencies:           &RouteDependencies{CreateConnection: dependency},
+			IdempotencyPersistence: store.persistence(),
+			IdempotencyRecovery:    recovery,
+		}
+	}
+	body := `{"id":"recovered-after-readback","kind":"qbittorrent","label":"recovered-after-readback","endpoint":"http://qbt.test"}`
+	firstServer, err := New(options())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := doJSON(firstServer.Handler(), http.MethodPost, "/api/v1/connections", body, map[string]string{"Idempotency-Key": "reconcile-me"})
+	if first.Code != http.StatusServiceUnavailable || !strings.Contains(first.Body.String(), "persistence_unavailable") {
+		t.Fatalf("initial lost completion response = %d: %s", first.Code, first.Body.String())
+	}
+	store.failCompletion.Store(false)
+	secondServer, err := New(options())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := doJSON(secondServer.Handler(), http.MethodPost, "/api/v1/connections", body, map[string]string{"Idempotency-Key": "reconcile-me"})
+	if second.Code != http.StatusCreated || !strings.Contains(second.Body.String(), "recovered-after-readback") {
+		t.Fatalf("reconciled response = %d: %s", second.Code, second.Body.String())
+	}
+	if got := dispatches.Load(); got != 1 {
+		t.Fatalf("reconciled dispatches = %d, want 1", got)
+	}
+	if got := recoveryCalls.Load(); got != 1 {
+		t.Fatalf("recovery calls = %d, want 1", got)
+	}
+}
+
+func TestDefaultConfigurationRecoveryOwnerReadsBackWithoutRedispatch(t *testing.T) {
+	now := time.Date(2026, 9, 17, 10, 0, 0, 0, time.UTC)
+	manager, err := configuration.New(configuration.Options{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	store := newTestDurableIdempotency()
+	store.failCompletion.Store(true)
+	options := func() Options {
+		return Options{
+			Configuration:          manager,
+			Ready:                  true,
+			Now:                    func() time.Time { return now },
+			IdempotencyPersistence: store.persistence(),
+		}
+	}
+	body := `{"id":"default-recovery","kind":"qbittorrent","label":"default-recovery","endpoint":"http://qbt.test"}`
+	firstServer, err := New(options())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := doJSON(firstServer.Handler(), http.MethodPost, "/api/v1/connections", body, map[string]string{"Idempotency-Key": "default-recovery"})
+	if first.Code != http.StatusServiceUnavailable || !strings.Contains(first.Body.String(), "persistence_unavailable") {
+		t.Fatalf("initial lost completion = %d: %s", first.Code, first.Body.String())
+	}
+	store.failCompletion.Store(false)
+	secondServer, err := New(options())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := doJSON(secondServer.Handler(), http.MethodPost, "/api/v1/connections", body, map[string]string{"Idempotency-Key": "default-recovery"})
+	if second.Code != http.StatusCreated || !strings.Contains(second.Body.String(), "default-recovery") {
+		t.Fatalf("read-back recovery = %d: %s", second.Code, second.Body.String())
+	}
+	store.mu.Lock()
+	record := cloneTestIdempotencyRecord(store.records["POST /api/v1/connections\x00default-recovery"])
+	store.mu.Unlock()
+	if record.State != IdempotencyStateCompleted || !record.Replayable || record.AttemptID == "" {
+		t.Fatalf("recovered durable record = %#v; want completed attempt", record)
+	}
+}
+
+func TestConfigurationRollbackReleasesExactDurableReservation(t *testing.T) {
+	store := newTestDurableIdempotency()
+	storeFail := atomic.Bool{}
+	storeFail.Store(true)
+	now := time.Date(2026, 9, 17, 10, 0, 0, 0, time.UTC)
+	candidate, err := configuration.New(configuration.Options{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer candidate.Close()
+	reloaded, err := configuration.New(configuration.Options{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reloaded.Close()
+	persistence := &ConfigurationPersistence{CreateConnection: func(ctx context.Context, draft domain.Connection, mutate func(context.Context) (domain.Connection, error)) (domain.Connection, error) {
+		value, mutateErr := mutate(ctx)
+		if storeFail.CompareAndSwap(true, false) {
+			return value, ErrConfigurationStore
+		}
+		return value, mutateErr
+	}}
+	server, err := New(Options{
+		Configuration:            candidate,
+		ConfigurationPersistence: persistence,
+		ConfigurationReload: func(context.Context) (*configuration.Manager, []domain.ConfigID, error) {
+			return reloaded, nil, nil
+		},
+		IdempotencyPersistence: store.persistence(),
+		Ready:                  true,
+		Now:                    func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"id":"released-on-rollback","kind":"qbittorrent","label":"released-on-rollback","endpoint":"http://qbt.test"}`
+	first := doJSON(server.Handler(), http.MethodPost, "/api/v1/connections", body, map[string]string{"Idempotency-Key": "release-me"})
+	if first.Code != http.StatusServiceUnavailable || !strings.Contains(first.Body.String(), "persistence_unavailable") {
+		t.Fatalf("rollback response = %d: %s", first.Code, first.Body.String())
+	}
+	store.mu.Lock()
+	if record := store.records["POST /api/v1/connections\x00release-me"]; record.State != IdempotencyStateReleased {
+		store.mu.Unlock()
+		t.Fatalf("durable rollback state = %#v, want released", record)
+	}
+	store.mu.Unlock()
+	second := doJSON(server.Handler(), http.MethodPost, "/api/v1/connections", body, map[string]string{"Idempotency-Key": "release-me"})
+	if second.Code != http.StatusCreated {
+		t.Fatalf("retry after rollback release = %d: %s", second.Code, second.Body.String())
+	}
+}
+
 func TestDurableReservationSerializesConcurrentServers(t *testing.T) {
 	store := newTestDurableIdempotency()
 	var dispatches atomic.Int32
@@ -443,7 +595,7 @@ func newTestDurableIdempotency() *testDurableIdempotency {
 }
 
 func (store *testDurableIdempotency) persistence() *IdempotencyPersistence {
-	return &IdempotencyPersistence{Load: store.load, Reserve: store.reserve, Complete: store.complete}
+	return &IdempotencyPersistence{Load: store.load, Reserve: store.reserve, Release: store.release, Complete: store.complete}
 }
 
 func (store *testDurableIdempotency) load(_ context.Context, scope, key string) (IdempotencyRecord, bool, error) {
@@ -452,6 +604,9 @@ func (store *testDurableIdempotency) load(_ context.Context, scope, key string) 
 	defer store.mu.Unlock()
 	record, found := store.records[scope+"\x00"+key]
 	if !found {
+		return IdempotencyRecord{}, false, nil
+	}
+	if record.State == IdempotencyStateReleased {
 		return IdempotencyRecord{}, false, nil
 	}
 	return cloneTestIdempotencyRecord(record), true, nil
@@ -466,11 +621,30 @@ func (store *testDurableIdempotency) reserve(_ context.Context, record Idempoten
 		if current.Digest != record.Digest {
 			return false, ErrIdempotencyConflict
 		}
+		if current.State == IdempotencyStateReleased {
+			record.Pending = true
+			store.records[key] = cloneTestIdempotencyRecord(record)
+			return true, nil
+		}
 		return false, nil
 	}
 	record.Pending = true
 	store.records[key] = cloneTestIdempotencyRecord(record)
 	return true, nil
+}
+
+func (store *testDurableIdempotency) release(_ context.Context, record IdempotencyRecord) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	key := record.Scope + "\x00" + record.Key
+	current, found := store.records[key]
+	if !found || current.Digest != record.Digest || current.State != IdempotencyStateReserved || current.AttemptID != record.AttemptID {
+		return ErrIdempotencyStore
+	}
+	record.State = IdempotencyStateReleased
+	record.Pending = false
+	store.records[key] = cloneTestIdempotencyRecord(record)
+	return nil
 }
 
 func (store *testDurableIdempotency) complete(_ context.Context, record IdempotencyRecord) error {
@@ -482,7 +656,7 @@ func (store *testDurableIdempotency) complete(_ context.Context, record Idempote
 	}
 	key := record.Scope + "\x00" + record.Key
 	current, found := store.records[key]
-	if !found || current.Digest != record.Digest || current.State != IdempotencyStateReserved {
+	if !found || current.Digest != record.Digest || current.State != IdempotencyStateReserved || current.AttemptID != record.AttemptID {
 		return ErrIdempotencyStore
 	}
 	store.records[key] = cloneTestIdempotencyRecord(record)

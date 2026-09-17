@@ -78,6 +78,11 @@ type Options struct {
 	// restarts. A nil value keeps the transport usable for in-memory tests while
 	// production startup supplies the durable implementation.
 	IdempotencyPersistence *IdempotencyPersistence
+	// IdempotencyRecovery is the production owner for unresolved post-dispatch
+	// attempts. It may return a terminal record only after read-only
+	// reconciliation proves the requested effect; otherwise the attempt stays
+	// pending and no blind redispatch is allowed.
+	IdempotencyRecovery IdempotencyRecovery
 	// ManagedCredentialIDs contains only stable connection IDs whose encrypted
 	// fields are owned by the API. It is metadata, never credential material.
 	ManagedCredentialIDs []domain.ConfigID
@@ -106,6 +111,8 @@ type Server struct {
 	configuration         *configuration.Manager
 	configurationReloadMu sync.RWMutex
 	configurationReload   ConfigurationReload
+	idempotencyRecoveryMu sync.RWMutex
+	idempotencyRecovery   IdempotencyRecovery
 	dependencies          *RouteDependencies
 	persistenceMu         sync.RWMutex
 	configurationStore    *ConfigurationPersistence
@@ -137,6 +144,23 @@ type idempotencyPending struct {
 	done   chan struct{}
 }
 
+type idempotencyRequestStateKey struct{}
+
+// idempotencyRequestState binds configuration transaction failure recovery to
+// the exact durable reservation owned by the current HTTP request. It is
+// deliberately request-local and carries no request body or credential data.
+type idempotencyRequestState struct {
+	scope    string
+	key      string
+	digest   string
+	attempt  string
+	method   string
+	path     string
+	ifMatch  string
+	body     []byte
+	released atomic.Bool
+}
+
 // New constructs a generated-server implementation.  It does not open a
 // database or contact an upstream; startup owns those lifecycle decisions.
 func New(options Options) (*Server, error) {
@@ -160,7 +184,7 @@ func New(options Options) (*Server, error) {
 		// A configured durable repository must expose the complete reservation
 		// protocol. Falling back to a completed-only Save would permit a crash
 		// between dispatch and completion to be replayed blindly.
-		if persistence.Load == nil || persistence.Reserve == nil || persistence.Complete == nil {
+		if persistence.Load == nil || persistence.Reserve == nil || persistence.Release == nil || persistence.Complete == nil {
 			return nil, errors.New("transport idempotency persistence lacks reservation protocol")
 		}
 	}
@@ -179,6 +203,7 @@ func New(options Options) (*Server, error) {
 	server := &Server{
 		configuration:        options.Configuration,
 		configurationReload:  options.ConfigurationReload,
+		idempotencyRecovery:  options.IdempotencyRecovery,
 		dependencies:         dependencies,
 		configurationStore:   cloneConfigurationPersistence(options.ConfigurationPersistence),
 		idempotencyStore:     cloneIdempotencyPersistence(options.IdempotencyPersistence),
@@ -195,6 +220,9 @@ func New(options Options) (*Server, error) {
 		if id.Valid() {
 			server.managedCredentialIDs[id] = struct{}{}
 		}
+	}
+	if server.idempotencyRecovery == nil {
+		server.idempotencyRecovery = server.recoverConfigurationIdempotency
 	}
 	server.ready.Store(options.Ready)
 	return server, nil
@@ -236,6 +264,27 @@ func (server *Server) configurationReloadCallback() ConfigurationReload {
 	server.configurationReloadMu.RLock()
 	defer server.configurationReloadMu.RUnlock()
 	return server.configurationReload
+}
+
+// SetIdempotencyRecovery publishes the durable recovery owner used for
+// pending post-dispatch attempts. The callback is copied so the caller may
+// discard its assembly value after startup.
+func (server *Server) SetIdempotencyRecovery(recovery IdempotencyRecovery) {
+	if server == nil {
+		return
+	}
+	server.idempotencyRecoveryMu.Lock()
+	server.idempotencyRecovery = recovery
+	server.idempotencyRecoveryMu.Unlock()
+}
+
+func (server *Server) idempotencyRecoveryCallback() IdempotencyRecovery {
+	if server == nil {
+		return nil
+	}
+	server.idempotencyRecoveryMu.RLock()
+	defer server.idempotencyRecoveryMu.RUnlock()
+	return server.idempotencyRecovery
 }
 
 // recoverConfiguration restores the manager from its durable source while
@@ -281,7 +330,14 @@ func (server *Server) finishConfigurationMutation(ctx context.Context, err error
 	// The original persistence error remains the public result. Recovery is a
 	// safety action performed before releasing the write gate; a failed reload
 	// has already made the manager unavailable.
-	_ = server.recoverConfiguration(ctx)
+	if server.recoverConfiguration(ctx) == nil {
+		// A failed transaction has no committed effect. Release the exact
+		// durable reservation before the configuration gate is handed back so
+		// the same request key can retry after the source of the failure heals.
+		if known, materialized := server.configurationEffectMaterialized(ctx); known && !materialized {
+			_ = server.releaseCurrentIdempotency(ctx)
+		}
+	}
 }
 
 func (server *Server) configurationManager() *configuration.Manager {
@@ -1404,9 +1460,20 @@ func (server *Server) policy(next http.Handler) http.Handler {
 		idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 		key := scope + "\x00" + idempotencyKey
 		digest := requestDigest(r)
+		body := requestBody(r)
 		for {
 			entry, found, err := server.lookupDurableIdempotency(r.Context(), scope, idempotencyKey, digest)
 			if err != nil {
+				if errors.Is(err, ErrIdempotencyPending) {
+					if recovered, ok, recoveryErr := server.recoverPendingIdempotency(r.Context(), scope, idempotencyKey, digest, r.Method, r.URL.Path, r.Header.Get("If-Match"), body); recoveryErr != nil {
+						writeProblem(w, r, recoveryErr)
+						return
+					} else if ok {
+						server.rememberIdempotency(key, digest, *recovered)
+						replay(w, recovered)
+						return
+					}
+				}
 				writeProblem(w, r, err)
 				return
 			}
@@ -1435,13 +1502,15 @@ func (server *Server) policy(next http.Handler) http.Handler {
 				return
 			}
 		}
+		attemptState := &idempotencyRequestState{scope: scope, key: idempotencyKey, digest: hex.EncodeToString(digest), method: r.Method, path: r.URL.Path, ifMatch: r.Header.Get("If-Match"), body: append([]byte(nil), body...)}
+		r = r.WithContext(context.WithValue(r.Context(), idempotencyRequestStateKey{}, attemptState))
 		capture := newCapture()
 		// Always release the process-local reservation, including a panic in the
 		// generated handler. A stuck reservation would make later requests wait
 		// forever and would turn a recoverable transport failure into a denial.
 		defer server.finishIdempotency(key)
 		if persistence := server.idempotencyPersistence(); persistence != nil && persistence.Reserve != nil {
-			acquired, err := server.reserveIdempotency(r.Context(), scope, idempotencyKey, digest)
+			acquired, err := server.reserveIdempotency(r.Context(), scope, idempotencyKey, digest, attemptState)
 			if err != nil {
 				writeProblem(w, r, err)
 				return
@@ -1452,6 +1521,16 @@ func (server *Server) policy(next http.Handler) http.Handler {
 				// or expose the pending/uncertain state; never dispatch twice.
 				entry, found, err := server.lookupDurableIdempotency(r.Context(), scope, idempotencyKey, digest)
 				if err != nil {
+					if errors.Is(err, ErrIdempotencyPending) {
+						if recovered, ok, recoveryErr := server.recoverPendingIdempotency(r.Context(), scope, idempotencyKey, digest, r.Method, r.URL.Path, r.Header.Get("If-Match"), body); recoveryErr != nil {
+							writeProblem(w, r, recoveryErr)
+							return
+						} else if ok {
+							server.rememberIdempotency(key, digest, *recovered)
+							replay(w, recovered)
+							return
+						}
+					}
 					writeProblem(w, r, err)
 					return
 				}
@@ -1466,6 +1545,14 @@ func (server *Server) policy(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(capture, r)
 		entry := capture.entry()
+		if attemptState.released.Load() {
+			// The configuration transaction was rolled back and the exact
+			// reservation was durably released. Return the observed failure
+			// without recording it as an uncertain completion; a later request
+			// with this digest may acquire a fresh attempt.
+			replay(w, &entry)
+			return
+		}
 		if persistence := server.idempotencyPersistence(); persistence != nil && persistence.Complete != nil {
 			if err := server.persistIdempotency(r.Context(), scope, idempotencyKey, digest, entry); err != nil {
 				writeProblem(w, r, err)
@@ -1890,6 +1977,18 @@ func requestDigest(r *http.Request) []byte {
 	return digest[:]
 }
 
+func requestBody(r *http.Request) []byte {
+	if r == nil || r.Body == nil {
+		return nil
+	}
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil
+	}
+	r.Body = io.NopCloser(bytes.NewReader(data))
+	return append([]byte(nil), data...)
+}
+
 // canonicalJSON normalizes object key order through encoding/json while
 // preserving JSON number text exactly. Decoding into interface{} without
 // UseNumber turns values around the 2^53 boundary into float64 and can make
@@ -2024,7 +2123,118 @@ func (server *Server) lookupDurableIdempotency(ctx context.Context, scope, key s
 	return entry, true, nil
 }
 
-func (server *Server) reserveIdempotency(ctx context.Context, scope, key string, digest []byte) (bool, error) {
+// recoverPendingIdempotency gives the configured production owner one
+// read-only chance to reconcile a durable reservation or uncertain outcome.
+// It is intentionally separate from lookup: a pending state is never treated
+// as a successful response and never authorizes a second dispatch.
+func (server *Server) recoverPendingIdempotency(ctx context.Context, scope, key string, digest []byte, method, path, ifMatch string, body []byte) (*idempotencyEntry, bool, error) {
+	persistence := server.idempotencyPersistence()
+	if persistence == nil || persistence.Load == nil || persistence.Complete == nil {
+		return nil, false, nil
+	}
+	record, found, err := persistence.Load(ctx, scope, key)
+	if err != nil {
+		return nil, false, ErrIdempotencyStore
+	}
+	if !found {
+		return nil, false, nil
+	}
+	storedDigest, err := hex.DecodeString(record.Digest)
+	if err != nil || len(storedDigest) == 0 {
+		return nil, false, ErrIdempotencyStore
+	}
+	if !bytes.Equal(storedDigest, digest) {
+		return nil, false, ErrIdempotencyConflict
+	}
+	if !record.Pending && record.State != IdempotencyStateReserved && !(record.State == IdempotencyStateCompleted && !record.Replayable) {
+		return nil, false, nil
+	}
+	recovery := server.idempotencyRecoveryCallback()
+	if recovery == nil {
+		return nil, false, nil
+	}
+	request := IdempotencyRecoveryRequest{
+		Scope:   scope,
+		Key:     key,
+		Digest:  hex.EncodeToString(digest),
+		Method:  method,
+		Path:    path,
+		IfMatch: ifMatch,
+		Body:    append([]byte(nil), body...),
+		Record:  record,
+	}
+	terminal, ok, err := recovery(ctx, request)
+	if err != nil {
+		return nil, false, ErrIdempotencyStore
+	}
+	if !ok {
+		return nil, false, nil
+	}
+	if terminal.Scope != scope || terminal.Key != key || terminal.Digest != request.Digest || terminal.State != IdempotencyStateCompleted {
+		return nil, false, ErrIdempotencyStore
+	}
+	if terminal.AttemptID == "" {
+		terminal.AttemptID = record.AttemptID
+	}
+	if terminal.AttemptID == "" || record.AttemptID != "" && terminal.AttemptID != record.AttemptID {
+		return nil, false, ErrIdempotencyStore
+	}
+	entry := idempotencyEntry{status: terminal.Status, header: sanitizeReplayHeaders(terminal.Headers), body: append([]byte(nil), terminal.Body...)}
+	if entry.status < 100 || entry.status > 599 || !shouldRememberIdempotency(entry) {
+		// A non-replayable observation remains held. The owner may return it
+		// as evidence through its own reconciliation surface, but it cannot
+		// turn an uncertain reservation into a retryable HTTP cache entry.
+		return nil, false, nil
+	}
+	terminal.Pending = false
+	terminal.Replayable = true
+	if err := persistence.Complete(ctx, terminal); err != nil {
+		return nil, false, ErrIdempotencyStore
+	}
+	return &entry, true, nil
+}
+
+func (server *Server) releaseCurrentIdempotency(ctx context.Context) error {
+	if server == nil {
+		return nil
+	}
+	state, ok := ctx.Value(idempotencyRequestStateKey{}).(*idempotencyRequestState)
+	if !ok || state == nil || state.released.Load() || state.attempt == "" {
+		return nil
+	}
+	persistence := server.idempotencyPersistence()
+	if persistence == nil || persistence.Release == nil {
+		return ErrIdempotencyStore
+	}
+	err := persistence.Release(ctx, IdempotencyRecord{
+		Scope:        state.scope,
+		Key:          state.key,
+		Digest:       state.digest,
+		Status:       http.StatusProcessing,
+		ResourceKind: "idempotency_reservation",
+		ResourceID:   stableIdempotencyResourceID(state.scope, state.key),
+		State:        IdempotencyStateReserved,
+		AttemptID:    state.attempt,
+	})
+	if err == nil {
+		state.released.Store(true)
+	}
+	return err
+}
+
+func (server *Server) idempotencyAttemptID(ctx context.Context) string {
+	if ctx != nil {
+		if state, ok := ctx.Value(idempotencyRequestStateKey{}).(*idempotencyRequestState); ok && state != nil && strings.TrimSpace(state.attempt) != "" {
+			return state.attempt
+		}
+		if id, ok := ctx.Value(requestIDKey{}).(string); ok && strings.TrimSpace(id) != "" {
+			return id
+		}
+	}
+	return requestID()
+}
+
+func (server *Server) reserveIdempotency(ctx context.Context, scope, key string, digest []byte, state *idempotencyRequestState) (bool, error) {
 	persistence := server.idempotencyPersistence()
 	if persistence == nil || persistence.Reserve == nil {
 		return true, nil
@@ -2032,6 +2242,7 @@ func (server *Server) reserveIdempotency(ctx context.Context, scope, key string,
 	if len(digest) == 0 {
 		return false, ErrIdempotencyStore
 	}
+	attempt := requestID()
 	acquired, err := persistence.Reserve(ctx, IdempotencyRecord{
 		Scope:        scope,
 		Key:          key,
@@ -2041,12 +2252,16 @@ func (server *Server) reserveIdempotency(ctx context.Context, scope, key string,
 		ResourceID:   stableIdempotencyResourceID(scope, key),
 		CreatedAt:    server.now().UTC().Format(time.RFC3339Nano),
 		State:        IdempotencyStateReserved,
+		AttemptID:    attempt,
 	})
 	if err != nil {
 		if errors.Is(err, ErrIdempotencyConflict) {
 			return false, ErrIdempotencyConflict
 		}
 		return false, ErrIdempotencyStore
+	}
+	if acquired && state != nil {
+		state.attempt = attempt
 	}
 	return acquired, nil
 }
@@ -2059,7 +2274,7 @@ func (server *Server) persistIdempotency(ctx context.Context, scope, key string,
 	if len(digest) == 0 {
 		return ErrIdempotencyStore
 	}
-	record := IdempotencyRecord{Scope: scope, Key: key, Digest: hex.EncodeToString(digest), Status: entry.status, Headers: sanitizeReplayHeaders(entry.header), Body: append([]byte(nil), entry.body...), ResourceKind: "http_response", ResourceID: stableIdempotencyResourceID(scope, key), CreatedAt: server.now().UTC().Format(time.RFC3339Nano), State: IdempotencyStateCompleted, Replayable: shouldRememberIdempotency(entry)}
+	record := IdempotencyRecord{Scope: scope, Key: key, Digest: hex.EncodeToString(digest), Status: entry.status, Headers: sanitizeReplayHeaders(entry.header), Body: append([]byte(nil), entry.body...), ResourceKind: "http_response", ResourceID: stableIdempotencyResourceID(scope, key), CreatedAt: server.now().UTC().Format(time.RFC3339Nano), State: IdempotencyStateCompleted, Replayable: shouldRememberIdempotency(entry), AttemptID: server.idempotencyAttemptID(ctx)}
 	if persistence.Complete != nil {
 		if err := persistence.Complete(ctx, record); err != nil {
 			return ErrIdempotencyStore

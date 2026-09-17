@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/guilycst/mastarr/internal/domain"
 	"github.com/guilycst/mastarr/internal/transport"
@@ -432,13 +433,14 @@ type sqliteIdempotencyPersistence struct {
 
 func newSQLiteIdempotencyPersistence(db *sql.DB, now func() time.Time) *transport.IdempotencyPersistence {
 	persistence := &sqliteIdempotencyPersistence{db: db, now: now}
-	return &transport.IdempotencyPersistence{Load: persistence.load, Reserve: persistence.reserve, Complete: persistence.complete, Save: persistence.save}
+	return &transport.IdempotencyPersistence{Load: persistence.load, Reserve: persistence.reserve, Release: persistence.release, Complete: persistence.complete, Save: persistence.save}
 }
 
 type sqliteIdempotencyResponse struct {
 	State      string              `json:"state,omitempty"`
 	Replayable bool                `json:"replayable,omitempty"`
 	Digest     string              `json:"digest,omitempty"`
+	AttemptID  string              `json:"attemptId,omitempty"`
 	Status     int                 `json:"status"`
 	Headers    map[string][]string `json:"headers,omitempty"`
 	Body       []byte              `json:"body,omitempty"`
@@ -450,39 +452,44 @@ func (persistence *sqliteIdempotencyPersistence) load(ctx context.Context, scope
 	if persistence == nil || persistence.db == nil || strings.TrimSpace(scope) == "" || strings.TrimSpace(key) == "" {
 		return transport.IdempotencyRecord{}, false, errConfigurationPersistence
 	}
-	record, response, found, err := persistence.loadRaw(ctx, scope, key)
+	record, response, found, err := persistence.loadLatest(ctx, scope, key)
 	if err != nil || !found {
 		return record, found, err
 	}
-	if response.State != transport.IdempotencyStateReserved {
-		return record, true, nil
-	}
-	// Reservation rows are immutable. The completion companion is written
-	// only after the handler outcome is durably known, so a missing companion
-	// remains a pending reconciliation state after restart.
-	completed, _, completeFound, err := persistence.loadRaw(ctx, idempotencyCompletionScope(scope), key)
-	if err != nil {
-		return transport.IdempotencyRecord{}, false, err
-	}
-	if !completeFound {
+	record.Scope = scope
+	record.Key = key
+	switch response.State {
+	case transport.IdempotencyStateReleased:
+		// Released is an append-only terminal event for a pre-effect/no-effect
+		// attempt. It makes the reservation available for the same digest to
+		// acquire a fresh attempt while Reserve still checks the original
+		// digest before allowing that transition.
+		return record, false, nil
+	case transport.IdempotencyStateReserved:
 		record.Pending = true
 		record.State = transport.IdempotencyStateReserved
 		return record, true, nil
-	}
-	if completed.Digest != record.Digest || completed.State != transport.IdempotencyStateCompleted {
+	case transport.IdempotencyStateCompleted, "":
+		record.Pending = !record.Replayable
+		return record, true, nil
+	default:
 		return transport.IdempotencyRecord{}, false, errConfigurationPersistence
 	}
-	completed.Scope = scope
-	completed.Key = key
-	completed.Pending = !completed.Replayable
-	return completed, true, nil
 }
 
 func (persistence *sqliteIdempotencyPersistence) loadRaw(ctx context.Context, scope, key string) (transport.IdempotencyRecord, sqliteIdempotencyResponse, bool, error) {
+	return loadSQLiteIdempotencyRow(ctx, persistence.db, scope, key)
+}
+
+type sqliteIdempotencyQuerier interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func loadSQLiteIdempotencyRow(ctx context.Context, queryer sqliteIdempotencyQuerier, scope, key string) (transport.IdempotencyRecord, sqliteIdempotencyResponse, bool, error) {
 	var record transport.IdempotencyRecord
 	var responseJSON string
 	var expires sql.NullString
-	err := persistence.db.QueryRowContext(ctx, `SELECT scope, idempotency_key, request_digest, status_code, resource_kind, resource_id, response_json, created_at, expires_at FROM idempotency_records WHERE scope = ? AND idempotency_key = ?`, scope, key).Scan(&record.Scope, &record.Key, &record.Digest, &record.Status, &record.ResourceKind, &record.ResourceID, &responseJSON, &record.CreatedAt, &expires)
+	err := queryer.QueryRowContext(ctx, `SELECT scope, idempotency_key, request_digest, status_code, resource_kind, resource_id, response_json, created_at, expires_at FROM idempotency_records WHERE scope = ? AND idempotency_key = ?`, scope, key).Scan(&record.Scope, &record.Key, &record.Digest, &record.Status, &record.ResourceKind, &record.ResourceID, &responseJSON, &record.CreatedAt, &expires)
 	if errors.Is(err, sql.ErrNoRows) {
 		return transport.IdempotencyRecord{}, sqliteIdempotencyResponse{}, false, nil
 	}
@@ -492,7 +499,47 @@ func (persistence *sqliteIdempotencyPersistence) loadRaw(ctx context.Context, sc
 	if expires.Valid {
 		record.ExpiresAt = expires.String
 	}
-	if record.Scope != scope || record.Key != key || strings.TrimSpace(record.Digest) == "" || record.Status < 100 || record.Status > 599 || strings.TrimSpace(record.ResourceKind) == "" || strings.TrimSpace(record.ResourceID) == "" || len(responseJSON) > maxPersistedIdempotencyBody*2 {
+	if record.Scope != scope || record.Key != key {
+		return transport.IdempotencyRecord{}, sqliteIdempotencyResponse{}, false, errConfigurationPersistence
+	}
+	return loadSQLiteIdempotencyRowFromValues(ctx, record, responseJSON)
+}
+
+func (persistence *sqliteIdempotencyPersistence) loadLatest(ctx context.Context, scope, key string) (transport.IdempotencyRecord, sqliteIdempotencyResponse, bool, error) {
+	if persistence == nil || persistence.db == nil {
+		return transport.IdempotencyRecord{}, sqliteIdempotencyResponse{}, false, errConfigurationPersistence
+	}
+	return loadSQLiteIdempotencyLatest(ctx, persistence.db, scope, key)
+}
+
+func loadSQLiteIdempotencyLatest(ctx context.Context, queryer sqliteIdempotencyQuerier, scope, key string) (transport.IdempotencyRecord, sqliteIdempotencyResponse, bool, error) {
+	eventPrefix := idempotencyEventPrefix(scope)
+	return loadSQLiteIdempotencyRowWithQuery(ctx, queryer, `SELECT scope, idempotency_key, request_digest, status_code, resource_kind, resource_id, response_json, created_at, expires_at FROM idempotency_records WHERE idempotency_key = ? AND (scope = ? OR scope = ? OR instr(scope, ?) = 1) ORDER BY rowid DESC LIMIT 1`, key, scope, idempotencyCompletionScope(scope), eventPrefix)
+}
+
+func loadSQLiteIdempotencyRowWithQuery(ctx context.Context, queryer sqliteIdempotencyQuerier, query string, args ...any) (transport.IdempotencyRecord, sqliteIdempotencyResponse, bool, error) {
+	var record transport.IdempotencyRecord
+	var responseJSON string
+	var expires sql.NullString
+	err := queryer.QueryRowContext(ctx, query, args...).Scan(&record.Scope, &record.Key, &record.Digest, &record.Status, &record.ResourceKind, &record.ResourceID, &responseJSON, &record.CreatedAt, &expires)
+	if errors.Is(err, sql.ErrNoRows) {
+		return transport.IdempotencyRecord{}, sqliteIdempotencyResponse{}, false, nil
+	}
+	if err != nil {
+		return transport.IdempotencyRecord{}, sqliteIdempotencyResponse{}, false, errConfigurationPersistence
+	}
+	if expires.Valid {
+		record.ExpiresAt = expires.String
+	}
+	if strings.TrimSpace(responseJSON) == "" {
+		return transport.IdempotencyRecord{}, sqliteIdempotencyResponse{}, false, errConfigurationPersistence
+	}
+	// Reuse the strict row decoder after selecting the exact immutable row.
+	return loadSQLiteIdempotencyRowFromValues(ctx, record, responseJSON)
+}
+
+func loadSQLiteIdempotencyRowFromValues(_ context.Context, record transport.IdempotencyRecord, responseJSON string) (transport.IdempotencyRecord, sqliteIdempotencyResponse, bool, error) {
+	if strings.TrimSpace(record.Scope) == "" || strings.TrimSpace(record.Key) == "" || strings.TrimSpace(record.Digest) == "" || record.Status < 100 || record.Status > 599 || strings.TrimSpace(record.ResourceKind) == "" || strings.TrimSpace(record.ResourceID) == "" || len(responseJSON) > maxPersistedIdempotencyBody*2 {
 		return transport.IdempotencyRecord{}, sqliteIdempotencyResponse{}, false, errConfigurationPersistence
 	}
 	if _, err := hex.DecodeString(record.Digest); err != nil {
@@ -505,9 +552,9 @@ func (persistence *sqliteIdempotencyPersistence) loadRaw(ctx context.Context, sc
 	if response.Digest != "" && response.Digest != record.Digest {
 		return transport.IdempotencyRecord{}, sqliteIdempotencyResponse{}, false, errConfigurationPersistence
 	}
+	record.AttemptID = response.AttemptID
 	switch response.State {
 	case "":
-		// Pre-protocol completed records remain replayable for compatibility.
 		record.Replayable = true
 	case transport.IdempotencyStateReserved:
 		if record.Status != http.StatusProcessing || response.Replayable || len(response.Body) != 0 {
@@ -518,6 +565,11 @@ func (persistence *sqliteIdempotencyPersistence) loadRaw(ctx context.Context, sc
 	case transport.IdempotencyStateCompleted:
 		record.State = transport.IdempotencyStateCompleted
 		record.Replayable = response.Replayable
+	case transport.IdempotencyStateReleased:
+		if record.Status != http.StatusProcessing || response.Replayable || len(response.Body) != 0 || strings.TrimSpace(response.AttemptID) == "" {
+			return transport.IdempotencyRecord{}, sqliteIdempotencyResponse{}, false, errConfigurationPersistence
+		}
+		record.State = transport.IdempotencyStateReleased
 	default:
 		return transport.IdempotencyRecord{}, sqliteIdempotencyResponse{}, false, errConfigurationPersistence
 	}
@@ -527,14 +579,45 @@ func (persistence *sqliteIdempotencyPersistence) loadRaw(ctx context.Context, sc
 }
 
 func (persistence *sqliteIdempotencyPersistence) reserve(ctx context.Context, record transport.IdempotencyRecord) (bool, error) {
-	if err := validateSQLiteIdempotencyRecord(record); err != nil || record.State != transport.IdempotencyStateReserved {
+	if persistence == nil || persistence.db == nil || record.State != transport.IdempotencyStateReserved || validateSQLiteIdempotencyRecord(record) != nil {
 		return false, errConfigurationPersistence
 	}
-	responseJSON, err := json.Marshal(sqliteIdempotencyResponse{State: transport.IdempotencyStateReserved, Digest: record.Digest, Status: http.StatusProcessing})
+	if record.AttemptID != "" && validateAttemptID(record.AttemptID) != nil {
+		return false, errConfigurationPersistence
+	}
+	responseJSON, err := json.Marshal(sqliteIdempotencyResponse{State: transport.IdempotencyStateReserved, Digest: record.Digest, AttemptID: record.AttemptID, Status: http.StatusProcessing})
 	if err != nil || len(responseJSON) > maxPersistedIdempotencyBody*2 {
 		return false, errConfigurationPersistence
 	}
-	result, err := persistence.db.ExecContext(ctx, `INSERT OR IGNORE INTO idempotency_records (scope, idempotency_key, request_digest, status_code, resource_kind, resource_id, response_json, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, record.Scope, record.Key, record.Digest, http.StatusProcessing, "idempotency_reservation", sqliteIdempotencyResourceID(record.Scope, record.Key), string(responseJSON), record.CreatedAt, nullableString(record.ExpiresAt))
+	tx, err := persistence.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, errConfigurationPersistence
+	}
+	defer rollbackConfiguration(tx)
+	existing, existingResponse, found, err := loadSQLiteIdempotencyLatest(ctx, tx, record.Scope, record.Key)
+	if err != nil {
+		return false, err
+	}
+	if found {
+		if existing.Digest != record.Digest {
+			return false, transport.ErrIdempotencyConflict
+		}
+		switch existingResponse.State {
+		case transport.IdempotencyStateReleased:
+			// A release is an immutable event. Reserve a new attempt under a
+			// distinct event scope while retaining the original digest binding.
+		case transport.IdempotencyStateReserved, transport.IdempotencyStateCompleted, "":
+			return false, nil
+		default:
+			return false, errConfigurationPersistence
+		}
+	}
+	resourceID := sqliteIdempotencyResourceID(record.Scope, record.Key)
+	scope := record.Scope
+	if found {
+		scope = idempotencyEventScope(record.Scope, record.AttemptID, transport.IdempotencyStateReserved)
+	}
+	result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO idempotency_records (scope, idempotency_key, request_digest, status_code, resource_kind, resource_id, response_json, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, scope, record.Key, record.Digest, http.StatusProcessing, "idempotency_reservation", resourceID, string(responseJSON), record.CreatedAt, nullableString(record.ExpiresAt))
 	if err != nil {
 		return false, errConfigurationPersistence
 	}
@@ -542,41 +625,92 @@ func (persistence *sqliteIdempotencyPersistence) reserve(ctx context.Context, re
 	if err != nil {
 		return false, errConfigurationPersistence
 	}
-	if inserted == 1 {
-		return true, nil
-	}
-	existing, _, found, err := persistence.loadRaw(ctx, record.Scope, record.Key)
-	if err != nil {
-		return false, err
-	}
-	if !found {
+	if err := tx.Commit(); err != nil {
 		return false, errConfigurationPersistence
 	}
-	if existing.Digest != record.Digest {
-		return false, transport.ErrIdempotencyConflict
-	}
-	return false, nil
+	return inserted == 1, nil
 }
 
 func (persistence *sqliteIdempotencyPersistence) complete(ctx context.Context, record transport.IdempotencyRecord) error {
-	if err := validateSQLiteIdempotencyRecord(record); err != nil || record.State != transport.IdempotencyStateCompleted {
+	if persistence == nil || persistence.db == nil || record.State != transport.IdempotencyStateCompleted || validateSQLiteIdempotencyRecord(record) != nil {
 		return errConfigurationPersistence
 	}
-	reservation, response, found, err := persistence.loadRaw(ctx, record.Scope, record.Key)
-	if err != nil || !found || response.State != transport.IdempotencyStateReserved || reservation.Digest != record.Digest {
+	if record.AttemptID != "" && validateAttemptID(record.AttemptID) != nil {
 		return errConfigurationPersistence
 	}
-	responseJSON, err := json.Marshal(sqliteIdempotencyResponse{State: transport.IdempotencyStateCompleted, Replayable: record.Replayable, Digest: record.Digest, Status: record.Status, Headers: sanitizeIdempotencyHeaders(record.Headers), Body: append([]byte(nil), record.Body...)})
+	responseJSON, err := json.Marshal(sqliteIdempotencyResponse{State: transport.IdempotencyStateCompleted, Replayable: record.Replayable, Digest: record.Digest, AttemptID: record.AttemptID, Status: record.Status, Headers: sanitizeIdempotencyHeaders(record.Headers), Body: append([]byte(nil), record.Body...)})
 	if err != nil || len(responseJSON) > maxPersistedIdempotencyBody*2 {
 		return errConfigurationPersistence
 	}
-	completionScope := idempotencyCompletionScope(record.Scope)
-	_, err = persistence.db.ExecContext(ctx, `INSERT OR IGNORE INTO idempotency_records (scope, idempotency_key, request_digest, status_code, resource_kind, resource_id, response_json, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, completionScope, record.Key, record.Digest, record.Status, record.ResourceKind, record.ResourceID, string(responseJSON), record.CreatedAt, nullableString(record.ExpiresAt))
+	tx, err := persistence.db.BeginTx(ctx, nil)
 	if err != nil {
 		return errConfigurationPersistence
 	}
-	completed, existingResponse, found, err := persistence.loadRaw(ctx, completionScope, record.Key)
-	if err != nil || !found || completed.Digest != record.Digest || existingResponse.State != transport.IdempotencyStateCompleted || completed.Status != record.Status || !bytes.Equal(completed.Body, record.Body) {
+	defer rollbackConfiguration(tx)
+	reservation, reservationResponse, found, err := loadSQLiteIdempotencyLatest(ctx, tx, record.Scope, record.Key)
+	if err != nil || !found || reservation.Digest != record.Digest || reservationResponse.State != transport.IdempotencyStateReserved || reservation.AttemptID != record.AttemptID {
+		return errConfigurationPersistence
+	}
+	completionScope := idempotencyCompletionScope(record.Scope)
+	if record.AttemptID != "" {
+		completionScope = idempotencyEventScope(record.Scope, record.AttemptID, transport.IdempotencyStateCompleted)
+	}
+	result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO idempotency_records (scope, idempotency_key, request_digest, status_code, resource_kind, resource_id, response_json, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, completionScope, record.Key, record.Digest, record.Status, record.ResourceKind, record.ResourceID, string(responseJSON), record.CreatedAt, nullableString(record.ExpiresAt))
+	if err != nil {
+		return errConfigurationPersistence
+	}
+	if inserted, err := result.RowsAffected(); err != nil || inserted > 1 {
+		return errConfigurationPersistence
+	}
+	completed, existingResponse, found, err := loadSQLiteIdempotencyRow(ctx, tx, completionScope, record.Key)
+	if err != nil || !found || completed.Digest != record.Digest || existingResponse.State != transport.IdempotencyStateCompleted || completed.Status != record.Status || completed.AttemptID != record.AttemptID || !bytes.Equal(completed.Body, record.Body) {
+		return errConfigurationPersistence
+	}
+	if err := tx.Commit(); err != nil {
+		return errConfigurationPersistence
+	}
+	return nil
+}
+
+func (persistence *sqliteIdempotencyPersistence) release(ctx context.Context, record transport.IdempotencyRecord) error {
+	if persistence == nil || persistence.db == nil || record.State != transport.IdempotencyStateReserved || validateSQLiteIdempotencyRecord(record) != nil || validateAttemptID(record.AttemptID) != nil {
+		return errConfigurationPersistence
+	}
+	responseJSON, err := json.Marshal(sqliteIdempotencyResponse{State: transport.IdempotencyStateReleased, Digest: record.Digest, AttemptID: record.AttemptID, Status: http.StatusProcessing})
+	if err != nil || len(responseJSON) > maxPersistedIdempotencyBody*2 {
+		return errConfigurationPersistence
+	}
+	tx, err := persistence.db.BeginTx(ctx, nil)
+	if err != nil {
+		return errConfigurationPersistence
+	}
+	defer rollbackConfiguration(tx)
+	latest, latestResponse, found, err := loadSQLiteIdempotencyLatest(ctx, tx, record.Scope, record.Key)
+	if err != nil || !found || latest.Digest != record.Digest {
+		return errConfigurationPersistence
+	}
+	if latestResponse.State == transport.IdempotencyStateReleased && latest.AttemptID == record.AttemptID {
+		return tx.Commit()
+	}
+	if latestResponse.State != transport.IdempotencyStateReserved || latest.AttemptID != record.AttemptID {
+		return errConfigurationPersistence
+	}
+	releaseScope := idempotencyEventScope(record.Scope, record.AttemptID, transport.IdempotencyStateReleased)
+	result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO idempotency_records (scope, idempotency_key, request_digest, status_code, resource_kind, resource_id, response_json, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, releaseScope, record.Key, record.Digest, http.StatusProcessing, "idempotency_release", sqliteIdempotencyResourceID(record.Scope, record.Key), string(responseJSON), record.CreatedAt, nullableString(record.ExpiresAt))
+	if err != nil {
+		return errConfigurationPersistence
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return errConfigurationPersistence
+	}
+	if inserted == 0 {
+		row, rowResponse, rowFound, rowErr := loadSQLiteIdempotencyRow(ctx, tx, releaseScope, record.Key)
+		if rowErr != nil || !rowFound || row.Digest != record.Digest || row.AttemptID != record.AttemptID || rowResponse.State != transport.IdempotencyStateReleased {
+			return errConfigurationPersistence
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		return errConfigurationPersistence
 	}
 	return nil
@@ -594,6 +728,28 @@ func validateSQLiteIdempotencyRecord(record transport.IdempotencyRecord) error {
 
 func idempotencyCompletionScope(scope string) string {
 	return scope + "\x00mastarr-completion-v1"
+}
+
+const idempotencyEventMarker = "\x00mastarr-event-v1\x00"
+
+func idempotencyEventPrefix(scope string) string {
+	return scope + idempotencyEventMarker
+}
+
+func idempotencyEventScope(scope, attempt, state string) string {
+	return idempotencyEventPrefix(scope) + attempt + "\x00" + state
+}
+
+func validateAttemptID(value string) error {
+	if strings.TrimSpace(value) == "" || len(value) > 200 || !utf8.ValidString(value) {
+		return errConfigurationPersistence
+	}
+	for _, char := range value {
+		if char < 0x20 || char == 0x7f || char == 0 {
+			return errConfigurationPersistence
+		}
+	}
+	return nil
 }
 
 func sqliteIdempotencyResourceID(scope, key string) string {
