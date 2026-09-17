@@ -3574,18 +3574,17 @@
         "W-05 correction round three dispatched from state checkpoint a68fafb29f07ff0561f1e28b6857a1c3fa0ab311 to /root/x05_implementer. Scope is R3b only: explicit durable read-only reconciliation for planned trash intents across pre-dispatch, post-dispatch, partial, collision, identity-change, directory-leaf, and restart states; no schema/API/adapter/client/worker changes.",
         "W-05 correction round three product 985be793b184f090599b2ee7aea3860993091139 and handoff 735086cd7123ba2527f02dc7346a606ab79c6ed0 complete from dispatch checkpoint a68fafb29f07ff0561f1e28b6857a1c3fa0ab311; R3b durable planned-trash reconciliation regressions, focused/race/root/vet/mod checks and product guardrails passed. Full aggregate race and cross-build remain coordinator/reviewer gates.",
         "Independent W-05 correction round-four receipt 027a4431a0dc586419a596a01e87921f2edd7571 integrated as 7447e08: R3b closed, R3c remains blocking; partial retry probes reproduced lost per-item state 20/20 ordinary and 10/10 race, and full offline guardrails passed.",
-        "W-05 correction round four dispatched from state checkpoint 03d06218a36d19b2f504731664c35b8d9fd5b06f to /root/x05_implementer. Scope is R3c only: preserve exact per-item effects and remaining retry scope after partial explicit trash retry, with held-state read-only recovery; no schema/API/adapter/client/worker changes."
+        "W-05 correction round four dispatched from state checkpoint 03d06218a36d19b2f504731664c35b8d9fd5b06f to /root/x05_implementer. Scope is R3c only: preserve exact per-item effects and remaining retry scope after partial explicit trash retry, with held-state read-only recovery; no schema/API/adapter/client/worker changes.",
+        "W-05 correction round four product 2ba78ca03c1b3f2afa31949782f75af012d8aab6 and handoff 36ad4e0e6f2525994bfa863afe4e8393c7d45b05 complete from dispatch checkpoint 03d06218a36d19b2f504731664c35b8d9fd5b06f; R3c partial per-item outcome and remaining-scope regressions, focused/race/root/vet/mod checks and full offline CI guardrails passed."
       ],
       "review": {
-        "status": "changes_requested",
-        "decision": "changes_requested",
+        "status": "pending",
+        "decision": "pending",
         "reviewer": "/root/x05_reviewer",
-        "commit": "027a4431a0dc586419a596a01e87921f2edd7571",
-        "findings": [
-          "R3c P1: explicit RetryTrash partial identity-valid effects are collapsed into an unbound aggregate unknown effect; exact applied items remain selected, held ReconcileTrash/RetryTrash cannot recover the remaining scope, and the applied item is indistinguishable."
-        ],
-        "round": 4,
-        "integratedCommit": "7447e08"
+        "commit": null,
+        "findings": [],
+        "round": 5,
+        "integratedCommit": null
       },
       "dispatch": {
         "assignedAt": "2026-09-16",
@@ -3615,7 +3614,7 @@
         "reviewPath": "docs/execution/handoffs/W-05-review-round5.md",
         "handoffPath": "docs/execution/handoffs/W-05-correction-round4.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "in_progress",
+        "status": "review_pending",
         "dependencyCommits": {
           "W-04-product": "780c00e92498660c08b6ac67259bbb4147c58531",
           "W-04-review": "2aef896fd5d3e10dcefc80f8f5a094852d73fd27",
@@ -3626,15 +3625,15 @@
           "G-01": "Arr native registration/import writes remain blocked; this lane must not bypass that gate.",
           "X-14": "qBittorrent removal remains metadata-only with deleteFiles=false; stop and read-back are required before payload mutation."
         },
-        "waitingOn": "/root/x05_implementer",
-        "waitingReason": "W-05 correction round four implementation for R3c partial trash retry per-item state",
+        "waitingOn": "/root/x05_reviewer",
+        "waitingReason": "independent review of W-05 correction round four",
         "implementationCommit": "37ecdde36b56a6cd3d7d147cd8af1b49eba3f45a",
         "handoffCommit": "91038f799d894b58d1c7f149606ac2c686515beb",
-        "reviewSourceCommit": "985be793b184f090599b2ee7aea3860993091139",
-        "reviewRound": 4,
+        "reviewSourceCommit": "2ba78ca03c1b3f2afa31949782f75af012d8aab6",
+        "reviewRound": 5,
         "reviewCommit": null,
         "reviewIntegrationCommit": null,
-        "correctionStatus": "in_progress",
+        "correctionStatus": "review_pending",
         "correctionRound": 4,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "03d06218a36d19b2f504731664c35b8d9fd5b06f",
@@ -3644,9 +3643,9 @@
         "correctionReviewer": "/root/x05_reviewer",
         "priorReviewCommit": "027a4431a0dc586419a596a01e87921f2edd7571",
         "priorReviewIntegrationCommit": "7447e08",
-        "correctionImplementationCommit": null,
-        "correctionHandoffCommit": null,
-        "correctionReviewSourceCommit": null,
+        "correctionImplementationCommit": "2ba78ca03c1b3f2afa31949782f75af012d8aab6",
+        "correctionHandoffCommit": "36ad4e0e6f2525994bfa863afe4e8393c7d45b05",
+        "correctionReviewSourceCommit": "2ba78ca03c1b3f2afa31949782f75af012d8aab6",
         "priorCorrectionRound": 3,
         "priorCorrectionImplementationCommit": "985be793b184f090599b2ee7aea3860993091139",
         "priorCorrectionHandoffCommit": "735086cd7123ba2527f02dc7346a606ab79c6ed0"
@@ -3699,6 +3698,14 @@
           "findings": [
             "R3c P1: explicit RetryTrash partial identity-valid effects are collapsed into an unbound aggregate unknown effect; exact applied items remain selected, held ReconcileTrash/RetryTrash cannot recover the remaining scope, and the applied item is indistinguishable."
           ]
+        },
+        {
+          "round": 5,
+          "reviewer": "/root/x05_reviewer",
+          "commit": null,
+          "status": "review_pending",
+          "sourceCommit": "2ba78ca03c1b3f2afa31949782f75af012d8aab6",
+          "receipt": "docs/execution/handoffs/W-05-review-round5.md"
         }
       ],
       "implementationCommit": "37ecdde36b56a6cd3d7d147cd8af1b49eba3f45a",
@@ -5640,7 +5647,7 @@
       ]
     }
   },
-  "nextAction": "W-05 correction round four is dispatched from 03d06218a36d19b2f504731664c35b8d9fd5b06f; await product and handoff commits for R3c, then queue independent review round five.",
+  "nextAction": "W-05 correction round four product 2ba78ca03c1b3f2afa31949782f75af012d8aab6 and handoff 36ad4e0e6f2525994bfa863afe4e8393c7d45b05 are ready for independent review. Await the exact round-five receipt, then integrate it before any next feature dispatch.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
