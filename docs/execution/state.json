@@ -3569,16 +3569,19 @@
         "W-05 correction round one product 2f843b3e678d86e9300ce60f48f31e3c87f18791 and handoff c8c862f92e32dc894f5273e657323720af777694 complete from dispatch checkpoint c436ce2abe6c16f72227bd6b5c307c106b09ef5e; R1-R4 regressions, focused/race/vet/root checks and fast guardrails passed, ready for independent correction review.",
         "Independent W-05 correction round-two receipt 5954ee826f56a1f9558417fdde614b62387a1ae0 integrated as 118720ddf571698c5403bfb58558bbc56b3d201f: changes requested for R1a/R2a/R3a/R2b; exact ordinary and race probes reproduced all four findings, and full offline guardrails passed.",
         "W-05 correction round two dispatched from state checkpoint 8df72860d4ef56e69393753a3814c288bb9860d2 to /root/x05_implementer. Scope is R1a approval-bound early-purge recovery, R2a unresolved foreign-effect retention, R3a planned replay read-only reconciliation, and R2b exact directory bookkeeping; product paths remain internal/trash/ with synthetic regressions and no schema/API/adapters/clients changes.",
-        "W-05 correction round two product 730b3774fb412c2d9dcecce5a5dec292d11f63eb and handoff daa7df6d2612439b07556e9e776e1dd4a17f0983 complete from dispatch checkpoint 8df72860d4ef56e69393753a3814c288bb9860d2; R1a/R2a/R3a/R2b regressions, focused/race/vet/root checks and fast guardrails passed. Full aggregate race and cross-build remain coordinator/reviewer gates."
+        "W-05 correction round two product 730b3774fb412c2d9dcecce5a5dec292d11f63eb and handoff daa7df6d2612439b07556e9e776e1dd4a17f0983 complete from dispatch checkpoint 8df72860d4ef56e69393753a3814c288bb9860d2; R1a/R2a/R3a/R2b regressions, focused/race/vet/root checks and fast guardrails passed. Full aggregate race and cross-build remain coordinator/reviewer gates.",
+        "Independent W-05 correction round-three receipt eee4fa2dac2dd201316e79f6a898cea20c0071f8 integrated as 08f8672: R1a/R2a/R2b closed, R3b remains blocking; planned trash crash-window probes reproduced the stuck state 10/10 ordinary and 5/5 race, and full offline guardrails passed."
       ],
       "review": {
-        "status": "pending",
-        "decision": "pending",
+        "status": "changes_requested",
+        "decision": "changes_requested",
         "reviewer": "/root/x05_reviewer",
-        "commit": null,
-        "findings": [],
+        "commit": "eee4fa2dac2dd201316e79f6a898cea20c0071f8",
+        "findings": [
+          "R3b P1: durable planned trash intents avoid blind redispatch but have no read-only reconciliation path; replay returns ErrClaimed without filesystem reads, Reconcile rejects trash, Recover handles only running janitor claims, and Tick skips planned entries, stranding both pre-dispatch and post-dispatch lost-response states."
+        ],
         "round": 3,
-        "integratedCommit": null
+        "integratedCommit": "08f8672"
       },
       "dispatch": {
         "assignedAt": "2026-09-16",
@@ -3608,7 +3611,7 @@
         "reviewPath": "docs/execution/handoffs/W-05-review-round3.md",
         "handoffPath": "docs/execution/handoffs/W-05-correction-round2.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "review_pending",
+        "status": "changes_requested",
         "dependencyCommits": {
           "W-04-product": "780c00e92498660c08b6ac67259bbb4147c58531",
           "W-04-review": "2aef896fd5d3e10dcefc80f8f5a094852d73fd27",
@@ -3619,15 +3622,15 @@
           "G-01": "Arr native registration/import writes remain blocked; this lane must not bypass that gate.",
           "X-14": "qBittorrent removal remains metadata-only with deleteFiles=false; stop and read-back are required before payload mutation."
         },
-        "waitingOn": "/root/x05_reviewer",
-        "waitingReason": "independent review of W-05 correction round two",
+        "waitingOn": "/root/x05_implementer",
+        "waitingReason": "correction round three for R3b planned trash reconciliation",
         "implementationCommit": "37ecdde36b56a6cd3d7d147cd8af1b49eba3f45a",
         "handoffCommit": "91038f799d894b58d1c7f149606ac2c686515beb",
         "reviewSourceCommit": "730b3774fb412c2d9dcecce5a5dec292d11f63eb",
         "reviewRound": 3,
-        "reviewCommit": null,
-        "reviewIntegrationCommit": null,
-        "correctionStatus": "review_pending",
+        "reviewCommit": "eee4fa2dac2dd201316e79f6a898cea20c0071f8",
+        "reviewIntegrationCommit": "08f8672",
+        "correctionStatus": "changes_requested",
         "correctionRound": 2,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "8df72860d4ef56e69393753a3814c288bb9860d2",
@@ -3635,8 +3638,8 @@
         "correctionReviewPath": "docs/execution/handoffs/W-05-review-round3.md",
         "correctionHandoffPath": "docs/execution/handoffs/W-05-correction-round2.md",
         "correctionReviewer": "/root/x05_reviewer",
-        "priorReviewCommit": "5954ee826f56a1f9558417fdde614b62387a1ae0",
-        "priorReviewIntegrationCommit": "118720ddf571698c5403bfb58558bbc56b3d201f",
+        "priorReviewCommit": "eee4fa2dac2dd201316e79f6a898cea20c0071f8",
+        "priorReviewIntegrationCommit": "08f8672",
         "correctionImplementationCommit": "730b3774fb412c2d9dcecce5a5dec292d11f63eb",
         "correctionHandoffCommit": "daa7df6d2612439b07556e9e776e1dd4a17f0983",
         "correctionReviewSourceCommit": "730b3774fb412c2d9dcecce5a5dec292d11f63eb",
@@ -3672,10 +3675,14 @@
         {
           "round": 3,
           "reviewer": "/root/x05_reviewer",
-          "commit": null,
-          "status": "review_pending",
+          "commit": "eee4fa2dac2dd201316e79f6a898cea20c0071f8",
+          "status": "changes_requested",
           "sourceCommit": "730b3774fb412c2d9dcecce5a5dec292d11f63eb",
-          "receipt": "docs/execution/handoffs/W-05-review-round3.md"
+          "receipt": "docs/execution/handoffs/W-05-review-round3.md",
+          "integratedCommit": "08f8672",
+          "findings": [
+            "R3b P1: durable planned trash intents avoid blind redispatch but have no read-only reconciliation path; replay returns ErrClaimed without filesystem reads, Reconcile rejects trash, Recover handles only running janitor claims, and Tick skips planned entries, stranding both pre-dispatch and post-dispatch lost-response states."
+          ]
         }
       ],
       "implementationCommit": "37ecdde36b56a6cd3d7d147cd8af1b49eba3f45a",
@@ -5617,7 +5624,7 @@
       ]
     }
   },
-  "nextAction": "W-05 correction round two product 730b3774fb412c2d9dcecce5a5dec292d11f63eb and handoff daa7df6d2612439b07556e9e776e1dd4a17f0983 are ready for independent review. Await the exact round-three receipt, then integrate it before any next feature dispatch.",
+  "nextAction": "Record and dispatch W-05 correction round three for R3b: add explicit durable read-only trash reconciliation for planned intents before any retry; keep other feature lanes paused.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
