@@ -20,6 +20,8 @@ import (
 
 const maxResponseBytes = 1 << 20
 
+const zeroUUID = "00000000-0000-0000-0000-000000000000"
+
 // HTTPReader adapts generated workflow and action-run responses to Reader.
 // Generated DTOs remain private to this adapter file.
 type HTTPReader struct {
@@ -234,6 +236,9 @@ func decodeStrict(body []byte, destination interface{}) error {
 	if len(body) == 0 || len(body) > maxResponseBytes || !utf8.Valid(body) {
 		return errors.New("response body invalid")
 	}
+	if err := rejectDuplicateKeys(body); err != nil {
+		return err
+	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(destination); err != nil {
@@ -280,7 +285,12 @@ func parseUUID(raw string) (generated.Id, error) {
 	return result, nil
 }
 
+func validGeneratedID(id generated.Id) bool { return id.String() != zeroUUID }
+
 func (r *HTTPReader) convertWorkflow(ctx context.Context, source generated.WorkflowRun) (Workflow, error) {
+	if !validGeneratedID(source.Id) || source.Name == "" || !source.State.Valid() {
+		return Workflow{}, errors.New("workflow identity or state is incomplete")
+	}
 	item := Workflow{
 		ID:                   source.Id.String(),
 		Name:                 source.Name,
@@ -295,6 +305,12 @@ func (r *HTTPReader) convertWorkflow(ctx context.Context, source generated.Workf
 		Steps:                make([]Step, 0, len(source.Steps)),
 	}
 	for index, step := range source.Steps {
+		if step.Id == "" || !step.State.Valid() || !validGeneratedID(step.ActionPlanId) {
+			return Workflow{}, errors.New("workflow step identity or state is incomplete")
+		}
+		if step.ActionRunId != nil && !validGeneratedID(*step.ActionRunId) {
+			return Workflow{}, errors.New("workflow action run identity is incomplete")
+		}
 		converted := Step{
 			Sequence:     index + 1,
 			ID:           step.Id,
@@ -302,20 +318,53 @@ func (r *HTTPReader) convertWorkflow(ctx context.Context, source generated.Workf
 			ApprovalGate: stringValue(step.ApprovalGate),
 			State:        string(step.State),
 		}
+		plan, err := r.getActionPlan(ctx, step.ActionPlanId)
+		if err != nil {
+			return Workflow{}, err
+		}
+		if err := mergeActionPlan(&converted, plan); err != nil {
+			return Workflow{}, protocolError(err)
+		}
 		if step.ActionRunId != nil {
 			converted.ActionRunID = step.ActionRunId.String()
-			run, err := r.getActionRun(ctx, *step.ActionRunId)
+			run, err := r.getActionRun(ctx, *step.ActionRunId, step.ActionPlanId, source.Id.String(), step.Id)
 			if err != nil {
 				return Workflow{}, err
 			}
-			mergeActionRun(&converted, run)
+			if err := mergeActionRun(&converted, run); err != nil {
+				return Workflow{}, protocolError(err)
+			}
 		}
 		item.Steps = append(item.Steps, converted)
 	}
 	return item, nil
 }
 
-func (r *HTTPReader) getActionRun(ctx context.Context, id generated.Id) (generated.ActionRun, error) {
+func (r *HTTPReader) getActionPlan(ctx context.Context, id generated.Id) (generated.ActionPlan, error) {
+	if !validGeneratedID(id) {
+		return generated.ActionPlan{}, protocolError(errors.New("action plan identity is incomplete"))
+	}
+	response, err := r.generated.GetActionPlanWithResponse(ctx, id)
+	if err != nil {
+		return generated.ActionPlan{}, classifyHTTPError(err, ctx)
+	}
+	if err := checkResponse(response, http.StatusOK); err != nil {
+		return generated.ActionPlan{}, err
+	}
+	var source generated.ActionPlan
+	if err := decodeStrict(response.GetBody(), &source); err != nil {
+		return generated.ActionPlan{}, protocolError(err)
+	}
+	if !validGeneratedID(source.Id) || source.Id.String() != id.String() || source.Revision < 1 || source.Digest == "" || !source.Status.Valid() || !source.RequiredApproval.Valid() {
+		return generated.ActionPlan{}, protocolError(errors.New("action plan identity mismatch"))
+	}
+	return source, nil
+}
+
+func (r *HTTPReader) getActionRun(ctx context.Context, id, expectedPlan generated.Id, expectedWorkflow, expectedStep string) (generated.ActionRun, error) {
+	if !validGeneratedID(id) || !validGeneratedID(expectedPlan) || expectedWorkflow == "" || expectedWorkflow == zeroUUID || expectedStep == "" {
+		return generated.ActionRun{}, protocolError(errors.New("action run binding is incomplete"))
+	}
 	response, err := r.generated.GetActionRunWithResponse(ctx, id)
 	if err != nil {
 		return generated.ActionRun{}, classifyHTTPError(err, ctx)
@@ -327,10 +376,226 @@ func (r *HTTPReader) getActionRun(ctx context.Context, id generated.Id) (generat
 	if err := decodeStrict(response.GetBody(), &source); err != nil {
 		return generated.ActionRun{}, protocolError(err)
 	}
+	if !validGeneratedID(source.Id) || !validGeneratedID(source.PlanId) || !source.State.Valid() || !source.Outcome.Valid() || source.Id.String() != id.String() || source.PlanId.String() != expectedPlan.String() || source.WorkflowRunId == nil || !validGeneratedID(*source.WorkflowRunId) || source.WorkflowRunId.String() != expectedWorkflow || source.StepId == nil || *source.StepId != expectedStep {
+		return generated.ActionRun{}, protocolError(errors.New("action run identity does not match workflow step"))
+	}
 	return source, nil
 }
 
-func mergeActionRun(step *Step, run generated.ActionRun) {
+func mergeActionPlan(step *Step, plan generated.ActionPlan) error {
+	if step == nil || plan.Revision < 1 || plan.Digest == "" {
+		return errors.New("action plan binding is incomplete")
+	}
+	kind, err := plan.Action.Discriminator()
+	if err != nil || !validActionKind(kind) {
+		return errors.New("action plan kind is unknown")
+	}
+	requiredApproval := string(plan.RequiredApproval)
+	if requiredApproval != "review" && requiredApproval != "irreversible" {
+		return errors.New("action plan approval is unknown")
+	}
+	if step.ApprovalGate != "" && step.ApprovalGate != requiredApproval {
+		return errors.New("workflow approval gate differs from action plan")
+	}
+	step.ApprovalGate = requiredApproval
+	step.PlanRevision = plan.Revision
+	step.PlanDigest = plan.Digest
+	step.ActionKind = kind
+	step.Impacts = copyStrings(plan.Impacts)
+	step.Capabilities = append([]string(nil), plan.Capabilities...)
+	step.EstimatedBytes = cloneInt(plan.EstimatedBytes)
+	step.ConnectionFences = copyMap(plan.ConnectionRevisions)
+	step.MappingFences = copyMap(plan.MappingRevisions)
+	step.Manifest = make([]ManifestEntry, 0, len(plan.Manifest))
+	for _, entry := range plan.Manifest {
+		step.Manifest = append(step.Manifest, ManifestEntry{
+			RootID:       entry.RootId,
+			RelativePath: entry.RelativePath,
+			Type:         string(entry.Type),
+			Role:         stringValueEnum(entry.Role),
+			Size:         entry.Size,
+			Identity:     stringValue(entry.FileIdentity),
+			Digest:       stringValue(entry.Digest),
+			ObservedAt:   cloneTime(entry.ObservedAt),
+		})
+	}
+	step.ActionIrreversible = requiredApproval == "irreversible"
+	return mergeActionInput(step, plan.Action, kind)
+}
+
+func mergeActionInput(step *Step, input generated.ActionInput, kind string) error {
+	switch kind {
+	case "arr.registration":
+		item, err := input.AsArrRegistrationInput()
+		if err != nil {
+			return err
+		}
+		step.ActionConnection = item.ConnectionId
+		step.ActionMediaKind = string(item.MediaKind)
+		step.ActionProviderID = item.ProviderId
+		step.ActionMonitoring = cloneBool(item.Fields.Monitored)
+		step.ActionSeasonFolder = cloneBool(item.Fields.SeasonFolder)
+		step.ActionSeriesType = stringValue(item.Fields.SeriesType)
+		step.ActionQualityID = cloneInt(item.Fields.QualityProfileId)
+		step.ActionRootFolder = stringValue(item.Fields.RootFolder)
+		step.ActionSeasons = copyInts(item.Fields.Seasons)
+	case "arr.import":
+		item, err := input.AsArrImportInput()
+		if err != nil {
+			return err
+		}
+		step.ActionConnection = item.ConnectionId
+		step.ActionExternalID = item.RegisteredExternalId
+		step.ActionPreview = item.PreviewRevision
+		step.ActionTransfer = string(item.Transfer)
+		step.ActionFiles = convertImportFiles(item.Files)
+	case "fs.copy":
+		item, err := input.AsFsCopyInput()
+		if err != nil {
+			return err
+		}
+		step.ActionFiles = convertFileMaps(item.Files)
+	case "fs.hardlink":
+		item, err := input.AsFsHardlinkInput()
+		if err != nil {
+			return err
+		}
+		step.ActionFiles = convertFileMaps(item.Files)
+	case "fs.move":
+		item, err := input.AsFsMoveInput()
+		if err != nil {
+			return err
+		}
+		step.ActionExecutor = string(item.Executor)
+		step.ActionFiles = convertFileMaps(item.Files)
+	case "fs.rename":
+		item, err := input.AsFsRenameInput()
+		if err != nil {
+			return err
+		}
+		step.ActionExecutor = string(item.Executor)
+		step.ActionFiles = convertFileMaps(item.Files)
+	case "client.stop":
+		item, err := input.AsClientStopInput()
+		if err != nil {
+			return err
+		}
+		step.ActionConnection = item.ConnectionId
+		step.ActionClientIDs = append([]string(nil), item.ClientItemIds...)
+	case "client.remove":
+		item, err := input.AsClientRemoveInput()
+		if err != nil {
+			return err
+		}
+		step.ActionConnection = item.ConnectionId
+		step.ActionClientIDs = append([]string(nil), item.ClientItemIds...)
+		retain := bool(item.RetainPayload)
+		step.ActionRetainPayload = &retain
+		step.ActionIrreversible = true
+	case "fs.trash":
+		item, err := input.AsFsTrashInput()
+		if err != nil {
+			return err
+		}
+		step.ActionRetention = &item.RetentionDays
+		step.ActionStoppedIDs = append([]string(nil), stringSliceValue(item.StoppedClientIds)...)
+		step.ActionFiles = convertTargets(item.Files)
+	case "fs.restore":
+		item, err := input.AsFsRestoreInput()
+		if err != nil {
+			return err
+		}
+		step.ActionTrashID = item.TrashId.String()
+		step.ActionFiles = convertFileMaps(item.Files)
+	case "fs.delete":
+		item, err := input.AsFsDeleteInput()
+		if err != nil {
+			return err
+		}
+		step.ActionFiles = convertTargets(item.Files)
+		permanent := bool(item.Permanent)
+		step.ActionPermanent = &permanent
+		step.ActionIrreversible = permanent || bool(item.IrreversibleAcknowledgement)
+	case "descriptor.delete":
+		item, err := input.AsDescriptorDeleteInput()
+		if err != nil {
+			return err
+		}
+		for _, id := range item.DescriptorIds {
+			step.ActionFiles = append(step.ActionFiles, ActionFile{Identity: id.String()})
+		}
+		step.ActionIrreversible = bool(item.IrreversibleAcknowledgement)
+	case "jellyfin.refresh":
+		item, err := input.ValueByDiscriminator()
+		if err != nil {
+			return err
+		}
+		switch typed := item.(type) {
+		case generated.JellyfinLibraryRefreshInput:
+			step.ActionConnection = typed.ConnectionId
+		case generated.JellyfinItemRefreshInput:
+			step.ActionConnection = typed.ConnectionId
+			step.ActionFiles = []ActionFile{{Identity: typed.ItemId}}
+		default:
+			return errors.New("unknown refresh input")
+		}
+	}
+	return nil
+}
+
+func validActionKind(kind string) bool {
+	switch kind {
+	case "arr.registration", "arr.import", "fs.copy", "fs.hardlink", "fs.move", "fs.rename", "fs.trash", "fs.restore", "fs.delete", "client.stop", "client.remove", "descriptor.delete", "jellyfin.refresh":
+		return true
+	default:
+		return false
+	}
+}
+
+func convertImportFiles(files []generated.ImportFile) []ActionFile {
+	result := make([]ActionFile, 0, len(files))
+	for _, file := range files {
+		result = append(result, ActionFile{
+			SourceRootID:     file.Source.RootId,
+			SourcePath:       file.Source.RelativePath,
+			MovieOrEpisodeID: file.MovieOrEpisodeId,
+			Subtitle:         cloneBool(file.Subtitle),
+			Language:         stringValue(file.Language),
+			Forced:           cloneBool(file.Forced),
+			HearingImpaired:  cloneBool(file.HearingImpaired),
+		})
+	}
+	return result
+}
+
+func convertFileMaps(files []generated.FileMap) []ActionFile {
+	result := make([]ActionFile, 0, len(files))
+	for _, file := range files {
+		result = append(result, ActionFile{
+			SourceRootID:      file.Source.RootId,
+			SourcePath:        file.Source.RelativePath,
+			DestinationRootID: file.Destination.RootId,
+			DestinationPath:   file.Destination.RelativePath,
+		})
+	}
+	return result
+}
+
+func convertTargets(files []generated.FileTarget) []ActionFile {
+	result := make([]ActionFile, 0, len(files))
+	for _, file := range files {
+		result = append(result, ActionFile{SourceRootID: file.RootId, SourcePath: file.RelativePath})
+	}
+	return result
+}
+
+func mergeActionRun(step *Step, run generated.ActionRun) error {
+	if err := validateEffectLists(run.Effects, run.UnresolvedEffects); err != nil {
+		return err
+	}
+	if len(run.Effects) == 0 && len(run.UnresolvedEffects) == 0 && (run.Outcome == generated.ActionRunOutcomeApplied || run.Outcome == generated.ActionRunOutcomeAlreadySatisfied) {
+		return errors.New("complete action run has no effect identity")
+	}
 	step.ActionRunID = run.Id.String()
 	step.State = string(run.State)
 	step.Outcome = string(run.Outcome)
@@ -339,7 +604,7 @@ func mergeActionRun(step *Step, run generated.ActionRun) {
 	step.RetryAt = cloneTime(run.NextAttemptAt)
 	step.RetryReason = stringValue(run.RetryReason)
 	step.UnresolvedEffects = append([]string(nil), run.UnresolvedEffects...)
-	step.Effects = make([]Effect, 0, len(run.Effects)+len(run.UnresolvedEffects))
+	step.Effects = make([]Effect, 0, len(run.Effects))
 	for _, effect := range run.Effects {
 		state := "observed"
 		if run.Outcome == generated.ActionRunOutcomeAlreadySatisfied {
@@ -347,14 +612,33 @@ func mergeActionRun(step *Step, run generated.ActionRun) {
 		}
 		step.Effects = append(step.Effects, Effect{ID: effect, State: state, Outcome: string(run.Outcome)})
 	}
-	if run.State == generated.ActionStateNeedsReview || run.Outcome == generated.ActionRunOutcomeUnknown {
-		for _, effect := range step.UnresolvedEffects {
-			step.Effects = append(step.Effects, Effect{ID: effect, State: "unresolved", Outcome: string(run.Outcome)})
-		}
-	}
 	if run.Cancellation != nil && step.Error == "" {
 		step.Error = "cancellation " + string(run.Cancellation.State)
 	}
+	return nil
+}
+
+func validateEffectLists(effects, unresolved []string) error {
+	seen := make(map[string]struct{}, len(effects)+len(unresolved))
+	for _, effect := range effects {
+		if !validEvidenceID(effect) {
+			return errors.New("action run effect identity is empty or invalid")
+		}
+		if _, exists := seen[effect]; exists {
+			return errors.New("action run effect identity is duplicated")
+		}
+		seen[effect] = struct{}{}
+	}
+	for _, effect := range unresolved {
+		if !validEvidenceID(effect) {
+			return errors.New("action run unresolved identity is empty or invalid")
+		}
+		if _, exists := seen[effect]; exists {
+			return errors.New("action run effect is both observed and unresolved")
+		}
+		seen[effect] = struct{}{}
+	}
+	return nil
 }
 
 func convertCancellation(source *generated.Cancellation) *Cancellation {
@@ -380,6 +664,14 @@ func cloneInt(value *int) *int {
 	return &copyValue
 }
 
+func cloneBool(value *bool) *bool {
+	if value == nil {
+		return nil
+	}
+	copyValue := *value
+	return &copyValue
+}
+
 func stringValue(value *string) string {
 	if value == nil {
 		return ""
@@ -392,4 +684,33 @@ func stringSliceValue(value *[]string) []string {
 		return nil
 	}
 	return *value
+}
+
+func copyStrings(value *[]string) []string {
+	return append([]string(nil), stringSliceValue(value)...)
+}
+
+func copyInts(value *[]int) []int {
+	if value == nil {
+		return nil
+	}
+	return append([]int(nil), (*value)...)
+}
+
+func copyMap(value *map[string]string) map[string]string {
+	if value == nil {
+		return nil
+	}
+	result := make(map[string]string, len(*value))
+	for key, item := range *value {
+		result[key] = item
+	}
+	return result
+}
+
+func stringValueEnum(value *generated.FileManifestEntryRole) string {
+	if value == nil {
+		return ""
+	}
+	return string(*value)
 }

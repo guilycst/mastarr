@@ -20,6 +20,8 @@ import (
 
 const maxResponseBytes = 1 << 20
 
+const zeroUUID = "00000000-0000-0000-0000-000000000000"
+
 // HTTPReader adapts the generated UI client to the normalized review Reader.
 // Generated request/response types are confined to this file.
 type HTTPReader struct {
@@ -234,6 +236,9 @@ func decodeStrict(body []byte, destination interface{}) error {
 	if len(body) == 0 || len(body) > maxResponseBytes || !utf8.Valid(body) {
 		return errors.New("response body invalid")
 	}
+	if err := rejectDuplicateKeys(body); err != nil {
+		return err
+	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(destination); err != nil {
@@ -280,6 +285,8 @@ func parseUUID(raw string) (generated.Id, error) {
 	return result, nil
 }
 
+func validGeneratedID(id generated.Id) bool { return id.String() != zeroUUID }
+
 func stringValue(value *string) string {
 	if value == nil {
 		return ""
@@ -288,6 +295,9 @@ func stringValue(value *string) string {
 }
 
 func convertPlan(source generated.ActionPlan) (Review, error) {
+	if !validGeneratedID(source.Id) || source.Revision < 1 || source.Digest == "" || !source.Status.Valid() || !source.RequiredApproval.Valid() {
+		return Review{}, errors.New("action plan identity or binding is incomplete")
+	}
 	action, err := convertAction(source.Action)
 	if err != nil {
 		return Review{}, err
@@ -401,6 +411,9 @@ func convertAction(input generated.ActionInput) (Action, error) {
 		}
 		action.ConnectionID = item.ConnectionId
 		action.ClientItemIDs = append([]string(nil), item.ClientItemIds...)
+		retain := bool(item.RetainPayload)
+		action.RetainPayload = &retain
+		action.Irreversible = true
 	case "fs.trash":
 		item, err := input.AsFsTrashInput()
 		if err != nil {
@@ -423,7 +436,9 @@ func convertAction(input generated.ActionInput) (Action, error) {
 			return Action{}, err
 		}
 		action.Files = convertTargets(item.Files)
-		action.Irreversible = bool(item.Permanent) || bool(item.IrreversibleAcknowledgement)
+		permanent := bool(item.Permanent)
+		action.Permanent = &permanent
+		action.Irreversible = permanent || bool(item.IrreversibleAcknowledgement)
 	case "descriptor.delete":
 		item, err := input.AsDescriptorDeleteInput()
 		if err != nil {

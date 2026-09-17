@@ -223,6 +223,8 @@ type Action struct {
 	Episodes             []int
 	ClientItemIDs        []string
 	StoppedClientIDs     []string
+	RetainPayload        *bool
+	Permanent            *bool
 	Irreversible         bool
 	Files                []ActionFile
 }
@@ -395,7 +397,11 @@ func parseDraft(raw string, defaultSize, maxSize int) (draft, error) {
 			return draft{}, errors.New("unsupported or duplicate draft field")
 		}
 		value := entries[0]
-		if !utf8.ValidString(value) || len(value) > MaxValueLength {
+		maxValueLength := MaxValueLength
+		if key == "reason" {
+			maxValueLength = MaxTextLength
+		}
+		if !utf8.ValidString(value) || len(value) > maxValueLength {
 			return draft{}, errors.New("draft value too large")
 		}
 		switch key {
@@ -447,7 +453,7 @@ func validateReviewPage(page ReviewPage) error {
 }
 
 func validateReview(item Review) error {
-	if !validIdentity(item.ID) || item.Revision < 1 || item.Digest == "" || len(item.Digest) > MaxValueLength {
+	if !validIdentity(item.ID) || item.Revision < 1 || !validEvidenceText(item.Digest) {
 		return validationError("review identity or immutable binding is incomplete")
 	}
 	if item.Status != "preparing" && item.Status != "ready" && item.Status != "invalid" && item.Status != "expired" {
@@ -456,6 +462,28 @@ func validateReview(item Review) error {
 	if item.RequiredApproval != "review" && item.RequiredApproval != "irreversible" {
 		return validationError("review approval requirement is unknown")
 	}
+	for _, value := range []string{item.SourceRevision, item.ConfigRevision, item.ManifestDigest, item.DesiredDigest} {
+		if !validOptionalEvidenceText(value) {
+			return validationError("review immutable fence is invalid")
+		}
+	}
+	if item.CreatedAt != nil && item.CreatedAt.IsZero() || item.ExpiresAt != nil && item.ExpiresAt.IsZero() {
+		return validationError("review lifecycle timestamp is invalid")
+	}
+	if item.EstimatedBytes != nil && *item.EstimatedBytes < 0 {
+		return validationError("review estimate is invalid")
+	}
+	for _, values := range [][]string{item.Preconditions, item.Capabilities, item.Impacts, item.Conflicts, item.BlockingIssues, item.DesiredStateKeys} {
+		if err := validateTextSlice(values); err != nil {
+			return err
+		}
+	}
+	if err := validateFenceMap(item.ConnectionFences); err != nil {
+		return err
+	}
+	if err := validateFenceMap(item.MappingFences); err != nil {
+		return err
+	}
 	if err := validateAction(item.Action); err != nil {
 		return err
 	}
@@ -463,11 +491,17 @@ func validateReview(item Review) error {
 		return validationError("review scope is too large")
 	}
 	for _, entry := range item.Manifest {
-		if entry.RootID == "" || entry.RelativePath == "" || strings.HasPrefix(entry.RelativePath, "/") || strings.Contains(entry.RelativePath, "..") || entry.Size < 0 || entry.Size > int(^uint(0)>>1) {
+		if !validEvidenceText(entry.RootID) || entry.RelativePath == "" || strings.HasPrefix(entry.RelativePath, "/") || strings.Contains(entry.RelativePath, "..") || !utf8.ValidString(entry.RelativePath) || len(entry.RelativePath) > MaxValueLength || entry.Size < 0 || entry.Size > int(^uint(0)>>1) || !validOptionalEvidenceText(entry.Identity) || !validOptionalEvidenceText(entry.Digest) {
 			return validationError("review manifest is invalid")
 		}
-		if entry.Type != "file" && entry.Type != "directory" && entry.Type != "symlink" {
+		if entry.Type != "file" && entry.Type != "directory" && entry.Type != "subtitle" && entry.Type != "companion" {
 			return validationError("review manifest type is unknown")
+		}
+		if entry.Role != "" && !validFileRole(entry.Role) {
+			return validationError("review manifest role is unknown")
+		}
+		if entry.ObservedAt != nil && entry.ObservedAt.IsZero() {
+			return validationError("review manifest observation is invalid")
 		}
 	}
 	return nil
@@ -485,18 +519,180 @@ func validateAction(action Action) error {
 	if !allowed[action.Kind] || len(action.Kind) > 64 {
 		return validationError("review action kind is unknown")
 	}
+	for _, value := range []string{action.ConnectionID, action.MediaKind, action.ProviderID, action.RegisteredExternalID, action.PreviewRevision, action.Executor, action.TrashID, action.RootFolder} {
+		if !validOptionalEvidenceText(value) {
+			return validationError("review action authority is invalid")
+		}
+	}
+	if action.Transfer != "" && !validTransfer(action.Transfer) {
+		return validationError("review action transfer is unknown")
+	}
+	if len(action.Seasons) > MaxScopeItems || len(action.Episodes) > MaxScopeItems {
+		return validationError("review action episode scope is too large")
+	}
+	for _, value := range append(append([]int{}, action.Seasons...), action.Episodes...) {
+		if value < 0 {
+			return validationError("review action episode scope is invalid")
+		}
+	}
+	if action.Kind == "arr.registration" || action.Kind == "arr.import" || action.Kind == "client.stop" || action.Kind == "client.remove" || action.Kind == "jellyfin.refresh" {
+		if action.ConnectionID == "" {
+			return validationError("review action connection is incomplete")
+		}
+	}
+	if action.Kind == "arr.registration" && (action.MediaKind == "" || action.ProviderID == "") {
+		return validationError("review registration identity is incomplete")
+	}
+	if action.MediaKind != "" && !validMediaKind(action.MediaKind) {
+		return validationError("review media kind is unknown")
+	}
+	if action.Kind == "arr.import" && (action.RegisteredExternalID == "" || action.PreviewRevision == "" || !validTransfer(action.Transfer)) {
+		return validationError("review import binding is incomplete")
+	}
+	if action.Kind == "fs.restore" && action.TrashID == "" {
+		return validationError("review restore identity is incomplete")
+	}
+	if action.RetentionDays != nil && *action.RetentionDays < 0 {
+		return validationError("review retention is invalid")
+	}
+	if action.QualityProfileID != nil && *action.QualityProfileID < 0 {
+		return validationError("review quality profile is invalid")
+	}
 	if len(action.Files) > MaxScopeItems || len(action.ClientItemIDs) > MaxScopeItems || len(action.StoppedClientIDs) > MaxScopeItems {
 		return validationError("review action scope is too large")
+	}
+	if action.Kind == "arr.import" && len(action.Files) == 0 {
+		return validationError("review import scope is empty")
+	}
+	if action.Kind == "fs.copy" || action.Kind == "fs.hardlink" || action.Kind == "fs.move" || action.Kind == "fs.rename" || action.Kind == "fs.trash" || action.Kind == "fs.restore" || action.Kind == "fs.delete" || action.Kind == "descriptor.delete" {
+		if len(action.Files) == 0 {
+			return validationError("review filesystem scope is empty")
+		}
+	}
+	if (action.Kind == "client.stop" || action.Kind == "client.remove") && len(action.ClientItemIDs) == 0 {
+		return validationError("review client scope is empty")
+	}
+	if err := validateTextSlice(action.ClientItemIDs); err != nil {
+		return err
+	}
+	if err := validateTextSlice(action.StoppedClientIDs); err != nil {
+		return err
+	}
+	if action.Kind == "fs.move" || action.Kind == "fs.rename" {
+		if action.Executor != "mastarr" && action.Executor != "native_client" {
+			return validationError("review filesystem executor is unknown")
+		}
+	}
+	if err := validateActionScope(action); err != nil {
+		return err
 	}
 	for _, file := range action.Files {
 		if file.SourcePath == "" && file.DestinationPath == "" && file.Identity == "" && file.MovieOrEpisodeID == 0 {
 			return validationError("review action file identity is incomplete")
 		}
-		if file.SourcePath != "" && (strings.HasPrefix(file.SourcePath, "/") || strings.Contains(file.SourcePath, "..")) {
+		if file.SourcePath != "" && (strings.HasPrefix(file.SourcePath, "/") || strings.Contains(file.SourcePath, "..") || !utf8.ValidString(file.SourcePath) || len(file.SourcePath) > MaxValueLength) {
 			return validationError("review action source path is invalid")
 		}
-		if file.DestinationPath != "" && (strings.HasPrefix(file.DestinationPath, "/") || strings.Contains(file.DestinationPath, "..")) {
+		if file.DestinationPath != "" && (strings.HasPrefix(file.DestinationPath, "/") || strings.Contains(file.DestinationPath, "..") || !utf8.ValidString(file.DestinationPath) || len(file.DestinationPath) > MaxValueLength) {
 			return validationError("review action destination path is invalid")
+		}
+		if !validOptionalEvidenceText(file.SourceRootID) || !validOptionalEvidenceText(file.DestinationRootID) || !validOptionalEvidenceText(file.Identity) || file.Size < 0 || file.MovieOrEpisodeID < 0 || !validOptionalEvidenceText(file.Language) {
+			return validationError("review action file evidence is invalid")
+		}
+		if file.Role != "" && !validFileRole(file.Role) {
+			return validationError("review action file role is unknown")
+		}
+	}
+	return nil
+}
+
+func validateActionScope(action Action) error {
+	switch action.Kind {
+	case "arr.import":
+		for _, file := range action.Files {
+			if !validEvidenceText(file.SourceRootID) || file.SourcePath == "" || file.MovieOrEpisodeID <= 0 {
+				return validationError("review import file identity is incomplete")
+			}
+		}
+	case "fs.copy", "fs.hardlink", "fs.move", "fs.rename", "fs.restore":
+		for _, file := range action.Files {
+			if !validEvidenceText(file.SourceRootID) || file.SourcePath == "" || !validEvidenceText(file.DestinationRootID) || file.DestinationPath == "" {
+				return validationError("review mapped file identity is incomplete")
+			}
+		}
+	case "fs.trash", "fs.delete":
+		for _, file := range action.Files {
+			if !validEvidenceText(file.SourceRootID) || file.SourcePath == "" {
+				return validationError("review file target identity is incomplete")
+			}
+		}
+	case "descriptor.delete":
+		for _, file := range action.Files {
+			if file.Identity == "" {
+				return validationError("review descriptor identity is incomplete")
+			}
+		}
+	case "jellyfin.refresh":
+		if len(action.Files) > 1 {
+			return validationError("review refresh scope is ambiguous")
+		}
+		for _, file := range action.Files {
+			if file.Identity == "" {
+				return validationError("review refresh item identity is incomplete")
+			}
+		}
+	}
+	return nil
+}
+
+func validMediaKind(value string) bool {
+	switch value {
+	case "anime", "episode", "movie", "season":
+		return true
+	default:
+		return false
+	}
+}
+
+func validTransfer(value string) bool {
+	switch value {
+	case "copy", "hardlink", "move":
+		return true
+	default:
+		return false
+	}
+}
+
+func validFileRole(value string) bool {
+	switch value {
+	case "video", "subtitle", "companion":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateTextSlice(values []string) error {
+	for _, value := range values {
+		if !validEvidenceText(value) {
+			return validationError("review action identity evidence is invalid")
+		}
+	}
+	return nil
+}
+
+func validEvidenceText(value string) bool {
+	return value != "" && utf8.ValidString(value) && len(value) <= MaxValueLength && !strings.ContainsAny(value, "\r\n")
+}
+
+func validOptionalEvidenceText(value string) bool {
+	return value == "" || validEvidenceText(value)
+}
+
+func validateFenceMap(values map[string]string) error {
+	for key, value := range values {
+		if !validEvidenceText(key) || !validEvidenceText(value) {
+			return validationError("review immutable fence is invalid")
 		}
 	}
 	return nil
@@ -591,6 +787,21 @@ func renderBinding(out io.Writer, item Review) {
 		{"Plan revision", strconv.Itoa(item.Revision)}, {"Digest", item.Digest}, {"Status", item.Status},
 		{"Approval requirement", item.RequiredApproval},
 	}
+	if item.EstimatedBytes == nil {
+		rows = append(rows, [2]string{"Estimated storage bytes", "unknown"})
+	} else {
+		rows = append(rows, [2]string{"Estimated storage bytes", strconv.Itoa(*item.EstimatedBytes)})
+	}
+	if len(item.Capabilities) == 0 {
+		rows = append(rows, [2]string{"Capabilities", "unknown"})
+	} else {
+		rows = append(rows, [2]string{"Capabilities", strings.Join(item.Capabilities, ", ")})
+	}
+	if len(item.DesiredStateKeys) == 0 {
+		rows = append(rows, [2]string{"Desired-state fields", "unknown"})
+	} else {
+		rows = append(rows, [2]string{"Desired-state fields", strings.Join(item.DesiredStateKeys, ", ")})
+	}
 	for _, fence := range [][2]string{
 		{"Source revision", item.SourceRevision},
 		{"Config revision", item.ConfigRevision},
@@ -654,22 +865,14 @@ func renderScope(out io.Writer, item Review) {
 			if entry.ObservedAt != nil && !entry.ObservedAt.IsZero() {
 				observed = entry.ObservedAt.UTC().Format(time.RFC3339)
 			}
-			_, _ = io.WriteString(out, "<tr><td>"+value(entry.RootID)+"</td><td>"+value(entry.RelativePath)+"</td><td>"+value(entry.Type)+"</td><td>"+value(entry.Role)+"</td><td>"+strconv.Itoa(entry.Size)+"</td><td>"+valueOrUnknown(entry.Identity)+"</td><td>"+value(observed)+"</td></tr>")
+			_, _ = io.WriteString(out, "<tr><td>"+value(entry.RootID)+"</td><td>"+value(entry.RelativePath)+"</td><td>"+value(entry.Type)+"</td><td>"+valueOrUnknown(entry.Role)+"</td><td>"+strconv.Itoa(entry.Size)+"</td><td>"+valueOrUnknown(entry.Identity)+"</td><td>"+value(observed)+"</td></tr>")
 		}
 		_, _ = io.WriteString(out, "</tbody></table>")
 	}
 	if len(item.Action.Files) > 0 {
-		_, _ = io.WriteString(out, "<h3>Action file and association scope</h3><table><caption>Source, destination and episode/subtitle associations</caption><thead><tr><th>Source</th><th>Destination</th><th>Role</th><th>Episode or movie</th><th>Subtitle</th><th>Language</th><th>Forced</th></tr></thead><tbody>")
+		_, _ = io.WriteString(out, "<h3>Action file and association scope</h3><table><caption>Source, destination and episode/subtitle associations</caption><thead><tr><th>Source</th><th>Destination</th><th>Identity</th><th>Role</th><th>Episode or movie</th><th>Subtitle</th><th>Language</th><th>Forced</th><th>SDH</th></tr></thead><tbody>")
 		for _, file := range item.Action.Files {
-			subtitle := "no"
-			if file.Subtitle != nil {
-				subtitle = strconv.FormatBool(*file.Subtitle)
-			}
-			forced := "unknown"
-			if file.Forced != nil {
-				forced = strconv.FormatBool(*file.Forced)
-			}
-			_, _ = io.WriteString(out, "<tr><td>"+value(file.SourceRootID+"/"+file.SourcePath)+"</td><td>"+value(file.DestinationRootID+"/"+file.DestinationPath)+"</td><td>"+value(file.Role)+"</td><td>"+strconv.Itoa(file.MovieOrEpisodeID)+"</td><td>"+value(subtitle)+"</td><td>"+valueOrUnknown(file.Language)+"</td><td>"+value(forced)+"</td></tr>")
+			_, _ = io.WriteString(out, "<tr><td>"+value(file.SourceRootID+"/"+file.SourcePath)+"</td><td>"+value(file.DestinationRootID+"/"+file.DestinationPath)+"</td><td>"+valueOrUnknown(file.Identity)+"</td><td>"+valueOrUnknown(file.Role)+"</td><td>"+intOrUnknownValue(file.MovieOrEpisodeID)+"</td><td>"+value(boolOrUnknown(file.Subtitle))+"</td><td>"+valueOrUnknown(file.Language)+"</td><td>"+value(boolOrUnknown(file.Forced))+"</td><td>"+value(boolOrUnknown(file.HearingImpaired))+"</td></tr>")
 		}
 		_, _ = io.WriteString(out, "</tbody></table>")
 	}
@@ -680,12 +883,17 @@ func renderScope(out io.Writer, item Review) {
 			_, _ = io.WriteString(out, "<dt>"+value(row[0])+"</dt><dd>"+value(row[1])+"</dd>")
 		}
 	}
-	if item.Action.Monitoring == nil || !*item.Action.Monitoring {
-		_, _ = io.WriteString(out, "<p>Monitoring is unchecked. Enabling it would be a separate future-acquisition choice.</p>")
-	} else {
-		_, _ = io.WriteString(out, "<p>Monitoring was explicitly selected in this immutable plan.</p>")
+	renderActionAuthority(out, item.Action)
+	if supportsMonitoring(item.Action.Kind) {
+		if item.Action.Monitoring == nil || !*item.Action.Monitoring {
+			_, _ = io.WriteString(out, "<p>Monitoring is unchecked. Enabling it would be a separate future-acquisition choice.</p>")
+		} else {
+			_, _ = io.WriteString(out, "<p>Monitoring was explicitly selected in this immutable plan.</p>")
+		}
 	}
-	_, _ = io.WriteString(out, "<p>Hardlink failure requires a new copy plan with its own digest, scope and space estimate; no automatic fallback is implied.</p>")
+	if supportsFallback(item.Action.Kind, item.Action.Transfer) {
+		_, _ = io.WriteString(out, "<p>Hardlink failure requires a new copy plan with its own digest, scope and space estimate; no automatic fallback is implied.</p>")
+	}
 	if item.Action.Irreversible || item.RequiredApproval == "irreversible" || len(item.Impacts) > 0 {
 		_, _ = io.WriteString(out, "<h3>Destructive impact</h3><ul>")
 		for _, impact := range item.Impacts {
@@ -697,6 +905,51 @@ func renderScope(out io.Writer, item Review) {
 		_, _ = io.WriteString(out, "</ul>")
 	}
 	_, _ = io.WriteString(out, "</dl></section>")
+}
+
+func renderActionAuthority(out io.Writer, action Action) {
+	if len(action.ClientItemIDs) == 0 {
+		if action.Kind == "client.stop" || action.Kind == "client.remove" {
+			_, _ = io.WriteString(out, "<dt>Client or torrent IDs</dt><dd>unknown</dd>")
+		}
+	} else {
+		_, _ = io.WriteString(out, "<dt>Client or torrent IDs</dt><dd>"+value(strings.Join(action.ClientItemIDs, ", "))+"</dd>")
+	}
+	if action.Kind == "fs.trash" {
+		if action.RetentionDays == nil {
+			_, _ = io.WriteString(out, "<dt>Retention days</dt><dd>unknown</dd>")
+		} else {
+			_, _ = io.WriteString(out, "<dt>Retention days</dt><dd>"+strconv.Itoa(*action.RetentionDays)+"</dd>")
+		}
+		if len(action.StoppedClientIDs) == 0 {
+			_, _ = io.WriteString(out, "<dt>Stopped-client prerequisites</dt><dd>unknown</dd>")
+		} else {
+			_, _ = io.WriteString(out, "<dt>Stopped-client prerequisites</dt><dd>"+value(strings.Join(action.StoppedClientIDs, ", "))+"</dd>")
+		}
+	}
+	if action.Kind == "client.remove" {
+		_, _ = io.WriteString(out, "<dt>Retain payload</dt><dd>"+value(boolOrUnknown(action.RetainPayload))+"</dd>")
+	}
+	if action.Kind == "fs.delete" {
+		_, _ = io.WriteString(out, "<dt>Permanent deletion</dt><dd>"+value(boolOrUnknown(action.Permanent))+"</dd>")
+	}
+	if action.Irreversible || action.Kind == "client.remove" {
+		_, _ = io.WriteString(out, "<dt>Irreversible scope</dt><dd>true; unselected payload remains outside this exact plan</dd>")
+	}
+	if action.Kind == "arr.registration" {
+		_, _ = io.WriteString(out, "<dt>Monitoring</dt><dd>"+value(boolOrUnknown(action.Monitoring))+"</dd><dt>Season folder</dt><dd>"+value(boolOrUnknown(action.SeasonFolder))+"</dd><dt>Quality profile</dt><dd>"+value(intOrUnknown(action.QualityProfileID))+"</dd><dt>Root folder</dt><dd>"+valueOrUnknown(action.RootFolder)+"</dd>")
+		if len(action.Seasons) == 0 {
+			_, _ = io.WriteString(out, "<dt>Selected seasons</dt><dd>unknown</dd>")
+		} else {
+			_, _ = io.WriteString(out, "<dt>Selected seasons</dt><dd>"+value(intListText(action.Seasons))+"</dd>")
+		}
+	}
+}
+
+func supportsMonitoring(kind string) bool { return kind == "arr.registration" }
+
+func supportsFallback(kind, transfer string) bool {
+	return kind == "fs.hardlink" || (kind == "arr.import" && (transfer == "hardlink" || transfer == "copy"))
 }
 
 func renderEffects(out io.Writer, item Review) {
@@ -739,21 +992,26 @@ func renderDraft(out io.Writer, id string, state draft, item Review) {
 	_, _ = io.WriteString(out, ">Reject exact plan</option></select>")
 	_, _ = io.WriteString(out, "<label for=\"review-idempotency\">Idempotency key</label><input id=\"review-idempotency\" name=\"idempotencyKey\" value=\""+value(state.Values["idempotencyKey"])+"\" maxlength=\""+strconv.Itoa(MaxValueLength)+"\">")
 	_, _ = io.WriteString(out, "<label for=\"review-reason\">Reason or note</label><textarea id=\"review-reason\" name=\"reason\" maxlength=\""+strconv.Itoa(MaxTextLength)+"\">"+value(state.Values["reason"])+"</textarea>")
-	_, _ = io.WriteString(out, "<label><input type=\"checkbox\" name=\"monitoring\" value=\"true\"")
-	if state.Values["monitoring"] == "true" {
-		_, _ = io.WriteString(out, " checked")
+	if supportsMonitoring(item.Action.Kind) {
+		_, _ = io.WriteString(out, "<label><input type=\"checkbox\" name=\"monitoring\" value=\"true\"")
+		if state.Values["monitoring"] == "true" {
+			_, _ = io.WriteString(out, " checked")
+		}
+		_, _ = io.WriteString(out, "> Opt in to future monitoring</label><p>Monitoring starts future acquisition only when the API records it; it does not change this plan.</p>")
 	}
-	_, _ = io.WriteString(out, "> Opt in to future monitoring</label><p>Monitoring starts future acquisition only when the API records it; it does not change this plan.</p>")
-	fallback := state.Values["fallback"]
-	_, _ = io.WriteString(out, "<fieldset><legend>Transfer fallback</legend><label><input type=\"radio\" name=\"fallback\" value=\"hardlink\"")
-	if fallback == "hardlink" {
-		_, _ = io.WriteString(out, " checked")
+	if supportsFallback(item.Action.Kind, item.Action.Transfer) {
+		fallback := state.Values["fallback"]
+		_, _ = io.WriteString(out, "<fieldset><legend>Transfer fallback</legend><label><input type=\"radio\" name=\"fallback\" value=\"hardlink\"")
+		if fallback == "hardlink" {
+			_, _ = io.WriteString(out, " checked")
+		}
+		_, _ = io.WriteString(out, "> Hardlink</label><label><input type=\"radio\" name=\"fallback\" value=\"copy\"")
+		if fallback == "copy" {
+			_, _ = io.WriteString(out, " checked")
+		}
+		_, _ = io.WriteString(out, "> Copy as a new plan</label></fieldset>")
 	}
-	_, _ = io.WriteString(out, "> Hardlink</label><label><input type=\"radio\" name=\"fallback\" value=\"copy\"")
-	if fallback == "copy" {
-		_, _ = io.WriteString(out, " checked")
-	}
-	_, _ = io.WriteString(out, "> Copy as a new plan</label></fieldset><button type=\"submit\">Save review draft</button></form><p>Cancel requests acknowledge no further dispatch; late or partial effects stay visible for reconciliation.</p></section>")
+	_, _ = io.WriteString(out, "<button type=\"submit\">Save review draft</button></form><p>Cancel requests acknowledge no further dispatch; late or partial effects stay visible for reconciliation.</p></section>")
 	_ = item
 }
 
@@ -762,4 +1020,33 @@ func valueOrUnknown(valueText string) string {
 		return "unknown"
 	}
 	return value(valueText)
+}
+
+func boolOrUnknown(value *bool) string {
+	if value == nil {
+		return "unknown"
+	}
+	return strconv.FormatBool(*value)
+}
+
+func intOrUnknown(value *int) string {
+	if value == nil {
+		return "unknown"
+	}
+	return strconv.Itoa(*value)
+}
+
+func intOrUnknownValue(value int) string {
+	if value <= 0 {
+		return "unknown"
+	}
+	return strconv.Itoa(value)
+}
+
+func intListText(values []int) string {
+	result := make([]string, 0, len(values))
+	for _, item := range values {
+		result = append(result, strconv.Itoa(item))
+	}
+	return strings.Join(result, ", ")
 }

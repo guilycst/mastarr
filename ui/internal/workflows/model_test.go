@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -52,7 +54,7 @@ func workflowFixture() Workflow {
 		CurrentStep:          "import",
 		DeadlineAt:           func() *time.Time { value := now.Add(time.Hour); return &value }(),
 		AggregateEffectCount: func() *int { value := 2; return &value }(),
-		UnresolvedCount:      func() *int { value := 1; return &value }(),
+		UnresolvedCount:      func() *int { value := 2; return &value }(),
 		ApprovalGates:        []string{"registration approval", "exact import approval"},
 		Cancellation: &Cancellation{
 			ID:          "cancel-1",
@@ -62,17 +64,21 @@ func workflowFixture() Workflow {
 		},
 		Steps: []Step{
 			{
-				Sequence:        1,
-				ID:              "registration",
-				ActionPlanID:    "plan-registration",
-				ActionRunID:     "run-registration",
-				ApprovalGate:    "registration approval",
-				ActionKind:      "arr.registration",
-				State:           "succeeded",
-				Outcome:         "applied",
-				LastObservation: "registration accepted",
-				LastObservedAt:  &now,
-				Effects:         []Effect{{ID: "series:101", State: "applied", Outcome: "applied", ObservedAt: &now}},
+				Sequence:         1,
+				ID:               "registration",
+				ActionPlanID:     "plan-registration",
+				ActionRunID:      "run-registration",
+				ApprovalGate:     "registration approval",
+				ActionKind:       "arr.registration",
+				ActionConnection: "sonarr-1",
+				ActionMediaKind:  "episode",
+				ActionProviderID: "tvdb:123",
+				ActionMonitoring: func() *bool { value := false; return &value }(),
+				State:            "succeeded",
+				Outcome:          "applied",
+				LastObservation:  "registration accepted",
+				LastObservedAt:   &now,
+				Effects:          []Effect{{ID: "series:101", State: "applied", Outcome: "applied", ObservedAt: &now}},
 			},
 			{
 				Sequence:          2,
@@ -81,6 +87,10 @@ func workflowFixture() Workflow {
 				ActionRunID:       "run-import",
 				ApprovalGate:      "exact import approval",
 				ActionKind:        "arr.import",
+				ActionConnection:  "sonarr-1",
+				ActionExternalID:  "series-101",
+				ActionPreview:     "preview-7",
+				ActionTransfer:    "copy",
 				State:             "reconciling",
 				Outcome:           "unknown",
 				LastObservation:   "lost response; read-back pending",
@@ -88,7 +98,8 @@ func workflowFixture() Workflow {
 				RetryAt:           &retryAt,
 				RetryReason:       "reconcile before retry",
 				UnresolvedEffects: []string{"episode:101", "subtitle:en"},
-				Effects:           []Effect{{ID: "episode:101", State: "unknown", Evidence: "read-back incomplete"}},
+				Effects:           []Effect{{ID: "file:101", State: "unknown", Evidence: "read-back incomplete"}},
+				ActionFiles:       []ActionFile{{SourceRootID: "downloads", SourcePath: "Show/S01E01.mkv", MovieOrEpisodeID: 101, Role: "video"}, {SourceRootID: "downloads", SourcePath: "Show/S01E01.en.srt", MovieOrEpisodeID: 101, Role: "subtitle"}},
 				Error:             "external result unresolved",
 				Impacts:           []string{"client import", "torrent state remains unchanged"},
 			},
@@ -164,6 +175,8 @@ func TestWorkflowAlreadySatisfiedAndDeadlineStatesRemainVisible(t *testing.T) {
 	item := workflowFixture()
 	item.State = "deadline_exceeded"
 	item.Cancellation = nil
+	item.AggregateEffectCount = func() *int { value := 1; return &value }()
+	item.UnresolvedCount = func() *int { value := 0; return &value }()
 	item.Steps = []Step{{ID: "copy", State: "already_satisfied", Outcome: "already_satisfied", ActionPlanID: "plan-copy", Effects: []Effect{{ID: "file-1", State: "already_satisfied", Outcome: "already_satisfied"}}}}
 	fake := &fakeReader{items: map[string]Workflow{"workflow-1": item}}
 	recorder := httptest.NewRecorder()
@@ -194,5 +207,57 @@ func TestWorkflowRejectsDuplicateStepAndMalformedDraft(t *testing.T) {
 	NewHandler(fake).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/workflows/workflow-1?unknown=dispatch&idempotencyKey=a&idempotencyKey=b", nil))
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("malformed draft status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestWorkflowRejectsContradictoryEffectEvidence(t *testing.T) {
+	cases := []struct {
+		name  string
+		apply func(*Workflow)
+	}{
+		{name: "duplicate observed identity", apply: func(item *Workflow) {
+			item.AggregateEffectCount = func() *int { value := 3; return &value }()
+			item.Steps[0].Effects = append(item.Steps[0].Effects, Effect{ID: "series:101", State: "applied", Outcome: "applied"})
+		}},
+		{name: "resolved and unresolved overlap", apply: func(item *Workflow) {
+			item.Steps[1].UnresolvedEffects = append(item.Steps[1].UnresolvedEffects, "file:101")
+		}},
+		{name: "complete outcome without identity", apply: func(item *Workflow) {
+			item.AggregateEffectCount = func() *int { value := 0; return &value }()
+			item.UnresolvedCount = func() *int { value := 0; return &value }()
+			item.Steps = []Step{{ID: "copy", ActionPlanID: "plan-copy", State: "succeeded", Outcome: "applied"}}
+		}},
+		{name: "aggregate count mismatch", apply: func(item *Workflow) {
+			item.AggregateEffectCount = func() *int { value := 1; return &value }()
+		}},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			item := workflowFixture()
+			testCase.apply(&item)
+			fake := &fakeReader{items: map[string]Workflow{"workflow-1": item}}
+			recorder := httptest.NewRecorder()
+			NewHandler(fake).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/workflows/workflow-1", nil))
+			if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), "incomplete or invalid") {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestWorkflowReasonDraftBoundaryMatchesRenderedLimit(t *testing.T) {
+	fake := &fakeReader{items: map[string]Workflow{"workflow-1": workflowFixture()}}
+	for _, size := range []int{512, 513, 4096, 4097} {
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			query := "reason=" + url.QueryEscape(strings.Repeat("r", size))
+			NewHandler(fake).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/workflows/workflow-1?"+query, nil))
+			if size <= MaxTextLength && recorder.Code != http.StatusOK {
+				t.Fatalf("size=%d status=%d body=%s", size, recorder.Code, recorder.Body.String())
+			}
+			if size > MaxTextLength && recorder.Code != http.StatusBadRequest {
+				t.Fatalf("size=%d status=%d body=%s", size, recorder.Code, recorder.Body.String())
+			}
+		})
 	}
 }

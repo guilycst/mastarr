@@ -163,23 +163,86 @@ type WorkflowRun = Workflow
 // Step is one ordered action/approval unit. Action/uncertainty evidence stays
 // attached to this step and is never rolled into an aggregate success label.
 type Step struct {
-	Sequence          int
-	ID                string
-	ActionPlanID      string
-	ActionRunID       string
-	ApprovalGate      string
-	ActionKind        string
-	State             string
-	Outcome           string
-	LastObservation   string
-	LastObservedAt    *time.Time
-	RetryAt           *time.Time
-	RetryReason       string
-	UnresolvedEffects []string
-	Effects           []Effect
-	Error             string
-	Impacts           []string
-	Destructive       bool
+	Sequence            int
+	ID                  string
+	ActionPlanID        string
+	ActionRunID         string
+	ApprovalGate        string
+	PlanRevision        int
+	PlanDigest          string
+	SourceRevision      string
+	ConfigRevision      string
+	MappingRevision     string
+	ManifestDigest      string
+	DesiredDigest       string
+	ConnectionFences    map[string]string
+	MappingFences       map[string]string
+	ActionKind          string
+	ActionConnection    string
+	ActionMediaKind     string
+	ActionProviderID    string
+	ActionExternalID    string
+	ActionPreview       string
+	ActionTransfer      string
+	ActionExecutor      string
+	ActionTrashID       string
+	ActionRetention     *int
+	ActionMonitoring    *bool
+	ActionSeasonFolder  *bool
+	ActionSeriesType    string
+	ActionQualityID     *int
+	ActionRootFolder    string
+	ActionSeasons       []int
+	ActionEpisodes      []int
+	ActionClientIDs     []string
+	ActionStoppedIDs    []string
+	ActionPermanent     *bool
+	ActionRetainPayload *bool
+	ActionFiles         []ActionFile
+	Manifest            []ManifestEntry
+	Capabilities        []string
+	State               string
+	Outcome             string
+	LastObservation     string
+	LastObservedAt      *time.Time
+	RetryAt             *time.Time
+	RetryReason         string
+	UnresolvedEffects   []string
+	Effects             []Effect
+	Error               string
+	Impacts             []string
+	Destructive         bool
+	ActionIrreversible  bool
+	EstimatedBytes      *int
+}
+
+// ActionFile keeps exact action scope local to the workflow package. It is
+// deliberately separate from the generated API union and from review's model.
+type ActionFile struct {
+	SourceRootID      string
+	SourcePath        string
+	DestinationRootID string
+	DestinationPath   string
+	Identity          string
+	Role              string
+	Size              int
+	MovieOrEpisodeID  int
+	Subtitle          *bool
+	Language          string
+	Forced            *bool
+	HearingImpaired   *bool
+}
+
+// ManifestEntry is the immutable per-step plan manifest projection.
+type ManifestEntry struct {
+	RootID       string
+	RelativePath string
+	Type         string
+	Role         string
+	Size         int
+	Identity     string
+	Digest       string
+	ObservedAt   *time.Time
 }
 
 // Effect is an exact handler-provided effect identity and state. An opaque
@@ -351,7 +414,11 @@ func parseDraft(raw string, defaultSize, maxSize int) (draft, error) {
 			return draft{}, errors.New("unsupported or duplicate draft field")
 		}
 		value := entries[0]
-		if !utf8.ValidString(value) || len(value) > MaxValueLength {
+		maxValueLength := MaxValueLength
+		if key == "reason" {
+			maxValueLength = MaxTextLength
+		}
+		if !utf8.ValidString(value) || len(value) > maxValueLength {
 			return draft{}, errors.New("draft value too large")
 		}
 		switch key {
@@ -385,45 +452,325 @@ func validateWorkflowPage(page WorkflowPage) error {
 }
 
 func validateWorkflow(item Workflow) error {
-	if !validIdentity(item.ID) || item.Name == "" || len(item.Name) > MaxTextLength {
+	if !validIdentity(item.ID) || item.Name == "" || !utf8.ValidString(item.Name) || len(item.Name) > MaxTextLength || strings.ContainsAny(item.Name, "\r\n") {
 		return validationError("workflow identity or name is incomplete")
 	}
 	if !validWorkflowState(item.State) {
 		return validationError("workflow state is unknown")
+	}
+	if item.AggregateEffectCount != nil && *item.AggregateEffectCount < 0 {
+		return validationError("workflow effect count is invalid")
+	}
+	if item.UnresolvedCount != nil && *item.UnresolvedCount < 0 {
+		return validationError("workflow unresolved count is invalid")
+	}
+	for _, value := range []string{item.RecipeVersion, item.PlanRevision, item.PlanDigest, item.SourceRevision, item.ConfigRevision, item.MappingRevision, item.ManifestDigest, item.DesiredDigest} {
+		if !validOptionalEvidenceID(value) {
+			return validationError("workflow immutable binding is invalid")
+		}
+	}
+	if item.DeadlineAt != nil && item.DeadlineAt.IsZero() {
+		return validationError("workflow deadline is invalid")
+	}
+	for _, value := range item.ApprovalGates {
+		if !validEvidenceID(value) {
+			return validationError("workflow approval evidence is invalid")
+		}
+	}
+	if item.Cancellation != nil {
+		if !validEvidenceID(item.Cancellation.ID) || !validCancellationState(item.Cancellation.State) || item.Cancellation.RequestedAt.IsZero() || item.Cancellation.EffectiveAt != nil && item.Cancellation.EffectiveAt.IsZero() || !validOptionalText(item.Cancellation.Reason) {
+			return validationError("workflow cancellation evidence is invalid")
+		}
 	}
 	if len(item.Steps) > MaxSteps {
 		return validationError("workflow has too many steps")
 	}
 	seen := make(map[string]struct{}, len(item.Steps))
 	effects := 0
+	unresolved := 0
 	for index, step := range item.Steps {
-		if step.ID == "" || len(step.ID) > 128 {
+		if !validIdentity(step.ID) {
 			return validationError("workflow step identity is incomplete")
 		}
 		if _, ok := seen[step.ID]; ok {
 			return validationError("workflow step identity is duplicated")
 		}
 		seen[step.ID] = struct{}{}
-		if step.Sequence == 0 {
-			item.Steps[index].Sequence = index + 1
+		if step.Sequence != 0 && step.Sequence != index+1 {
+			return validationError("workflow step ordering is invalid")
+		}
+		if !validIdentity(step.ActionPlanID) {
+			return validationError("workflow action plan identity is incomplete")
+		}
+		if step.ActionRunID != "" && !validIdentity(step.ActionRunID) {
+			return validationError("workflow action run identity is invalid")
 		}
 		if !validStepState(step.State) || !validOutcome(step.Outcome) {
 			return validationError("workflow step state is unknown")
 		}
+		if step.ActionKind != "" && !validActionKind(step.ActionKind) {
+			return validationError("workflow action kind is unknown")
+		}
+		if step.PlanRevision < 0 || step.PlanRevision > int(^uint(0)>>1) {
+			return validationError("workflow plan revision is invalid")
+		}
+		if step.EstimatedBytes != nil && *step.EstimatedBytes < 0 {
+			return validationError("workflow estimate is invalid")
+		}
+		for _, value := range []string{step.ApprovalGate, step.PlanDigest, step.SourceRevision, step.ConfigRevision, step.MappingRevision, step.ManifestDigest, step.DesiredDigest, step.ActionKind, step.ActionConnection, step.ActionMediaKind, step.ActionProviderID, step.ActionExternalID, step.ActionPreview, step.ActionTransfer, step.ActionExecutor, step.ActionTrashID, step.ActionSeriesType, step.ActionRootFolder} {
+			if !validOptionalEvidenceID(value) {
+				return validationError("workflow authority evidence is invalid")
+			}
+		}
+		for _, value := range []string{step.RetryReason, step.LastObservation, step.Error} {
+			if !validOptionalText(value) {
+				return validationError("workflow observation evidence is invalid")
+			}
+		}
+		if step.LastObservedAt != nil && step.LastObservedAt.IsZero() || step.RetryAt != nil && step.RetryAt.IsZero() {
+			return validationError("workflow observation time is invalid")
+		}
+		if err := validateStepScope(step); err != nil {
+			return err
+		}
 		if len(step.Effects)+len(step.UnresolvedEffects) > MaxEffects {
 			return validationError("workflow effects exceed the UI limit")
 		}
-		effects += len(step.Effects) + len(step.UnresolvedEffects)
+		if (step.Outcome == "applied" || step.Outcome == "already_satisfied") && len(step.Effects) == 0 && len(step.UnresolvedEffects) == 0 {
+			return validationError("workflow complete effect evidence is empty")
+		}
+		effects += len(step.Effects)
+		unresolved += len(step.UnresolvedEffects)
 		if effects > MaxEffects {
 			return validationError("workflow effects exceed the UI limit")
+		}
+		if unresolved > MaxEffects {
+			return validationError("workflow unresolved effects exceed the UI limit")
+		}
+	}
+	if item.AggregateEffectCount != nil && *item.AggregateEffectCount != effects {
+		return validationError("workflow aggregate effect count is contradictory")
+	}
+	if item.UnresolvedCount != nil && *item.UnresolvedCount != unresolved {
+		return validationError("workflow unresolved effect count is contradictory")
+	}
+	return nil
+}
+
+func validateStepScope(step Step) error {
+	if len(step.ActionFiles) > MaxEffects || len(step.Manifest) > MaxEffects || len(step.ActionClientIDs) > MaxEffects || len(step.ActionStoppedIDs) > MaxEffects {
+		return validationError("workflow action scope exceeds the UI limit")
+	}
+	for _, file := range step.ActionFiles {
+		if file.SourcePath == "" && file.DestinationPath == "" && file.Identity == "" && file.MovieOrEpisodeID == 0 {
+			return validationError("workflow action file identity is incomplete")
+		}
+		if !validOptionalEvidenceID(file.SourceRootID) || !validOptionalEvidenceID(file.DestinationRootID) || !validOptionalEvidenceID(file.Identity) || !validOptionalEvidenceID(file.Role) || !validOptionalEvidenceID(file.Language) || file.SourcePath != "" && (invalidRelativePath(file.SourcePath) || len(file.SourcePath) > MaxValueLength) || file.DestinationPath != "" && (invalidRelativePath(file.DestinationPath) || len(file.DestinationPath) > MaxValueLength) {
+			return validationError("workflow action path is invalid")
+		}
+		if file.Size < 0 {
+			return validationError("workflow action file size is invalid")
+		}
+		if file.MovieOrEpisodeID < 0 {
+			return validationError("workflow action episode identity is invalid")
+		}
+	}
+	for _, entry := range step.Manifest {
+		if !validEvidenceID(entry.RootID) || entry.RelativePath == "" || invalidRelativePath(entry.RelativePath) || len(entry.RelativePath) > MaxValueLength || entry.Size < 0 || !validManifestType(entry.Type) || !validOptionalEvidenceID(entry.Role) || !validOptionalEvidenceID(entry.Identity) || !validOptionalEvidenceID(entry.Digest) || entry.ObservedAt != nil && entry.ObservedAt.IsZero() {
+			return validationError("workflow manifest is invalid")
+		}
+		if entry.Role != "" && !validFileRole(entry.Role) {
+			return validationError("workflow manifest role is unknown")
+		}
+	}
+	for _, identity := range append(append([]string{}, step.ActionClientIDs...), step.ActionStoppedIDs...) {
+		if !validEvidenceID(identity) {
+			return validationError("workflow client identity is invalid")
+		}
+	}
+	seenEffects := make(map[string]struct{}, len(step.Effects)+len(step.UnresolvedEffects))
+	for _, effect := range step.Effects {
+		if !validEvidenceID(effect.ID) || !validEffectState(effect.State) || !validOutcome(effect.Outcome) {
+			return validationError("workflow effect evidence is incomplete")
+		}
+		if _, exists := seenEffects[effect.ID]; exists {
+			return validationError("workflow effect identity is duplicated")
+		}
+		seenEffects[effect.ID] = struct{}{}
+		if effect.State != "" && effect.Outcome != "" && effect.State != "observed" && effect.State != "unresolved" && effect.State != effect.Outcome {
+			return validationError("workflow effect state is contradictory")
+		}
+		if effect.Evidence != "" && (!utf8.ValidString(effect.Evidence) || len(effect.Evidence) > MaxTextLength) {
+			return validationError("workflow effect evidence is too large")
+		}
+		if effect.Error != "" && (!utf8.ValidString(effect.Error) || len(effect.Error) > MaxTextLength) {
+			return validationError("workflow effect error is too large")
+		}
+	}
+	for _, effect := range step.UnresolvedEffects {
+		if !validEvidenceID(effect) {
+			return validationError("workflow unresolved effect identity is incomplete")
+		}
+		if _, exists := seenEffects[effect]; exists {
+			return validationError("workflow effect is both resolved and unresolved")
+		}
+		seenEffects[effect] = struct{}{}
+	}
+	for _, value := range append(append([]string{}, step.Impacts...), step.Capabilities...) {
+		if !validEvidenceID(value) || len(value) > MaxTextLength {
+			return validationError("workflow authority evidence is too large")
+		}
+	}
+	if err := validateStepActionScope(step); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateStepActionScope(step Step) error {
+	switch step.ActionKind {
+	case "arr.registration":
+		if step.ActionConnection == "" || step.ActionProviderID == "" || !validMediaKind(step.ActionMediaKind) {
+			return validationError("workflow registration identity is incomplete")
+		}
+	case "arr.import":
+		if step.ActionConnection == "" || step.ActionExternalID == "" || step.ActionPreview == "" || !validTransfer(step.ActionTransfer) || len(step.ActionFiles) == 0 {
+			return validationError("workflow import scope is incomplete")
+		}
+		for _, file := range step.ActionFiles {
+			if file.SourceRootID == "" || file.SourcePath == "" || file.MovieOrEpisodeID <= 0 {
+				return validationError("workflow import file identity is incomplete")
+			}
+		}
+	case "fs.copy", "fs.hardlink", "fs.move", "fs.rename", "fs.restore":
+		if len(step.ActionFiles) == 0 {
+			return validationError("workflow mapped scope is incomplete")
+		}
+		if step.ActionKind == "fs.restore" && step.ActionTrashID == "" {
+			return validationError("workflow restore identity is incomplete")
+		}
+		for _, file := range step.ActionFiles {
+			if file.SourceRootID == "" || file.SourcePath == "" || file.DestinationRootID == "" || file.DestinationPath == "" {
+				return validationError("workflow mapped file identity is incomplete")
+			}
+		}
+	case "fs.trash", "fs.delete":
+		if len(step.ActionFiles) == 0 {
+			return validationError("workflow target scope is incomplete")
+		}
+		if step.ActionKind == "fs.trash" && (step.ActionRetention == nil || *step.ActionRetention < 0) {
+			return validationError("workflow trash retention is incomplete")
+		}
+		for _, file := range step.ActionFiles {
+			if file.SourceRootID == "" || file.SourcePath == "" {
+				return validationError("workflow file target identity is incomplete")
+			}
+		}
+	case "descriptor.delete":
+		if len(step.ActionFiles) == 0 {
+			return validationError("workflow descriptor scope is incomplete")
+		}
+		for _, file := range step.ActionFiles {
+			if file.Identity == "" {
+				return validationError("workflow descriptor identity is incomplete")
+			}
+		}
+	case "client.stop", "client.remove":
+		if step.ActionConnection == "" || len(step.ActionClientIDs) == 0 {
+			return validationError("workflow client scope is incomplete")
+		}
+	case "jellyfin.refresh":
+		if step.ActionConnection == "" {
+			return validationError("workflow refresh connection is incomplete")
+		}
+		if len(step.ActionFiles) > 1 {
+			return validationError("workflow refresh scope is ambiguous")
+		}
+		for _, file := range step.ActionFiles {
+			if file.Identity == "" {
+				return validationError("workflow refresh item identity is incomplete")
+			}
 		}
 	}
 	return nil
 }
 
+func validManifestType(value string) bool {
+	switch value {
+	case "file", "directory", "subtitle", "companion":
+		return true
+	default:
+		return false
+	}
+}
+
+func validMediaKind(value string) bool {
+	switch value {
+	case "anime", "episode", "movie", "season":
+		return true
+	default:
+		return false
+	}
+}
+
+func validTransfer(value string) bool {
+	switch value {
+	case "copy", "hardlink", "move":
+		return true
+	default:
+		return false
+	}
+}
+
+func validFileRole(value string) bool {
+	switch value {
+	case "video", "subtitle", "companion":
+		return true
+	default:
+		return false
+	}
+}
+
+func invalidRelativePath(value string) bool {
+	return strings.HasPrefix(value, "/") || strings.Contains(value, "..") || !utf8.ValidString(value)
+}
+
+func validEvidenceID(value string) bool {
+	return value != "" && utf8.ValidString(value) && len(value) <= MaxValueLength && !strings.ContainsAny(value, "\r\n")
+}
+
+func validOptionalEvidenceID(value string) bool {
+	return value == "" || validEvidenceID(value)
+}
+
+func validOptionalText(value string) bool {
+	return value == "" || utf8.ValidString(value) && len(value) <= MaxTextLength && !strings.ContainsAny(value, "\r\n")
+}
+
+func validEffectState(state string) bool {
+	if state == "" {
+		return true
+	}
+	switch state {
+	case "observed", "applied", "already_satisfied", "pending", "unknown", "unresolved", "failed", "cancelled":
+		return true
+	default:
+		return false
+	}
+}
+
 func validWorkflowState(state string) bool {
 	switch state {
 	case "awaiting_approval", "running", "waiting_dependency", "needs_review", "succeeded", "failed", "cancelled", "deadline_exceeded":
+		return true
+	default:
+		return false
+	}
+}
+
+func validCancellationState(state string) bool {
+	switch state {
+	case "acknowledged", "already_terminal", "effective", "requested":
 		return true
 	default:
 		return false
@@ -528,10 +875,14 @@ func renderWorkflowDetail(w http.ResponseWriter, id string, state draft, item Wo
 		} else {
 			_, _ = io.WriteString(out, "<dt>Deadline</dt><dd>"+value(item.DeadlineAt.UTC().Format(time.RFC3339))+"</dd>")
 		}
-		if item.AggregateEffectCount != nil {
+		if item.AggregateEffectCount == nil {
+			_, _ = io.WriteString(out, "<dt>Observed effects</dt><dd>unknown</dd>")
+		} else {
 			_, _ = io.WriteString(out, "<dt>Observed effects</dt><dd>"+strconv.Itoa(*item.AggregateEffectCount)+"</dd>")
 		}
-		if item.UnresolvedCount != nil {
+		if item.UnresolvedCount == nil {
+			_, _ = io.WriteString(out, "<dt>Unresolved effects</dt><dd>unknown</dd>")
+		} else {
 			_, _ = io.WriteString(out, "<dt>Unresolved effects</dt><dd>"+strconv.Itoa(*item.UnresolvedCount)+"</dd>")
 		}
 		_, _ = io.WriteString(out, "</dl>")
@@ -589,7 +940,9 @@ func renderSteps(out io.Writer, item Workflow) {
 		if step.Error != "" {
 			_, _ = io.WriteString(out, "<dt>Error</dt><dd role=\"alert\">"+value(step.Error)+"</dd>")
 		}
+		renderStepAuthority(out, step)
 		_, _ = io.WriteString(out, "</dl>")
+		renderStepScope(out, step)
 		if len(step.Effects) > 0 || len(step.UnresolvedEffects) > 0 {
 			_, _ = io.WriteString(out, "<h4>Effects</h4><ul>")
 			for _, effect := range step.Effects {
@@ -612,6 +965,174 @@ func renderSteps(out io.Writer, item Workflow) {
 		_, _ = io.WriteString(out, "</li>")
 	}
 	_, _ = io.WriteString(out, "</ol></section>")
+}
+
+func renderStepAuthority(out io.Writer, step Step) {
+	for _, row := range [][2]string{
+		{"Plan revision", planRevisionText(step.PlanRevision)},
+		{"Plan digest", step.PlanDigest},
+		{"Source revision", step.SourceRevision},
+		{"Configuration revision", step.ConfigRevision},
+		{"Mapping revision", step.MappingRevision},
+		{"Manifest digest", step.ManifestDigest},
+		{"Desired-state digest", step.DesiredDigest},
+	} {
+		_, _ = io.WriteString(out, "<dt>"+value(row[0])+"</dt><dd>"+valueOrUnknown(row[1])+"</dd>")
+	}
+	for _, fence := range sortedMapPairs(step.ConnectionFences) {
+		_, _ = io.WriteString(out, "<dt>Connection fence "+value(fence[0])+"</dt><dd>"+valueOrUnknown(fence[1])+"</dd>")
+	}
+	for _, fence := range sortedMapPairs(step.MappingFences) {
+		_, _ = io.WriteString(out, "<dt>Mapping fence "+value(fence[0])+"</dt><dd>"+valueOrUnknown(fence[1])+"</dd>")
+	}
+	if len(step.Capabilities) == 0 {
+		_, _ = io.WriteString(out, "<dt>Capabilities</dt><dd>unknown</dd>")
+	} else {
+		_, _ = io.WriteString(out, "<dt>Capabilities</dt><dd>"+value(strings.Join(step.Capabilities, ", "))+"</dd>")
+	}
+	if step.EstimatedBytes == nil {
+		_, _ = io.WriteString(out, "<dt>Estimated storage bytes</dt><dd>unknown</dd>")
+	} else {
+		_, _ = io.WriteString(out, "<dt>Estimated storage bytes</dt><dd>"+strconv.Itoa(*step.EstimatedBytes)+"</dd>")
+	}
+	if step.ActionConnection != "" {
+		_, _ = io.WriteString(out, "<dt>Connection</dt><dd>"+value(step.ActionConnection)+"</dd>")
+	}
+	if step.ActionMediaKind != "" {
+		_, _ = io.WriteString(out, "<dt>Media kind</dt><dd>"+value(step.ActionMediaKind)+"</dd>")
+	}
+	if step.ActionProviderID != "" {
+		_, _ = io.WriteString(out, "<dt>Provider ID</dt><dd>"+value(step.ActionProviderID)+"</dd>")
+	}
+	if step.ActionExternalID != "" {
+		_, _ = io.WriteString(out, "<dt>Registered external ID</dt><dd>"+value(step.ActionExternalID)+"</dd>")
+	}
+	if step.ActionPreview != "" {
+		_, _ = io.WriteString(out, "<dt>Preview revision</dt><dd>"+value(step.ActionPreview)+"</dd>")
+	}
+	if step.ActionTransfer != "" {
+		_, _ = io.WriteString(out, "<dt>Transfer</dt><dd>"+value(step.ActionTransfer)+"</dd>")
+	}
+	if step.ActionExecutor != "" {
+		_, _ = io.WriteString(out, "<dt>Executor</dt><dd>"+value(step.ActionExecutor)+"</dd>")
+	}
+	if step.ActionTrashID != "" {
+		_, _ = io.WriteString(out, "<dt>Trash entry</dt><dd>"+value(step.ActionTrashID)+"</dd>")
+	}
+	if step.ActionRetention == nil {
+		if step.ActionKind == "fs.trash" {
+			_, _ = io.WriteString(out, "<dt>Retention days</dt><dd>unknown</dd>")
+		}
+	} else {
+		_, _ = io.WriteString(out, "<dt>Retention days</dt><dd>"+strconv.Itoa(*step.ActionRetention)+"</dd>")
+	}
+	if step.ActionKind == "arr.registration" {
+		_, _ = io.WriteString(out, "<dt>Monitoring</dt><dd>"+boolOrUnknown(step.ActionMonitoring)+"</dd><dt>Season folder</dt><dd>"+boolOrUnknown(step.ActionSeasonFolder)+"</dd><dt>Series type</dt><dd>"+valueOrUnknown(step.ActionSeriesType)+"</dd><dt>Quality profile</dt><dd>"+intOrUnknown(step.ActionQualityID)+"</dd><dt>Root folder</dt><dd>"+valueOrUnknown(step.ActionRootFolder)+"</dd>")
+		if len(step.ActionSeasons) == 0 {
+			_, _ = io.WriteString(out, "<dt>Selected seasons</dt><dd>unknown</dd>")
+		} else {
+			_, _ = io.WriteString(out, "<dt>Selected seasons</dt><dd>"+value(intListText(step.ActionSeasons))+"</dd>")
+		}
+	}
+	if len(step.ActionClientIDs) == 0 {
+		if step.ActionKind == "client.stop" || step.ActionKind == "client.remove" {
+			_, _ = io.WriteString(out, "<dt>Client or torrent IDs</dt><dd>unknown</dd>")
+		}
+	} else {
+		_, _ = io.WriteString(out, "<dt>Client or torrent IDs</dt><dd>"+value(strings.Join(step.ActionClientIDs, ", "))+"</dd>")
+	}
+	if len(step.ActionStoppedIDs) == 0 {
+		if step.ActionKind == "fs.trash" {
+			_, _ = io.WriteString(out, "<dt>Stopped-client prerequisites</dt><dd>unknown</dd>")
+		}
+	} else {
+		_, _ = io.WriteString(out, "<dt>Stopped-client prerequisites</dt><dd>"+value(strings.Join(step.ActionStoppedIDs, ", "))+"</dd>")
+	}
+	if step.ActionKind == "client.remove" {
+		_, _ = io.WriteString(out, "<dt>Retain payload</dt><dd>"+boolOrUnknown(step.ActionRetainPayload)+"</dd>")
+	}
+	if step.ActionKind == "fs.delete" {
+		_, _ = io.WriteString(out, "<dt>Permanent deletion</dt><dd>"+boolOrUnknown(step.ActionPermanent)+"</dd>")
+	}
+	if step.Destructive || step.ActionIrreversible {
+		_, _ = io.WriteString(out, "<dt>Irreversible scope</dt><dd>true; unselected payload remains outside this exact plan</dd>")
+	}
+}
+
+func renderStepScope(out io.Writer, step Step) {
+	if len(step.Manifest) > 0 {
+		_, _ = io.WriteString(out, "<h4>Immutable plan manifest</h4><table><caption>Exact per-step selected objects</caption><thead><tr><th>Root</th><th>Path</th><th>Type</th><th>Role</th><th>Size</th><th>Identity</th><th>Observed</th></tr></thead><tbody>")
+		for _, entry := range step.Manifest {
+			observed := "unknown"
+			if entry.ObservedAt != nil && !entry.ObservedAt.IsZero() {
+				observed = entry.ObservedAt.UTC().Format(time.RFC3339)
+			}
+			_, _ = io.WriteString(out, "<tr><td>"+value(entry.RootID)+"</td><td>"+value(entry.RelativePath)+"</td><td>"+value(entry.Type)+"</td><td>"+valueOrUnknown(entry.Role)+"</td><td>"+strconv.Itoa(entry.Size)+"</td><td>"+valueOrUnknown(entry.Identity)+"</td><td>"+value(observed)+"</td></tr>")
+		}
+		_, _ = io.WriteString(out, "</tbody></table>")
+	}
+	if len(step.ActionFiles) > 0 {
+		_, _ = io.WriteString(out, "<h4>Exact action scope</h4><table><caption>Action files and associations</caption><thead><tr><th>Source</th><th>Destination</th><th>Identity</th><th>Role</th><th>Episode or movie</th><th>Subtitle</th><th>Language</th><th>Forced</th><th>SDH</th></tr></thead><tbody>")
+		for _, file := range step.ActionFiles {
+			subtitle := boolOrUnknown(file.Subtitle)
+			forced := boolOrUnknown(file.Forced)
+			sdh := boolOrUnknown(file.HearingImpaired)
+			_, _ = io.WriteString(out, "<tr><td>"+value(file.SourceRootID+"/"+file.SourcePath)+"</td><td>"+value(file.DestinationRootID+"/"+file.DestinationPath)+"</td><td>"+valueOrUnknown(file.Identity)+"</td><td>"+valueOrUnknown(file.Role)+"</td><td>"+intOrUnknownValue(file.MovieOrEpisodeID)+"</td><td>"+value(subtitle)+"</td><td>"+valueOrUnknown(file.Language)+"</td><td>"+value(forced)+"</td><td>"+value(sdh)+"</td></tr>")
+		}
+		_, _ = io.WriteString(out, "</tbody></table>")
+	}
+}
+
+func planRevisionText(revision int) string {
+	if revision <= 0 {
+		return ""
+	}
+	return strconv.Itoa(revision)
+}
+
+func boolOrUnknown(value *bool) string {
+	if value == nil {
+		return "unknown"
+	}
+	return strconv.FormatBool(*value)
+}
+
+func intOrUnknown(value *int) string {
+	if value == nil {
+		return "unknown"
+	}
+	return strconv.Itoa(*value)
+}
+
+func intOrUnknownValue(value int) string {
+	if value <= 0 {
+		return "unknown"
+	}
+	return strconv.Itoa(value)
+}
+
+func intListText(values []int) string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		result = append(result, strconv.Itoa(value))
+	}
+	return strings.Join(result, ", ")
+}
+
+func sortedMapPairs(values map[string]string) [][2]string {
+	if len(values) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([][2]string, 0, len(keys))
+	for _, key := range keys {
+		result = append(result, [2]string{key, values[key]})
+	}
+	return result
 }
 
 func stepDisplayState(step Step) string {

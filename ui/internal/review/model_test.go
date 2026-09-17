@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -100,6 +102,8 @@ func reviewFixture(kind string) Review {
 	if kind == "arr.registration" {
 		item.Action.Files = nil
 		item.Action.PreviewRevision = ""
+	} else if kind == "arr.import" {
+		item.Action.RegisteredExternalID = "series-101"
 	}
 	return item
 }
@@ -121,7 +125,7 @@ func TestRegistrationReviewRendersTwoExplicitPhasesAndExactScope(t *testing.T) {
 		"sha256:immutable-plan", "connection-r7", "mapping-r4",
 		"Series/Season 01/E01.mkv", "inode-1", "registration observed",
 		"Idempotency key", "retry-key", "keep draft", "Monitoring is unchecked",
-		"Hardlink failure requires a new copy plan", "API-owned observation",
+		"API-owned observation",
 	} {
 		if !strings.Contains(strings.ToLower(body), strings.ToLower(expected)) {
 			t.Fatalf("body missing %q: %s", expected, body)
@@ -150,14 +154,78 @@ func TestImportReviewRendersAssociationsAndPreservesDraftFields(t *testing.T) {
 	body := recorder.Body.String()
 	for _, expected := range []string{
 		"1. Registration prerequisite", "2. Exact import approval", "Preview revision", "preview-7",
-		"E01.mkv", "E01.en.srt", "subtitle", "en", "true", "future monitoring",
+		"E01.mkv", "E01.en.srt", "subtitle", "en", "true",
 		"lost-response-key", "sourceRevision", "source-2", "configRevision", "config-3",
 		"mappingRevision", "mapping-4", "manifestDigest", "manifest-5", "desiredDigest", "desired-6",
-		`name="monitoring" value="true" checked`, `name="fallback" value="copy" checked`,
+		`name="fallback" value="copy" checked`,
 	} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("body missing %q: %s", expected, body)
 		}
+	}
+	if strings.Contains(body, `name="monitoring"`) || strings.Contains(body, "future monitoring") {
+		t.Fatalf("import-only review rendered inapplicable monitoring control: %s", body)
+	}
+}
+
+func TestReviewRendersActionAuthorityAndScopesControlsByKind(t *testing.T) {
+	trueValue := true
+	cases := []struct {
+		name     string
+		kind     string
+		prepare  func(*Review)
+		contains []string
+		controls []string
+	}{
+		{name: "client stop", kind: "client.stop", prepare: func(item *Review) { item.Action.ClientItemIDs = []string{"torrent-exact-1"} }, contains: []string{"torrent-exact-1", "Client or torrent IDs"}, controls: []string{"monitoring", "Transfer fallback"}},
+		{name: "client remove", kind: "client.remove", prepare: func(item *Review) {
+			item.Action.ClientItemIDs = []string{"torrent-exact-1"}
+			item.Action.RetainPayload = &trueValue
+		}, contains: []string{"torrent-exact-1", "Retain payload", "Irreversible scope"}, controls: []string{"monitoring"}},
+		{name: "trash", kind: "fs.trash", prepare: func(item *Review) {
+			days := 30
+			item.Action.RetentionDays = &days
+			item.Action.StoppedClientIDs = []string{"torrent-exact-1"}
+		}, contains: []string{"Retention days", "30", "Stopped-client prerequisites", "torrent-exact-1"}, controls: []string{"monitoring", "Transfer fallback"}},
+		{name: "delete", kind: "fs.delete", prepare: func(item *Review) {
+			item.Action.Files = []ActionFile{{SourceRootID: "downloads", SourcePath: "Show/E01.mkv"}}
+			item.Action.Permanent = &trueValue
+			item.Action.Irreversible = true
+		}, contains: []string{"Permanent deletion", "true", "Irreversible scope"}, controls: []string{"monitoring", "Transfer fallback"}},
+		{name: "hardlink", kind: "fs.hardlink", prepare: func(item *Review) {
+			for index := range item.Action.Files {
+				item.Action.Files[index].DestinationRootID = "library"
+				item.Action.Files[index].DestinationPath = item.Action.Files[index].SourcePath
+			}
+		}, contains: []string{"Estimated storage bytes", "unknown", "Hardlink failure requires a new copy plan"}, controls: []string{"monitoring"}},
+		{name: "descriptor delete", kind: "descriptor.delete", prepare: func(item *Review) {
+			item.Action.Files = []ActionFile{{Identity: "descriptor-1"}}
+			item.Action.Irreversible = true
+		}, contains: []string{"descriptor-1", "Irreversible scope"}, controls: []string{"monitoring", "Transfer fallback"}},
+		{name: "jellyfin refresh", kind: "jellyfin.refresh", prepare: func(item *Review) { item.Action.Files = nil }, contains: []string{"Action kind", "jellyfin.refresh", "Capabilities"}, controls: []string{"monitoring", "Transfer fallback"}},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			item := reviewFixture(testCase.kind)
+			testCase.prepare(&item)
+			fake := &fakeReader{items: map[string]Review{"plan-1": item}}
+			recorder := httptest.NewRecorder()
+			NewHandler(fake).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/reviews/plan-1", nil))
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+			body := recorder.Body.String()
+			for _, expected := range testCase.contains {
+				if !strings.Contains(body, expected) {
+					t.Fatalf("body missing %q: %s", expected, body)
+				}
+			}
+			for _, forbidden := range testCase.controls {
+				if strings.Contains(body, forbidden) {
+					t.Fatalf("body rendered inapplicable control %q: %s", forbidden, body)
+				}
+			}
+		})
 	}
 }
 
@@ -230,5 +298,22 @@ func TestReviewValidationRejectsUnknownStatusAndInvalidScope(t *testing.T) {
 	NewHandler(fake).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/reviews/plan-1", nil))
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("invalid scope status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestReviewReasonDraftBoundaryMatchesRenderedLimit(t *testing.T) {
+	fake := &fakeReader{items: map[string]Review{"plan-1": reviewFixture("arr.registration")}}
+	for _, size := range []int{512, 513, 4096, 4097} {
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			query := "reason=" + url.QueryEscape(strings.Repeat("r", size))
+			NewHandler(fake).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/reviews/plan-1?"+query, nil))
+			if size <= MaxTextLength && recorder.Code != http.StatusOK {
+				t.Fatalf("size=%d status=%d body=%s", size, recorder.Code, recorder.Body.String())
+			}
+			if size > MaxTextLength && recorder.Code != http.StatusBadRequest {
+				t.Fatalf("size=%d status=%d body=%s", size, recorder.Code, recorder.Body.String())
+			}
+		})
 	}
 }

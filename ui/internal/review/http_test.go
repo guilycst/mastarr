@@ -57,3 +57,35 @@ func TestHTTPReaderRejectsUnknownResponseFieldsAndUnsafeURL(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestHTTPReaderRejectsDuplicateAndUnknownNestedActionFields(t *testing.T) {
+	const planID = "00000000-0000-0000-0000-000000000001"
+	for _, testCase := range []struct {
+		name string
+		body string
+	}{
+		{
+			name: "duplicate nested field",
+			body: `{"id":"` + planID + `","revision":1,"digest":"digest","status":"ready","requiredApproval":"review","action":{"kind":"arr.registration","connectionId":"c","mediaKind":"episode","providerId":"p","fields":{"monitored":false,"monitored":true}},"manifest":[],"preconditions":[],"capabilities":[],"desiredState":{}}`,
+		},
+		{
+			name: "unknown nested field",
+			body: `{"id":"` + planID + `","revision":1,"digest":"digest","status":"ready","requiredApproval":"review","action":{"kind":"arr.registration","connectionId":"c","mediaKind":"episode","providerId":"p","fields":{"unexpected":true}},"manifest":[],"preconditions":[],"capabilities":[],"desiredState":{}}`,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, testCase.body)
+			}))
+			defer server.Close()
+			reader, err := NewHTTPReader(server.URL, server.Client(), time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := reader.GetReview(context.Background(), planID); err == nil || !strings.Contains(err.Error(), "response invalid") {
+				t.Fatalf("GetReview() error = %v, want sanitized protocol error", err)
+			}
+		})
+	}
+}
