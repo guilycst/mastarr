@@ -138,11 +138,14 @@ func TestPlannedTrashReplayWithoutIdempotencyKeyDoesNotDispatch(t *testing.T) {
 	}
 
 	result, err := service.Trash(context.Background(), request)
-	if !errors.Is(err, ErrClaimed) || result.Entry.State != "planned" {
+	if !errors.Is(err, ErrUncertain) || result.Entry.State != "planned" || !result.Retryable {
 		t.Fatalf("planned replay result=%+v err=%v", result, err)
 	}
 	if action.trashCalls != 0 {
 		t.Fatalf("planned replay dispatched %d trash calls", action.trashCalls)
+	}
+	if read.calls < 2 {
+		t.Fatalf("planned replay performed %d reads, want original and trash observations", read.calls)
 	}
 }
 

@@ -164,14 +164,63 @@ type RetryRequest struct {
 	Operation Operation
 }
 
-// Operation names the two mutually exclusive janitor operations.
+// Operation names the janitor operations and the read-only trash-intent
+// reconciliation. Trash reconciliation is not a janitor mutation operation;
+// the existing purge journal row stores its durable evidence because the
+// initial schema intentionally has no third janitor operation.
 type Operation string
 
 const (
 	OperationPurge   Operation = "purge"
 	OperationRestore Operation = "restore"
-	operationTrash   Operation = "trash"
+	OperationTrash   Operation = "trash"
+	operationTrash   Operation = OperationTrash
 )
+
+// TrashReconciliationState is the exact per-item observation derived from the
+// original and mapped trash paths. It is persisted as evidence in the purge
+// journal row; it never authorizes a filesystem mutation by itself.
+type TrashReconciliationState string
+
+const (
+	TrashSourceOnly        TrashReconciliationState = "source_only"
+	TrashOnly              TrashReconciliationState = "trash_only"
+	TrashBothPresent       TrashReconciliationState = "both_present"
+	TrashNeitherObservable TrashReconciliationState = "neither_observable"
+	TrashChangedIdentity   TrashReconciliationState = "changed_identity"
+	TrashPartial           TrashReconciliationState = "partial"
+	TrashDirectoryLeaf     TrashReconciliationState = "directory_leaf"
+	TrashPartialDirectory  TrashReconciliationState = "partial_directory_leaves"
+	TrashRetryPending      TrashReconciliationState = "retry_pending"
+)
+
+type trashReconciliationItem struct {
+	ItemID       string                    `json:"itemId"`
+	OriginalPath string                    `json:"originalPath"`
+	TrashPath    string                    `json:"trashPath"`
+	State        TrashReconciliationState  `json:"state"`
+	ObservedAt   time.Time                 `json:"observedAt,omitempty"`
+	Original     *domain.FileManifestEntry `json:"original,omitempty"`
+	Trash        *domain.FileManifestEntry `json:"trash,omitempty"`
+	Evidence     []string                  `json:"evidence,omitempty"`
+}
+
+type trashReconciliation struct {
+	Operation   Operation                 `json:"operation"`
+	State       string                    `json:"state"`
+	Disposition TrashReconciliationState  `json:"disposition"`
+	ObservedAt  time.Time                 `json:"observedAt"`
+	Items       []trashReconciliationItem `json:"items"`
+	Evidence    []string                  `json:"evidence,omitempty"`
+}
+
+// TrashRetryRequest is an explicit authorization to retry a planned trash
+// intent after read-only reconciliation proves that every selected source is
+// still present and every mapped destination is absent.
+type TrashRetryRequest struct {
+	EntryID string
+	ID      string
+}
 
 // Item is the public, non-storage representation of one persisted manifest
 // item. It contains exact root-relative paths and identity evidence, never a
@@ -340,6 +389,9 @@ func (service *Service) Trash(ctx context.Context, request TrashRequest) (Result
 		if result, found, lookupErr := service.lookupIdempotency(ctx, "trash", normalized.IdempotencyKey, digest); lookupErr != nil {
 			return Result{}, lookupErr
 		} else if found {
+			if result.Entry.State == "planned" {
+				return service.ReconcileTrash(ctx, result.Entry.ID)
+			}
 			return service.replayTrashResult(result)
 		}
 	}
@@ -358,10 +410,13 @@ func (service *Service) Trash(ctx context.Context, request TrashRequest) (Result
 		if err := service.ensureEntryRequestMatches(existing, normalized, digest); err != nil {
 			return Result{}, err
 		}
-		// A durable planned entry already records an intent whose dispatch may
-		// have happened before the process stopped. Reconcile it through the
-		// read-only path; never dispatch the same intent a second time merely
-		// because the API request had no idempotency key.
+		if existing.State == "planned" {
+			// A durable planned entry already records an intent whose dispatch may
+			// have happened before the process stopped. Inspect both exact paths
+			// before reporting pending or materialized; never infer safety from the
+			// state alone or dispatch the same intent from a replay.
+			return service.ReconcileTrash(ctx, existing.ID)
+		}
 		return service.replayTrashResult(Result{Entry: existing})
 	} else if !errors.Is(getErr, ErrNotFound) {
 		return Result{}, getErr
@@ -540,6 +595,22 @@ func (service *Service) Tick(ctx context.Context, limit int) (TickResult, error)
 	if _, err := service.store.Queries().RecoverExpiredJanitorRecords(ctx, formatTime(now)); err != nil {
 		return TickResult{}, fmt.Errorf("%w: recover janitor leases: %v", ErrStorage, err)
 	}
+	if err := service.recoverExpiredPlannedTrashClaim(ctx, now); err != nil {
+		return TickResult{}, err
+	}
+	planned, err := service.listPlannedTrashEntries(ctx, limit)
+	if err != nil {
+		return TickResult{}, err
+	}
+	tick := TickResult{Results: make([]Result, 0, len(planned)+limit)}
+	for _, entryID := range planned {
+		result, reconcileErr := service.ReconcileTrash(ctx, entryID)
+		tick.Processed++
+		if errors.Is(reconcileErr, ErrHeld) {
+			tick.Held++
+		}
+		tick.Results = append(tick.Results, result)
+	}
 	due, err := service.store.Queries().ListDueTrashEntries(ctx, &sqlc.ListDueTrashEntriesParams{Now: formatTime(now), Limit: int64(limit)})
 	if err != nil {
 		return TickResult{}, fmt.Errorf("%w: list due entries: %v", ErrStorage, err)
@@ -555,7 +626,6 @@ func (service *Service) Tick(ctx context.Context, limit int) (TickResult, error)
 	if err != nil {
 		return TickResult{}, fmt.Errorf("%w: list due janitor records: %v", ErrStorage, err)
 	}
-	tick := TickResult{Results: make([]Result, 0, len(records))}
 	for _, record := range records {
 		if len(tick.Results) >= limit {
 			break
@@ -625,11 +695,598 @@ func (service *Service) Recover(ctx context.Context) (int, error) {
 	if err := service.validateContext(ctx); err != nil {
 		return 0, err
 	}
-	recovered, err := service.store.Queries().RecoverRunningJanitorRecords(ctx, formatTime(service.now()))
+	now := service.now()
+	if now.IsZero() {
+		return 0, ErrClock
+	}
+	if err := service.recoverExpiredPlannedTrashClaim(ctx, now); err != nil {
+		return 0, err
+	}
+	recovered, err := service.store.Queries().RecoverRunningJanitorRecords(ctx, formatTime(now))
 	if err != nil {
 		return 0, fmt.Errorf("%w: recover running janitor records: %v", ErrStorage, err)
 	}
+	// Planned trash intents have no janitor operation of their own in the
+	// frozen schema. Discover them by entry state and run the read-only
+	// reconciliation so a process restart cannot strand an intent. The result
+	// is durably journalled even when the observation remains unresolved.
+	planned, listErr := service.listPlannedTrashEntries(ctx, service.maxItems)
+	if listErr != nil {
+		return 0, listErr
+	}
+	for _, entryID := range planned {
+		_, _ = service.ReconcileTrash(ctx, entryID)
+	}
 	return len(recovered), nil
+}
+
+// ReconcileTrash performs the explicit read-only recovery for an interrupted
+// trash intent. It observes every exact original and mapped destination and
+// persists per-item evidence in the durable purge journal row. It never calls
+// a filesystem action or download-client mutation.
+func (service *Service) ReconcileTrash(ctx context.Context, entryID string) (Result, error) {
+	if err := service.validateContext(ctx); err != nil {
+		return Result{}, err
+	}
+	if err := validateID(entryID); err != nil {
+		return Result{}, err
+	}
+	entry, err := service.loadEntry(ctx, entryID)
+	if err != nil {
+		return Result{}, err
+	}
+	if entry.State == "trashed" {
+		return alreadySatisfiedResult(entry, "trash_already_materialized"), nil
+	}
+	if entry.State != "planned" {
+		return resultForEntry(entry, "trash_reconciliation_not_planned"), fmt.Errorf("%w: trash entry is %s", ErrConflict, entry.State)
+	}
+	if entry.ActiveOperation == operationTrash || entry.ActiveOperation == OperationPurge {
+		if entry.LeaseUntil != nil && service.now().Before(*entry.LeaseUntil) && entry.ClaimedBy != service.workerID {
+			return resultForEntry(entry, "trash_reconciliation_claimed"), ErrClaimed
+		}
+		if err := service.recoverExpiredPlannedTrashClaim(ctx, service.now()); err != nil {
+			return Result{Entry: entry}, err
+		}
+		entry, err = service.loadEntry(ctx, entryID)
+		if err != nil {
+			return Result{}, err
+		}
+		if entry.ActiveOperation == OperationPurge {
+			return resultForEntry(entry, "trash_reconciliation_claimed"), ErrClaimed
+		}
+	}
+	now := service.now()
+	if now.IsZero() {
+		return Result{}, ErrClock
+	}
+	reconciliation, effects := service.observePlannedTrash(ctx, entry)
+	if err := service.persistTrashReconciliation(ctx, entry, reconciliation, effects, now); err != nil {
+		return Result{Entry: entry, Effects: effects, Evidence: reconciliation.Evidence}, err
+	}
+	latest, loadErr := service.loadEntry(persistenceContext(ctx), entry.ID)
+	if loadErr == nil {
+		entry = latest
+	}
+	result := Result{Entry: entry, Effects: effects, Evidence: append([]string(nil), reconciliation.Evidence...)}
+	switch reconciliation.Disposition {
+	case TrashOnly:
+		result.Outcome = domain.OutcomeAlreadySatisfied
+		result.Evidence = append(result.Evidence, "trash_materialized_by_readback")
+		return result, nil
+	case TrashSourceOnly:
+		result.Retryable = true
+		result.Evidence = append(result.Evidence, "trash_retry_requires_explicit_authorization")
+		return result, ErrUncertain
+	default:
+		result.Evidence = append(result.Evidence, "trash_reconciliation_requires_review")
+		return result, ErrHeld
+	}
+}
+
+// RetryTrash is the separately authorized mutation path for a planned intent.
+// It requires a fresh source-only reconciliation, takes an object-scoped
+// durable lease, and then dispatches exactly the stored manifest. A caller
+// cannot turn a collision, partial result or unknown observation into a
+// retry by state alone.
+func (service *Service) RetryTrash(ctx context.Context, request TrashRetryRequest) (Result, error) {
+	if err := service.validateContext(ctx); err != nil {
+		return Result{}, err
+	}
+	entryID := strings.TrimSpace(request.EntryID)
+	if entryID == "" {
+		entryID = strings.TrimSpace(request.ID)
+	}
+	if err := validateID(entryID); err != nil {
+		return Result{}, err
+	}
+	reconciled, reconcileErr := service.ReconcileTrash(ctx, entryID)
+	if (!errors.Is(reconcileErr, ErrUncertain) && reconcileErr != nil) || !reconciled.Retryable {
+		return reconciled, reconcileErr
+	}
+	claim, err := service.claimPlannedTrash(ctx, entryID)
+	if err != nil {
+		return reconciled, err
+	}
+	return service.dispatchPlannedTrash(ctx, claim)
+}
+
+func (service *Service) observePlannedTrash(ctx context.Context, entry Entry) (trashReconciliation, []ItemEffect) {
+	now := service.now()
+	reconciliation := trashReconciliation{Operation: OperationTrash, State: "observed", ObservedAt: now, Items: make([]trashReconciliationItem, 0, len(entry.Items))}
+	effects := make([]ItemEffect, 0, len(entry.Items))
+	if len(entry.Items) == 0 {
+		reconciliation.Disposition = TrashNeitherObservable
+		reconciliation.Evidence = []string{"trash_manifest_has_no_actionable_items"}
+		return reconciliation, effects
+	}
+	states := make([]TrashReconciliationState, 0, len(entry.Items))
+	for _, item := range entry.Items {
+		originalTarget := domain.FileTarget{RootID: item.RootID, RelativePath: item.OriginalRelativePath}
+		trashTarget := domain.FileTarget{RootID: item.RootID, RelativePath: item.TrashRelativePath}
+		original, originalErr := service.read.Stat(ctx, originalTarget)
+		trash, trashErr := service.read.Stat(ctx, trashTarget)
+		observation := trashReconciliationItem{ItemID: item.ID, OriginalPath: item.OriginalRelativePath, TrashPath: item.TrashRelativePath, ObservedAt: now}
+		itemEffect := ItemEffect{ItemID: item.ID, Path: item.OriginalRelativePath, Operation: OperationTrash, State: "unknown", ObservedAt: now}
+		if original.ObservedAt.After(observation.ObservedAt) {
+			observation.ObservedAt = original.ObservedAt
+		}
+		if trash.ObservedAt.After(observation.ObservedAt) {
+			observation.ObservedAt = trash.ObservedAt
+		}
+		if originalErr == nil {
+			copy := original.Entry
+			observation.Original = &copy
+		}
+		if trashErr == nil {
+			copy := trash.Entry
+			observation.Trash = &copy
+		}
+		originalMissing := originalErr != nil && isMissing(originalErr)
+		trashMissing := trashErr != nil && isMissing(trashErr)
+		switch {
+		case originalErr != nil && !originalMissing || trashErr != nil && !trashMissing:
+			observation.State = TrashNeitherObservable
+			observation.Evidence = []string{"trash_path_unobservable"}
+			itemEffect.State = "unknown"
+			itemEffect.Evidence = append([]string(nil), observation.Evidence...)
+		case originalErr == nil && trashErr == nil:
+			originalIdentityErr := identityMatches(original.Entry, identityForItem(item))
+			trashIdentityErr := identityMatches(trash.Entry, identityForItemAt(item, item.TrashRelativePath))
+			if originalIdentityErr != nil || trashIdentityErr != nil {
+				observation.State = TrashChangedIdentity
+				observation.Evidence = []string{"trash_identity_changed"}
+				itemEffect.State = "held"
+				itemEffect.Evidence = append([]string(nil), observation.Evidence...)
+			} else {
+				observation.State = TrashBothPresent
+				observation.Evidence = []string{"trash_source_and_destination_present"}
+				itemEffect.State = "held"
+				itemEffect.Evidence = append([]string(nil), observation.Evidence...)
+			}
+		case originalErr == nil && trashMissing:
+			if identityErr := identityMatches(original.Entry, identityForItem(item)); identityErr != nil {
+				observation.State = TrashChangedIdentity
+				observation.Evidence = []string{"trash_identity_changed"}
+				itemEffect.State = "held"
+				itemEffect.Evidence = append([]string(nil), observation.Evidence...)
+			} else {
+				observation.State = TrashSourceOnly
+				observation.Evidence = []string{"trash_source_present_destination_absent"}
+				itemEffect.State = "source_only"
+				itemEffect.Evidence = append([]string(nil), observation.Evidence...)
+			}
+		case originalMissing && trashErr == nil:
+			if identityErr := identityMatches(trash.Entry, identityForItemAt(item, item.TrashRelativePath)); identityErr != nil {
+				observation.State = TrashChangedIdentity
+				observation.Evidence = []string{"trash_identity_changed"}
+				itemEffect.State = "held"
+				itemEffect.Evidence = append([]string(nil), observation.Evidence...)
+			} else {
+				observation.State = TrashOnly
+				observation.Evidence = []string{"trash_source_absent_destination_present"}
+				itemEffect.Path = item.TrashRelativePath
+				itemEffect.State = "trash_only"
+				itemEffect.Outcome = domain.OutcomeAlreadySatisfied
+				itemEffect.Evidence = append([]string(nil), observation.Evidence...)
+			}
+		default:
+			observation.State = TrashNeitherObservable
+			observation.Evidence = []string{"trash_source_and_destination_absent"}
+			itemEffect.State = "unknown"
+			itemEffect.Evidence = append([]string(nil), observation.Evidence...)
+		}
+		if isDirectoryLeaf(entry.Manifest, item.OriginalRelativePath) {
+			observation.Evidence = append(observation.Evidence, "directory_leaf")
+			itemEffect.Evidence = append(itemEffect.Evidence, "directory_leaf")
+		}
+		states = append(states, observation.State)
+		reconciliation.Items = append(reconciliation.Items, observation)
+		effects = append(effects, itemEffect)
+	}
+	reconciliation.Disposition = classifyTrashReconciliation(states)
+	reconciliation.Evidence = []string{"trash_reconciliation_observed"}
+	if reconciliation.Disposition == TrashPartial && containsDirectoryEvidence(reconciliation.Items) {
+		reconciliation.Disposition = TrashPartialDirectory
+	}
+	for _, state := range states {
+		reconciliation.Evidence = append(reconciliation.Evidence, "trash_state:"+string(state))
+	}
+	sort.Strings(reconciliation.Evidence)
+	return reconciliation, effects
+}
+
+func classifyTrashReconciliation(states []TrashReconciliationState) TrashReconciliationState {
+	if len(states) == 0 {
+		return TrashNeitherObservable
+	}
+	for _, state := range states {
+		switch state {
+		case TrashChangedIdentity:
+			return TrashChangedIdentity
+		case TrashBothPresent:
+			return TrashBothPresent
+		case TrashNeitherObservable:
+			return TrashNeitherObservable
+		}
+	}
+	allSource, allTrash := true, true
+	for _, state := range states {
+		if state != TrashSourceOnly && state != TrashDirectoryLeaf {
+			allSource = false
+		}
+		if state != TrashOnly && state != TrashDirectoryLeaf {
+			allTrash = false
+		}
+	}
+	if allSource {
+		return TrashSourceOnly
+	}
+	if allTrash {
+		return TrashOnly
+	}
+	return TrashPartial
+}
+
+func containsDirectoryEvidence(items []trashReconciliationItem) bool {
+	for _, item := range items {
+		for _, evidence := range item.Evidence {
+			if evidence == "directory_leaf" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isDirectoryLeaf(manifest []domain.FileManifestEntry, relativePath string) bool {
+	for _, item := range manifest {
+		if item.Type == domain.ManifestDirectory && pathWithin(relativePath, item.RelativePath) && relativePath != item.RelativePath {
+			return true
+		}
+	}
+	return false
+}
+
+func (service *Service) persistTrashReconciliation(ctx context.Context, entry Entry, reconciliation trashReconciliation, effects []ItemEffect, now time.Time) error {
+	state := "pending"
+	if reconciliation.Disposition == TrashOnly {
+		state = "materialized"
+	} else if reconciliation.Disposition != TrashSourceOnly {
+		state = "held"
+	}
+	outcome, err := encodeTrashReconciliation(reconciliation, state)
+	if err != nil {
+		return fmt.Errorf("%w: encode trash reconciliation: %v", ErrStorage, err)
+	}
+	return service.withTx(persistenceContext(ctx), func(tx *sql.Tx, queries *sqlc.Queries) error {
+		current, getErr := queries.GetTrashEntry(ctx, entry.ID)
+		if getErr != nil {
+			return getErr
+		}
+		if current.Version != entry.Version || current.State != "planned" || current.ActiveOperation.Valid {
+			return ErrClaimed
+		}
+		janitor, getErr := queries.GetJanitorRecord(ctx, &sqlc.GetJanitorRecordParams{TrashEntryID: entry.ID, Operation: string(OperationPurge)})
+		if getErr != nil {
+			return getErr
+		}
+		if reconciliation.Disposition == TrashOnly {
+			for _, itemEffect := range effects {
+				if itemEffect.State != "trash_only" {
+					continue
+				}
+				if _, updateErr := tx.ExecContext(ctx, `UPDATE trash_items SET state = 'trashed', trashed_at = ? WHERE id = ? AND entry_id = ? AND state = 'selected'`, formatTime(now), itemEffect.ItemID, entry.ID); updateErr != nil {
+					return updateErr
+				}
+			}
+			updated, updateErr := tx.ExecContext(ctx, `UPDATE trash_entries SET state = 'trashed', trashed_at = ?, expires_at = ?, hold_reason = NULL, version = version + 1, updated_at = ? WHERE id = ? AND version = ? AND state = 'planned' AND active_operation IS NULL`, formatTime(now), formatTime(now.Add(entry.Retention)), formatTime(now), entry.ID, entry.Version)
+			if updateErr != nil {
+				return updateErr
+			}
+			if affected, affectedErr := updated.RowsAffected(); affectedErr != nil {
+				return affectedErr
+			} else if affected != 1 {
+				return ErrClaimed
+			}
+		} else if reconciliation.Disposition != TrashSourceOnly {
+			updated, updateErr := tx.ExecContext(ctx, `UPDATE trash_entries SET state = 'held', hold_reason = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ? AND state = 'planned' AND active_operation IS NULL`, "trash_reconciliation:"+string(reconciliation.Disposition), formatTime(now), entry.ID, entry.Version)
+			if updateErr != nil {
+				return updateErr
+			}
+			if affected, affectedErr := updated.RowsAffected(); affectedErr != nil {
+				return affectedErr
+			} else if affected != 1 {
+				return ErrClaimed
+			}
+		}
+		_, updateErr := queries.UpdateJanitorRecord(ctx, &sqlc.UpdateJanitorRecordParams{
+			State:         stateForTrashReconciliation(state, janitor.State),
+			NextAttemptAt: sql.NullString{},
+			ClaimedBy:     sql.NullString{},
+			LeaseUntil:    sql.NullString{},
+			OutcomeJson:   outcome,
+			UpdatedAt:     formatTime(now),
+			ID:            janitor.ID,
+			Version:       janitor.Version,
+		})
+		return updateErr
+	})
+}
+
+func stateForTrashReconciliation(reconciliationState, current string) string {
+	if reconciliationState == "pending" || reconciliationState == "materialized" {
+		return current
+	}
+	return reconciliationState
+}
+
+func encodeTrashReconciliation(reconciliation trashReconciliation, state string) (string, error) {
+	value := map[string]any{
+		"operation":   OperationTrash,
+		"state":       state,
+		"disposition": reconciliation.Disposition,
+		"observedAt":  reconciliation.ObservedAt,
+		"items":       reconciliation.Items,
+	}
+	if len(reconciliation.Evidence) > 0 {
+		value["evidence"] = reconciliation.Evidence
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
+}
+
+func (service *Service) listPlannedTrashEntries(ctx context.Context, limit int) ([]string, error) {
+	if limit <= 0 {
+		limit = service.maxItems
+	}
+	rows, err := service.store.DB().QueryContext(ctx, `SELECT id FROM trash_entries WHERE state = 'planned' ORDER BY updated_at, id LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("%w: list planned trash entries: %v", ErrStorage, err)
+	}
+	defer rows.Close()
+	entries := make([]string, 0, limit)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("%w: scan planned trash entry: %v", ErrStorage, err)
+		}
+		entries = append(entries, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: list planned trash entries: %v", ErrStorage, err)
+	}
+	return entries, nil
+}
+
+func (service *Service) recoverExpiredPlannedTrashClaim(ctx context.Context, now time.Time) error {
+	if now.IsZero() {
+		return ErrClock
+	}
+	// The frozen storage schema permits only purge/restore in active_operation.
+	// A planned trash retry therefore uses the purge slot as an entry-scoped
+	// lease while its janitor row remains queued. Planned entries cannot be
+	// claimed by the ordinary purge path, so this slot remains unambiguous.
+	_, err := service.store.DB().ExecContext(ctx, `UPDATE trash_entries SET active_operation = NULL, operation_claimed_by = NULL, operation_lease_until = NULL, version = version + 1, updated_at = ? WHERE state = 'planned' AND active_operation = 'purge' AND (operation_lease_until IS NULL OR operation_lease_until <= ?)`, formatTime(now), formatTime(now))
+	if err != nil {
+		return fmt.Errorf("%w: recover planned trash lease: %v", ErrStorage, err)
+	}
+	return nil
+}
+
+func (service *Service) claimPlannedTrash(ctx context.Context, entryID string) (Entry, error) {
+	now := service.now()
+	if now.IsZero() {
+		return Entry{}, ErrClock
+	}
+	leaseUntil := now.Add(service.leaseDuration)
+	lock := service.lockFor("trash-claim:" + entryID)
+	defer lock()
+	if err := service.withTx(ctx, func(tx *sql.Tx, queries *sqlc.Queries) error {
+		row, err := queries.GetTrashEntry(ctx, entryID)
+		if err != nil {
+			return err
+		}
+		if row.State != "planned" || row.ActiveOperation.Valid {
+			return ErrClaimed
+		}
+		janitor, err := queries.GetJanitorRecord(ctx, &sqlc.GetJanitorRecordParams{TrashEntryID: entryID, Operation: string(OperationPurge)})
+		if err != nil {
+			return err
+		}
+		if janitor.State != "queued" || approvalBindingPresent(janitor) {
+			return ErrClaimed
+		}
+		// Store the trash retry lease in the existing purge operation slot; the
+		// database CHECK constraint intentionally has no third operation value.
+		updated, err := tx.ExecContext(ctx, `UPDATE trash_entries SET active_operation = 'purge', operation_claimed_by = ?, operation_lease_until = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ? AND state = 'planned' AND active_operation IS NULL`, service.workerID, formatTime(leaseUntil), formatTime(now), entryID, row.Version)
+		if err != nil {
+			return err
+		}
+		if affected, affectedErr := updated.RowsAffected(); affectedErr != nil {
+			return affectedErr
+		} else if affected != 1 {
+			return ErrClaimed
+		}
+		outcome := appendReconciliationEvidence(janitor.OutcomeJson, []string{"trash_retry_claimed"})
+		_, err = queries.UpdateJanitorRecord(ctx, &sqlc.UpdateJanitorRecordParams{
+			State:       "queued",
+			OutcomeJson: outcome,
+			UpdatedAt:   formatTime(now),
+			ID:          janitor.ID,
+			Version:     janitor.Version,
+		})
+		return err
+	}); err != nil {
+		if errors.Is(err, ErrClaimed) {
+			return Entry{}, err
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			return Entry{}, fmt.Errorf("%w: planned trash entry", ErrNotFound)
+		}
+		return Entry{}, fmt.Errorf("%w: claim planned trash: %v", ErrStorage, err)
+	}
+	entry, err := service.loadEntry(persistenceContext(ctx), entryID)
+	if err != nil {
+		return Entry{}, err
+	}
+	return entry, nil
+}
+
+func (service *Service) dispatchPlannedTrash(ctx context.Context, claim Entry) (Result, error) {
+	if err := service.validateContext(ctx); err != nil {
+		return Result{Entry: claim}, err
+	}
+	if claim.State != "planned" || claim.ActiveOperation != OperationPurge || claim.ClaimedBy != service.workerID {
+		return Result{Entry: claim}, ErrClaimed
+	}
+	if err := service.preflightSource(ctx, claim.Manifest); err != nil {
+		return service.finishClaimedTrash(ctx, claim, ports.FilesystemEffect{}, err)
+	}
+	if claim.Client != nil {
+		effect, observation, stopErr := service.ensureStopped(ctx, *claim.Client)
+		if stopErr != nil {
+			return service.finishClaimedTrash(ctx, claim, ports.FilesystemEffect{}, stopErr)
+		}
+		if err := service.persistClientObservation(ctx, claim.ID, observation, effect); err != nil {
+			return Result{Entry: claim}, err
+		}
+		latest, loadErr := service.loadEntry(persistenceContext(ctx), claim.ID)
+		if loadErr != nil {
+			return Result{Entry: claim}, loadErr
+		}
+		claim = latest
+	}
+	if err := service.validateContext(ctx); err != nil {
+		return service.finishClaimedTrash(ctx, claim, ports.FilesystemEffect{}, err)
+	}
+	effect, actionErr := service.action.Trash(ctx, ports.FilesystemTrashRequest{Files: claim.Manifest, Retention: claim.Retention})
+	result, finishErr := service.finishClaimedTrash(ctx, claim, effect, actionErr)
+	return result, errors.Join(actionErr, finishErr)
+}
+
+func (service *Service) finishClaimedTrash(ctx context.Context, claim Entry, effect ports.FilesystemEffect, actionErr error) (Result, error) {
+	entry, loadErr := service.loadEntry(persistenceContext(ctx), claim.ID)
+	if loadErr != nil {
+		return Result{}, loadErr
+	}
+	if entry.State != "planned" || entry.ActiveOperation != OperationPurge || entry.ClaimedBy != service.workerID {
+		return Result{Entry: entry}, ErrClaimed
+	}
+	matched, scopeIssues := validateAffectedSet(entry.Items, effect.Affected, operationTrash)
+	complete := actionErr == nil && effect.Outcome.Valid() && len(effect.Affected) > 0 && len(scopeIssues) == 0 && len(matched) == len(entry.Items)
+	now := service.now()
+	if now.IsZero() {
+		return Result{Entry: entry}, ErrClock
+	}
+	state := "held"
+	reason := "trash_retry_incomplete"
+	if complete {
+		state = "trashed"
+		reason = "trash_retry_completed"
+	}
+	if len(scopeIssues) > 0 {
+		effect.Evidence = append(effect.Evidence, "scope_unresolved")
+		effect.Evidence = append(effect.Evidence, scopeIssues...)
+	}
+	if actionErr != nil {
+		reason = "trash_retry: " + safeError(actionErr)
+	} else if len(scopeIssues) > 0 {
+		reason = "trash_retry_scope: " + strings.Join(scopeIssues, ",")
+	} else if !effect.Outcome.Valid() {
+		reason = "trash_retry_invalid_effect"
+	}
+	effects := make([]ItemEffect, 0, len(entry.Items))
+	if complete {
+		for _, item := range entry.Items {
+			effects = append(effects, ItemEffect{ItemID: item.ID, Path: item.TrashRelativePath, Operation: OperationTrash, State: "trashed", Outcome: effect.Outcome, ObservedAt: effect.ObservedAt, Evidence: append([]string{"trash_retry"}, effect.Evidence...)})
+		}
+	} else if len(effect.Affected) > 0 || len(scopeIssues) > 0 {
+		effects = append(effects, ItemEffect{Operation: OperationTrash, State: "unknown", Outcome: effect.Outcome, ObservedAt: effect.ObservedAt, Evidence: append([]string{"trash_retry_uncertain"}, effect.Evidence...)})
+	}
+	outcome := effectOutcomeJSON(OperationTrash, state, reason, effects, effect)
+	resultErr := service.withTx(persistenceContext(ctx), func(tx *sql.Tx, queries *sqlc.Queries) error {
+		current, err := queries.GetTrashEntry(ctx, entry.ID)
+		if err != nil {
+			return err
+		}
+		if current.Version != entry.Version || current.State != "planned" || !current.ActiveOperation.Valid || current.ActiveOperation.String != string(OperationPurge) || !current.OperationClaimedBy.Valid || current.OperationClaimedBy.String != service.workerID {
+			return ErrClaimed
+		}
+		if complete {
+			for _, item := range entry.Items {
+				if _, err := tx.ExecContext(ctx, `UPDATE trash_items SET state = 'trashed', trashed_at = ? WHERE id = ? AND entry_id = ? AND state = 'selected'`, formatTime(now), item.ID, entry.ID); err != nil {
+					return err
+				}
+			}
+			updated, err := tx.ExecContext(ctx, `UPDATE trash_entries SET state = 'trashed', trashed_at = ?, expires_at = ?, hold_reason = NULL, active_operation = NULL, operation_claimed_by = NULL, operation_lease_until = NULL, version = version + 1, updated_at = ? WHERE id = ? AND version = ? AND state = 'planned' AND active_operation = 'purge' AND operation_claimed_by = ?`, formatTime(now), formatTime(now.Add(entry.Retention)), formatTime(now), entry.ID, entry.Version, service.workerID)
+			if err != nil {
+				return err
+			}
+			if affected, affectedErr := updated.RowsAffected(); affectedErr != nil {
+				return affectedErr
+			} else if affected != 1 {
+				return ErrClaimed
+			}
+		} else {
+			updated, err := tx.ExecContext(ctx, `UPDATE trash_entries SET state = 'held', hold_reason = ?, active_operation = NULL, operation_claimed_by = NULL, operation_lease_until = NULL, version = version + 1, updated_at = ? WHERE id = ? AND version = ? AND state = 'planned' AND active_operation = 'purge' AND operation_claimed_by = ?`, reason, formatTime(now), entry.ID, entry.Version, service.workerID)
+			if err != nil {
+				return err
+			}
+			if affected, affectedErr := updated.RowsAffected(); affectedErr != nil {
+				return affectedErr
+			} else if affected != 1 {
+				return ErrClaimed
+			}
+		}
+		janitor, err := queries.GetJanitorRecord(ctx, &sqlc.GetJanitorRecordParams{TrashEntryID: entry.ID, Operation: string(OperationPurge)})
+		if err != nil {
+			return err
+		}
+		_, err = queries.UpdateJanitorRecord(ctx, &sqlc.UpdateJanitorRecordParams{State: stateForTrashRetry(state), OutcomeJson: outcome, UpdatedAt: formatTime(now), ID: janitor.ID, Version: janitor.Version})
+		return err
+	})
+	latest, latestErr := service.loadEntry(persistenceContext(ctx), entry.ID)
+	if latestErr != nil {
+		return Result{}, errors.Join(resultErr, latestErr)
+	}
+	result := Result{Entry: latest, Effects: effects, Evidence: []string{reason}}
+	if complete {
+		result.Outcome = effect.Outcome
+		return result, resultErr
+	}
+	result.Evidence = append(result.Evidence, "trash_retry_held")
+	return result, errors.Join(ErrHeld, resultErr)
+}
+
+func stateForTrashRetry(state string) string {
+	if state == "trashed" {
+		return "queued"
+	}
+	return "held"
 }
 
 // reconcileBeforePurgeDispatch is the read-before-write boundary for an
@@ -735,12 +1392,15 @@ func (service *Service) Reconcile(ctx context.Context, entryID string, operation
 	if err := validateID(entryID); err != nil {
 		return Result{}, err
 	}
-	if operation != OperationPurge && operation != OperationRestore {
+	if operation != OperationPurge && operation != OperationRestore && operation != OperationTrash {
 		return Result{}, fmt.Errorf("%w: operation", ErrInvalidRequest)
 	}
 	entry, err := service.loadEntry(ctx, entryID)
 	if err != nil {
 		return Result{}, err
+	}
+	if operation == OperationTrash {
+		return service.ReconcileTrash(ctx, entryID)
 	}
 	if err := service.validateEntryClock(entry); err != nil {
 		return resultForEntry(entry, "clock_unknown"), err
@@ -841,6 +1501,9 @@ func (service *Service) Retry(ctx context.Context, request RetryRequest) (Result
 	entryID := request.EntryID
 	if entryID == "" {
 		entryID = request.ID
+	}
+	if request.Operation == OperationTrash {
+		return service.RetryTrash(ctx, TrashRetryRequest{EntryID: entryID})
 	}
 	reconciled, err := service.Reconcile(ctx, entryID, request.Operation)
 	if err != nil || !reconciled.Retryable {
