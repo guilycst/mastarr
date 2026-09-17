@@ -3801,14 +3801,18 @@
         "C-04 correction round seven dispatch pinned to clean coordinator checkpoint ea4b5e24391dc1a00f443d7f93bd53003adeaafd; scope is durable marker-outage safety and atomic recovery-owner setter enforcement.",
         "23462380b004586c1e09794c937ae396ee18b394 C-04 correction round seven product: attempt-bound SQLite effect markers block markerless false recovery and atomic recovery-owner setter assembly.",
         "911e67ac291f7e096eea46f9210a40232eb3fd21 C-04 correction round seven handoff records exact regressions, checks, owned paths and product boundary.",
-        "Correction round seven focused/repeated race tests, vet, module verification, product pre-commit and full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed."
+        "Correction round seven focused/repeated race tests, vet, module verification, product pre-commit and full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed.",
+        "0770b38dc318c776ffb33ad4063c51c5b5416a58 independent C-04 correction round seven review receipt, integrated as 03cd48e; R3f-d/R3g-b closed and R3g-c remains P1.",
+        "Reviewer full offline GOWORK=off GOPROXY=off GOSUMDB=off ./scripts/check-guardrails.sh --ci passed; independent built-in owner-removal probe failed 20/20 ordinary and 10/10 race."
       ],
       "review": {
-        "status": "pending",
-        "decision": "pending",
+        "status": "changes_requested",
+        "decision": "changes_requested",
         "reviewer": "/root/x05_reviewer",
-        "commit": null,
-        "findings": [],
+        "commit": "0770b38dc318c776ffb33ad4063c51c5b5416a58",
+        "findings": [
+          "R3g-c P1 built-in configuration recovery owner can be removed while durable persistence remains active; hasDurableMutationDependency ignores built-in handlers, leaving durable mutations without a recovery owner."
+        ],
         "round": 7,
         "correctionCommit": "23462380b004586c1e09794c937ae396ee18b394"
       },
@@ -3840,21 +3844,21 @@
         "reviewPath": "docs/execution/handoffs/C-04-review-round7.md",
         "handoffPath": "docs/execution/handoffs/C-04-correction-round7.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "awaiting_review",
+        "status": "in_progress",
         "dependencyCommits": {
           "D-04": "036288114bcf303f98e0ee02e54ddce18384e504",
           "F-03": "b65f5d65d67e6fc823fbf54fa8ab4f2a4d17d191",
           "X-08": "8c770f779204a00c2d8cc6312a2c0fc04262ea35",
           "W-05": "ea3958b15508d13893b55674b59cfb0bf50d1ffe"
         },
-        "waitingOn": "/root/x05_reviewer",
-        "waitingReason": "C-04 correction round seven product and handoff are complete; independent review is required for R3f-d and R3g-b.",
+        "waitingOn": "/root",
+        "waitingReason": "Round-seven review is integrated with one P1 R3g-c; coordinator is recording the finding before dispatching correction round eight.",
         "implementationCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
         "handoffCommit": "c46b84183f0723d0cbb439eb539cd600c235acf0",
         "reviewSourceCommit": "9f1607a5ff4ea901249a8d50f90848d35035a064",
-        "reviewRound": 3,
-        "reviewCommit": "461b0c06b0a3094f5da28ca2920400b639e22a61",
-        "reviewIntegrationCommit": "d593fd4",
+        "reviewRound": 7,
+        "reviewCommit": "0770b38dc318c776ffb33ad4063c51c5b5416a58",
+        "reviewIntegrationCommit": "03cd48e",
         "correctionStatus": "awaiting_review",
         "correctionRound": 7,
         "correctionOwner": "/root/x05_implementer",
@@ -3943,13 +3947,14 @@
         {
           "round": 7,
           "reviewer": "/root/x05_reviewer",
-          "commit": null,
-          "status": "pending",
+          "commit": "0770b38dc318c776ffb33ad4063c51c5b5416a58",
+          "status": "changes_requested",
           "sourceCommit": "23462380b004586c1e09794c937ae396ee18b394",
           "receipt": "docs/execution/handoffs/C-04-review-round7.md",
           "handoff": "docs/execution/handoffs/C-04-correction-round7.md",
           "productCommit": "23462380b004586c1e09794c937ae396ee18b394",
-          "handoffCommit": "911e67ac291f7e096eea46f9210a40232eb3fd21"
+          "handoffCommit": "911e67ac291f7e096eea46f9210a40232eb3fd21",
+          "integratedCommit": "03cd48e"
         }
       ]
     },
@@ -5880,7 +5885,7 @@
       ]
     }
   },
-  "nextAction": "C-04 correction round seven product and handoff are recorded from clean checkpoint 720c1c10a9c7cad550e353b8798380664c10b7a7; dispatch independent review round seven.",
+  "nextAction": "C-04 round-seven review is recorded and integrated at 03cd48e with P1 R3g-c; dispatch correction round eight from the next clean state checkpoint.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
