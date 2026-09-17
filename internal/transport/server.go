@@ -51,6 +51,7 @@ var (
 	ErrIfMatchRequired     = errors.New("If-Match precondition is required")
 	ErrIfMatchMismatch     = errors.New("If-Match precondition does not match")
 	ErrInvalidIdempotency  = errors.New("Idempotency-Key is invalid")
+	ErrIdempotencyPending  = errors.New("idempotency request is pending reconciliation")
 	ErrInvalidParameter    = errors.New("request parameter is invalid")
 	ErrConfigurationStore  = errors.New("configuration persistence is unavailable")
 	ErrIdempotencyStore    = errors.New("idempotency persistence is unavailable")
@@ -60,6 +61,10 @@ var (
 // can expose health while its durable dependencies are still starting.
 type Options struct {
 	Configuration *configuration.Manager
+	// ConfigurationReload rebuilds the manager from durable state after a
+	// configuration transaction fails. It is invoked while the configuration
+	// write gate is held, before any reader or retry can observe a candidate.
+	ConfigurationReload ConfigurationReload
 	// Dependencies is the explicit application-service assembly for generated
 	// routes. Nil fields remain unavailable until their owning service is
 	// wired; transport never manufactures an authoritative empty response.
@@ -93,20 +98,26 @@ type Options struct {
 // RouteDependencies; the built-in configuration and health services are the
 // only defaults supplied by this package.
 type Server struct {
-	configurationMu      sync.RWMutex
-	configuration        *configuration.Manager
-	dependencies         *RouteDependencies
-	persistenceMu        sync.RWMutex
-	configurationStore   *ConfigurationPersistence
-	idempotencyStore     *IdempotencyPersistence
-	managedCredentialMu  sync.RWMutex
-	managedCredentialIDs map[domain.ConfigID]struct{}
-	now                  func() time.Time
-	allowedOrigin        string
-	maxBodyBytes         int64
-	maxManifestBytes     int64
-	maxManifestEntries   int
-	ready                atomic.Bool
+	// configurationGate serializes the effective manager with its durable
+	// snapshot. Readers hold RLock for their entire manager read; writers hold
+	// Lock through the storage transaction and any recovery reload.
+	configurationGate     sync.RWMutex
+	configurationMu       sync.RWMutex
+	configuration         *configuration.Manager
+	configurationReloadMu sync.RWMutex
+	configurationReload   ConfigurationReload
+	dependencies          *RouteDependencies
+	persistenceMu         sync.RWMutex
+	configurationStore    *ConfigurationPersistence
+	idempotencyStore      *IdempotencyPersistence
+	managedCredentialMu   sync.RWMutex
+	managedCredentialIDs  map[domain.ConfigID]struct{}
+	now                   func() time.Time
+	allowedOrigin         string
+	maxBodyBytes          int64
+	maxManifestBytes      int64
+	maxManifestEntries    int
+	ready                 atomic.Bool
 
 	idempotencyMu sync.Mutex
 	idempotency   map[string]idempotencyEntry
@@ -144,6 +155,15 @@ func New(options Options) (*Server, error) {
 	if options.MaxManifestEntries <= 0 {
 		options.MaxManifestEntries = defaultMaxManifestEntries
 	}
+	if options.IdempotencyPersistence != nil {
+		persistence := options.IdempotencyPersistence
+		// A configured durable repository must expose the complete reservation
+		// protocol. Falling back to a completed-only Save would permit a crash
+		// between dispatch and completion to be replayed blindly.
+		if persistence.Load == nil || persistence.Reserve == nil || persistence.Complete == nil {
+			return nil, errors.New("transport idempotency persistence lacks reservation protocol")
+		}
+	}
 	if options.AllowedOrigin != "" {
 		origin, err := canonicalOrigin(options.AllowedOrigin)
 		if err != nil {
@@ -158,6 +178,7 @@ func New(options Options) (*Server, error) {
 	}
 	server := &Server{
 		configuration:        options.Configuration,
+		configurationReload:  options.ConfigurationReload,
 		dependencies:         dependencies,
 		configurationStore:   cloneConfigurationPersistence(options.ConfigurationPersistence),
 		idempotencyStore:     cloneIdempotencyPersistence(options.IdempotencyPersistence),
@@ -194,6 +215,73 @@ func (server *Server) SetConfiguration(manager *configuration.Manager) {
 	server.configurationMu.Lock()
 	server.configuration = manager
 	server.configurationMu.Unlock()
+}
+
+// SetConfigurationReload publishes the durable-state rebuild callback used
+// after a failed configuration transaction. The callback is copied so the
+// caller can discard its assembly value safely.
+func (server *Server) SetConfigurationReload(reload ConfigurationReload) {
+	if server == nil {
+		return
+	}
+	server.configurationReloadMu.Lock()
+	server.configurationReload = reload
+	server.configurationReloadMu.Unlock()
+}
+
+func (server *Server) configurationReloadCallback() ConfigurationReload {
+	if server == nil {
+		return nil
+	}
+	server.configurationReloadMu.RLock()
+	defer server.configurationReloadMu.RUnlock()
+	return server.configurationReload
+}
+
+// recoverConfiguration restores the manager from its durable source while
+// the caller still owns configurationGate. A missing or failed callback
+// deliberately leaves the service unavailable instead of exposing a manager
+// that may contain an uncommitted candidate.
+func (server *Server) recoverConfiguration(ctx context.Context) error {
+	if server == nil {
+		return ErrConfigurationStore
+	}
+	reload := server.configurationReloadCallback()
+	if reload == nil {
+		server.SetConfiguration(nil)
+		server.SetManagedCredentialIDs(nil)
+		server.SetReady(false)
+		return ErrConfigurationStore
+	}
+	base := ctx
+	if base == nil {
+		base = context.Background()
+	}
+	base = context.WithoutCancel(base)
+	reloadCtx, cancel := context.WithTimeout(base, 5*time.Second)
+	defer cancel()
+	manager, managedIDs, err := reload(reloadCtx)
+	if err != nil || manager == nil {
+		server.SetConfiguration(nil)
+		server.SetManagedCredentialIDs(nil)
+		server.SetReady(false)
+		return ErrConfigurationStore
+	}
+	wasReady := server.Ready()
+	server.SetConfiguration(manager)
+	server.SetManagedCredentialIDs(managedIDs)
+	server.SetReady(wasReady)
+	return nil
+}
+
+func (server *Server) finishConfigurationMutation(ctx context.Context, err error) {
+	if !errors.Is(err, ErrConfigurationStore) {
+		return
+	}
+	// The original persistence error remains the public result. Recovery is a
+	// safety action performed before releasing the write gate; a failed reload
+	// has already made the manager unavailable.
+	_ = server.recoverConfiguration(ctx)
 }
 
 func (server *Server) configurationManager() *configuration.Manager {
@@ -361,6 +449,8 @@ func (server *Server) GetConfiguration(ctx context.Context, request api.GetConfi
 	if dependency := server.routeDependencies(); dependency != nil && dependency.GetConfiguration != nil {
 		return dependency.GetConfiguration(ctx, request)
 	}
+	server.configurationGate.RLock()
+	defer server.configurationGate.RUnlock()
 	snapshot, err := server.snapshot(ctx)
 	if err != nil {
 		return nil, err
@@ -379,6 +469,8 @@ func (server *Server) ListConnections(ctx context.Context, request api.ListConne
 	if dependency := server.routeDependencies(); dependency != nil && dependency.ListConnections != nil {
 		return dependency.ListConnections(ctx, request)
 	}
+	server.configurationGate.RLock()
+	defer server.configurationGate.RUnlock()
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
@@ -409,6 +501,8 @@ func (server *Server) GetConnection(ctx context.Context, request api.GetConnecti
 	if dependency := server.routeDependencies(); dependency != nil && dependency.GetConnection != nil {
 		return dependency.GetConnection(ctx, request)
 	}
+	server.configurationGate.RLock()
+	defer server.configurationGate.RUnlock()
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
@@ -422,10 +516,15 @@ func (server *Server) GetConnection(ctx context.Context, request api.GetConnecti
 }
 
 // CreateConnection persists an API-owned, encrypted-credential connection.
-func (server *Server) CreateConnection(ctx context.Context, request api.CreateConnectionRequestObject) (api.CreateConnectionResponseObject, error) {
+func (server *Server) CreateConnection(ctx context.Context, request api.CreateConnectionRequestObject) (response api.CreateConnectionResponseObject, err error) {
 	if dependency := server.routeDependencies(); dependency != nil && dependency.CreateConnection != nil {
 		return dependency.CreateConnection(ctx, request)
 	}
+	server.configurationGate.Lock()
+	defer func() {
+		server.finishConfigurationMutation(ctx, err)
+		server.configurationGate.Unlock()
+	}()
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
@@ -452,10 +551,15 @@ func (server *Server) CreateConnection(ctx context.Context, request api.CreateCo
 
 // PatchConnection applies the generated If-Match value to the configuration
 // manager's revision CAS.
-func (server *Server) PatchConnection(ctx context.Context, request api.PatchConnectionRequestObject) (api.PatchConnectionResponseObject, error) {
+func (server *Server) PatchConnection(ctx context.Context, request api.PatchConnectionRequestObject) (response api.PatchConnectionResponseObject, err error) {
 	if dependency := server.routeDependencies(); dependency != nil && dependency.PatchConnection != nil {
 		return dependency.PatchConnection(ctx, request)
 	}
+	server.configurationGate.Lock()
+	defer func() {
+		server.finishConfigurationMutation(ctx, err)
+		server.configurationGate.Unlock()
+	}()
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
@@ -485,10 +589,15 @@ func (server *Server) PatchConnection(ctx context.Context, request api.PatchConn
 
 // RetireConnection preserves the configuration tombstone and requires the
 // exact revision supplied by If-Match.
-func (server *Server) RetireConnection(ctx context.Context, request api.RetireConnectionRequestObject) (api.RetireConnectionResponseObject, error) {
+func (server *Server) RetireConnection(ctx context.Context, request api.RetireConnectionRequestObject) (response api.RetireConnectionResponseObject, err error) {
 	if dependency := server.routeDependencies(); dependency != nil && dependency.RetireConnection != nil {
 		return dependency.RetireConnection(ctx, request)
 	}
+	server.configurationGate.Lock()
+	defer func() {
+		server.finishConfigurationMutation(ctx, err)
+		server.configurationGate.Unlock()
+	}()
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
@@ -508,6 +617,8 @@ func (server *Server) ListStorageRoots(ctx context.Context, request api.ListStor
 	if dependency := server.routeDependencies(); dependency != nil && dependency.ListStorageRoots != nil {
 		return dependency.ListStorageRoots(ctx, request)
 	}
+	server.configurationGate.RLock()
+	defer server.configurationGate.RUnlock()
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
@@ -533,6 +644,8 @@ func (server *Server) GetStorageRoot(ctx context.Context, request api.GetStorage
 	if dependency := server.routeDependencies(); dependency != nil && dependency.GetStorageRoot != nil {
 		return dependency.GetStorageRoot(ctx, request)
 	}
+	server.configurationGate.RLock()
+	defer server.configurationGate.RUnlock()
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
@@ -545,10 +658,15 @@ func (server *Server) GetStorageRoot(ctx context.Context, request api.GetStorage
 	return api.GetStorageRoot200JSONResponse{Body: mapStorageRoot(root), Headers: api.GetStorageRoot200ResponseHeaders{CacheControl: stringPtr("no-store"), ETag: &etag}}, nil
 }
 
-func (server *Server) CreateStorageRoot(ctx context.Context, request api.CreateStorageRootRequestObject) (api.CreateStorageRootResponseObject, error) {
+func (server *Server) CreateStorageRoot(ctx context.Context, request api.CreateStorageRootRequestObject) (response api.CreateStorageRootResponseObject, err error) {
 	if dependency := server.routeDependencies(); dependency != nil && dependency.CreateStorageRoot != nil {
 		return dependency.CreateStorageRoot(ctx, request)
 	}
+	server.configurationGate.Lock()
+	defer func() {
+		server.finishConfigurationMutation(ctx, err)
+		server.configurationGate.Unlock()
+	}()
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
@@ -566,10 +684,15 @@ func (server *Server) CreateStorageRoot(ctx context.Context, request api.CreateS
 	return api.CreateStorageRoot201JSONResponse{Body: mapStorageRoot(root), Headers: api.CreateStorageRoot201ResponseHeaders{CacheControl: stringPtr("no-store"), ETag: &etag, Location: &location}}, nil
 }
 
-func (server *Server) PatchStorageRoot(ctx context.Context, request api.PatchStorageRootRequestObject) (api.PatchStorageRootResponseObject, error) {
+func (server *Server) PatchStorageRoot(ctx context.Context, request api.PatchStorageRootRequestObject) (response api.PatchStorageRootResponseObject, err error) {
 	if dependency := server.routeDependencies(); dependency != nil && dependency.PatchStorageRoot != nil {
 		return dependency.PatchStorageRoot(ctx, request)
 	}
+	server.configurationGate.Lock()
+	defer func() {
+		server.finishConfigurationMutation(ctx, err)
+		server.configurationGate.Unlock()
+	}()
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
@@ -591,10 +714,15 @@ func (server *Server) PatchStorageRoot(ctx context.Context, request api.PatchSto
 	return api.PatchStorageRoot200JSONResponse{Body: mapStorageRoot(root), Headers: api.PatchStorageRoot200ResponseHeaders{CacheControl: stringPtr("no-store"), ETag: &etag}}, nil
 }
 
-func (server *Server) RetireStorageRoot(ctx context.Context, request api.RetireStorageRootRequestObject) (api.RetireStorageRootResponseObject, error) {
+func (server *Server) RetireStorageRoot(ctx context.Context, request api.RetireStorageRootRequestObject) (response api.RetireStorageRootResponseObject, err error) {
 	if dependency := server.routeDependencies(); dependency != nil && dependency.RetireStorageRoot != nil {
 		return dependency.RetireStorageRoot(ctx, request)
 	}
+	server.configurationGate.Lock()
+	defer func() {
+		server.finishConfigurationMutation(ctx, err)
+		server.configurationGate.Unlock()
+	}()
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
@@ -614,6 +742,8 @@ func (server *Server) ListPathMappings(ctx context.Context, request api.ListPath
 	if dependency := server.routeDependencies(); dependency != nil && dependency.ListPathMappings != nil {
 		return dependency.ListPathMappings(ctx, request)
 	}
+	server.configurationGate.RLock()
+	defer server.configurationGate.RUnlock()
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
@@ -639,6 +769,8 @@ func (server *Server) GetPathMapping(ctx context.Context, request api.GetPathMap
 	if dependency := server.routeDependencies(); dependency != nil && dependency.GetPathMapping != nil {
 		return dependency.GetPathMapping(ctx, request)
 	}
+	server.configurationGate.RLock()
+	defer server.configurationGate.RUnlock()
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
@@ -651,10 +783,15 @@ func (server *Server) GetPathMapping(ctx context.Context, request api.GetPathMap
 	return api.GetPathMapping200JSONResponse{Body: mapPathMapping(mapping), Headers: api.GetPathMapping200ResponseHeaders{CacheControl: stringPtr("no-store"), ETag: &etag}}, nil
 }
 
-func (server *Server) CreatePathMapping(ctx context.Context, request api.CreatePathMappingRequestObject) (api.CreatePathMappingResponseObject, error) {
+func (server *Server) CreatePathMapping(ctx context.Context, request api.CreatePathMappingRequestObject) (response api.CreatePathMappingResponseObject, err error) {
 	if dependency := server.routeDependencies(); dependency != nil && dependency.CreatePathMapping != nil {
 		return dependency.CreatePathMapping(ctx, request)
 	}
+	server.configurationGate.Lock()
+	defer func() {
+		server.finishConfigurationMutation(ctx, err)
+		server.configurationGate.Unlock()
+	}()
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
@@ -673,10 +810,15 @@ func (server *Server) CreatePathMapping(ctx context.Context, request api.CreateP
 	return api.CreatePathMapping201JSONResponse{Body: mapPathMapping(mapping), Headers: api.CreatePathMapping201ResponseHeaders{CacheControl: stringPtr("no-store"), ETag: &etag, Location: &location}}, nil
 }
 
-func (server *Server) PatchPathMapping(ctx context.Context, request api.PatchPathMappingRequestObject) (api.PatchPathMappingResponseObject, error) {
+func (server *Server) PatchPathMapping(ctx context.Context, request api.PatchPathMappingRequestObject) (response api.PatchPathMappingResponseObject, err error) {
 	if dependency := server.routeDependencies(); dependency != nil && dependency.PatchPathMapping != nil {
 		return dependency.PatchPathMapping(ctx, request)
 	}
+	server.configurationGate.Lock()
+	defer func() {
+		server.finishConfigurationMutation(ctx, err)
+		server.configurationGate.Unlock()
+	}()
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
@@ -697,10 +839,15 @@ func (server *Server) PatchPathMapping(ctx context.Context, request api.PatchPat
 	return api.PatchPathMapping200JSONResponse{Body: mapPathMapping(mapping), Headers: api.PatchPathMapping200ResponseHeaders{CacheControl: stringPtr("no-store"), ETag: &etag}}, nil
 }
 
-func (server *Server) RetirePathMapping(ctx context.Context, request api.RetirePathMappingRequestObject) (api.RetirePathMappingResponseObject, error) {
+func (server *Server) RetirePathMapping(ctx context.Context, request api.RetirePathMappingRequestObject) (response api.RetirePathMappingResponseObject, err error) {
 	if dependency := server.routeDependencies(); dependency != nil && dependency.RetirePathMapping != nil {
 		return dependency.RetirePathMapping(ctx, request)
 	}
+	server.configurationGate.Lock()
+	defer func() {
+		server.finishConfigurationMutation(ctx, err)
+		server.configurationGate.Unlock()
+	}()
 	manager := server.configurationManager()
 	if manager == nil {
 		return nil, ErrNotReady
@@ -1080,6 +1227,8 @@ func problemFor(ctx context.Context, err error, status int) api.Problem {
 		code, title, retryable = "service_unavailable", "Service is unavailable", true
 	case errors.Is(err, ErrIdempotencyStore):
 		code, title, retryable = "persistence_unavailable", "Durable persistence is unavailable", true
+	case errors.Is(err, ErrIdempotencyPending):
+		code, title, retryable = "idempotency_pending", "Earlier request outcome requires reconciliation", true
 	case errors.Is(err, ErrConfigurationStore):
 		code, title, retryable = "persistence_unavailable", "Durable persistence is unavailable", true
 	case errors.Is(err, ErrRequestTooLarge):
@@ -1142,6 +1291,8 @@ func statusFor(err error) int {
 	case errors.Is(err, ErrInvalidIdempotency):
 		return http.StatusUnprocessableEntity
 	case errors.Is(err, ErrIdempotencyConflict), errors.Is(err, ErrSnapshotCursor), errors.Is(err, configuration.ErrConfigSourceConflict), errors.Is(err, configuration.ErrMappingAmbiguous), errors.Is(err, configuration.ErrMappingInvalid):
+		return http.StatusConflict
+	case errors.Is(err, ErrIdempotencyPending):
 		return http.StatusConflict
 	case errors.Is(err, ErrIfMatchMismatch), errors.Is(err, configuration.ErrRevisionMismatch):
 		return http.StatusPreconditionFailed
@@ -1289,9 +1440,45 @@ func (server *Server) policy(next http.Handler) http.Handler {
 		// generated handler. A stuck reservation would make later requests wait
 		// forever and would turn a recoverable transport failure into a denial.
 		defer server.finishIdempotency(key)
+		if persistence := server.idempotencyPersistence(); persistence != nil && persistence.Reserve != nil {
+			acquired, err := server.reserveIdempotency(r.Context(), scope, idempotencyKey, digest)
+			if err != nil {
+				writeProblem(w, r, err)
+				return
+			}
+			if !acquired {
+				// Another process won the durable reservation after the initial
+				// lookup. Read it back and either replay its completed response
+				// or expose the pending/uncertain state; never dispatch twice.
+				entry, found, err := server.lookupDurableIdempotency(r.Context(), scope, idempotencyKey, digest)
+				if err != nil {
+					writeProblem(w, r, err)
+					return
+				}
+				if !found || entry == nil {
+					writeProblem(w, r, ErrIdempotencyStore)
+					return
+				}
+				server.rememberIdempotency(key, digest, *entry)
+				replay(w, entry)
+				return
+			}
+		}
 		next.ServeHTTP(capture, r)
 		entry := capture.entry()
-		if shouldRememberIdempotency(entry) {
+		if persistence := server.idempotencyPersistence(); persistence != nil && persistence.Complete != nil {
+			if err := server.persistIdempotency(r.Context(), scope, idempotencyKey, digest, entry); err != nil {
+				writeProblem(w, r, err)
+				return
+			}
+			if shouldRememberIdempotency(entry) {
+				// The local cache is populated only after the durable
+				// completion has committed.
+				server.rememberIdempotency(key, digest, entry)
+			}
+		} else if shouldRememberIdempotency(entry) {
+			// In-memory tests without a configured durable store retain the
+			// historical single-process optimization.
 			server.rememberIdempotency(key, digest, entry)
 			if err := server.persistIdempotency(r.Context(), scope, idempotencyKey, digest, entry); err != nil {
 				writeProblem(w, r, err)
@@ -1690,15 +1877,8 @@ func requestDigest(r *http.Request) []byte {
 		return nil
 	}
 	r.Body = io.NopCloser(bytes.NewReader(data))
+	data = canonicalJSON(data)
 	var canonical bytes.Buffer
-	if json.Valid(data) {
-		var value any
-		if json.Unmarshal(data, &value) == nil {
-			if encoded, marshalErr := json.Marshal(value); marshalErr == nil {
-				data = encoded
-			}
-		}
-	}
 	canonical.WriteString(r.Method)
 	canonical.WriteByte('\n')
 	canonical.WriteString(r.URL.Path)
@@ -1708,6 +1888,31 @@ func requestDigest(r *http.Request) []byte {
 	canonical.Write(data)
 	digest := sha256.Sum256(canonical.Bytes())
 	return digest[:]
+}
+
+// canonicalJSON normalizes object key order through encoding/json while
+// preserving JSON number text exactly. Decoding into interface{} without
+// UseNumber turns values around the 2^53 boundary into float64 and can make
+// two distinct idempotency requests share a digest.
+func canonicalJSON(data []byte) []byte {
+	if !json.Valid(data) {
+		return data
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return data
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return data
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return data
+	}
+	return encoded
 }
 
 func (server *Server) lookupIdempotency(key string, digest []byte) (*idempotencyEntry, bool) {
@@ -1806,6 +2011,12 @@ func (server *Server) lookupDurableIdempotency(ctx context.Context, scope, key s
 	if !bytes.Equal(storedDigest, digest) {
 		return nil, false, ErrIdempotencyConflict
 	}
+	if record.Pending || record.State == IdempotencyStateReserved || (record.State == IdempotencyStateCompleted && !record.Replayable) {
+		return nil, false, ErrIdempotencyPending
+	}
+	if record.State != "" && record.State != IdempotencyStateCompleted {
+		return nil, false, ErrIdempotencyStore
+	}
 	entry := &idempotencyEntry{digest: storedDigest, status: record.Status, header: sanitizeReplayHeaders(record.Headers), body: append([]byte(nil), record.Body...)}
 	if entry.status < 100 || entry.status > 599 {
 		return nil, false, ErrIdempotencyStore
@@ -1813,16 +2024,53 @@ func (server *Server) lookupDurableIdempotency(ctx context.Context, scope, key s
 	return entry, true, nil
 }
 
+func (server *Server) reserveIdempotency(ctx context.Context, scope, key string, digest []byte) (bool, error) {
+	persistence := server.idempotencyPersistence()
+	if persistence == nil || persistence.Reserve == nil {
+		return true, nil
+	}
+	if len(digest) == 0 {
+		return false, ErrIdempotencyStore
+	}
+	acquired, err := persistence.Reserve(ctx, IdempotencyRecord{
+		Scope:        scope,
+		Key:          key,
+		Digest:       hex.EncodeToString(digest),
+		Status:       http.StatusProcessing,
+		ResourceKind: "idempotency_reservation",
+		ResourceID:   stableIdempotencyResourceID(scope, key),
+		CreatedAt:    server.now().UTC().Format(time.RFC3339Nano),
+		State:        IdempotencyStateReserved,
+	})
+	if err != nil {
+		if errors.Is(err, ErrIdempotencyConflict) {
+			return false, ErrIdempotencyConflict
+		}
+		return false, ErrIdempotencyStore
+	}
+	return acquired, nil
+}
+
 func (server *Server) persistIdempotency(ctx context.Context, scope, key string, digest []byte, entry idempotencyEntry) error {
 	persistence := server.idempotencyPersistence()
-	if persistence == nil || persistence.Save == nil {
+	if persistence == nil {
 		return nil
 	}
 	if len(digest) == 0 {
 		return ErrIdempotencyStore
 	}
-	if err := persistence.Save(ctx, IdempotencyRecord{Scope: scope, Key: key, Digest: hex.EncodeToString(digest), Status: entry.status, Headers: sanitizeReplayHeaders(entry.header), Body: append([]byte(nil), entry.body...), ResourceKind: "http_response", ResourceID: stableIdempotencyResourceID(scope, key), CreatedAt: server.now().UTC().Format(time.RFC3339Nano)}); err != nil {
-		return ErrIdempotencyStore
+	record := IdempotencyRecord{Scope: scope, Key: key, Digest: hex.EncodeToString(digest), Status: entry.status, Headers: sanitizeReplayHeaders(entry.header), Body: append([]byte(nil), entry.body...), ResourceKind: "http_response", ResourceID: stableIdempotencyResourceID(scope, key), CreatedAt: server.now().UTC().Format(time.RFC3339Nano), State: IdempotencyStateCompleted, Replayable: shouldRememberIdempotency(entry)}
+	if persistence.Complete != nil {
+		if err := persistence.Complete(ctx, record); err != nil {
+			return ErrIdempotencyStore
+		}
+		return nil
+	}
+	if persistence.Save != nil && record.Replayable {
+		if err := persistence.Save(ctx, record); err != nil {
+			return ErrIdempotencyStore
+		}
+		return nil
 	}
 	return nil
 }

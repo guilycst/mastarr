@@ -212,6 +212,35 @@ func Run(ctx context.Context, environment bootstrap.Environment) error {
 	}
 	httpHandler.SetConfigurationPersistence(newSQLiteConfigurationPersistence(store.DB(), time.Now))
 	httpHandler.SetIdempotencyPersistence(newSQLiteIdempotencyPersistence(store.DB(), time.Now))
+	httpHandler.SetConfigurationReload(func(reloadCtx context.Context) (*configuration.Manager, []domain.ConfigID, error) {
+		// Rebuild from the committed SQLite rows while the transport write
+		// gate is held. The same YAML/key/credential services are reused; no
+		// request can observe the failed in-memory candidate.
+		reloadedState, reloadErr := loadAPIState(reloadCtx, store, time.Now().UTC())
+		if reloadErr != nil {
+			return nil, nil, reloadErr
+		}
+		if reloadErr := verifyManagedCredentials(reloadCtx, crypt, credentialStore, reloadedState); reloadErr != nil {
+			return nil, nil, reloadErr
+		}
+		reloadedManager, reloadErr := configuration.New(configuration.Options{
+			Now:               time.Now,
+			YAMLPath:          environment.ConfigFile,
+			APIState:          reloadedState,
+			CredentialManager: crypt,
+			CredentialStore:   credentialStore,
+			KeySource:         keySource,
+			KeyPath:           keyPath,
+		})
+		if reloadErr != nil {
+			return nil, nil, reloadErr
+		}
+		managedIDs := make([]domain.ConfigID, 0, len(reloadedState.ManagedCredentialFields))
+		for id := range reloadedState.ManagedCredentialFields {
+			managedIDs = append(managedIDs, id)
+		}
+		return reloadedManager, managedIDs, nil
+	})
 	managedCredentialIDs := make([]domain.ConfigID, 0, len(apiState.ManagedCredentialFields))
 	for id := range apiState.ManagedCredentialFields {
 		managedCredentialIDs = append(managedCredentialIDs, id)

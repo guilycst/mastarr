@@ -9,11 +9,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	api "github.com/guilycst/mastarr/internal/api/generated"
 	"github.com/guilycst/mastarr/internal/configuration"
+	"github.com/guilycst/mastarr/internal/domain"
 )
 
 func testServer(t *testing.T, ready bool, origin string) (*Server, *configuration.Manager) {
@@ -235,6 +238,294 @@ func TestRecursiveActionBoundsRejectBeforeRouteDispatch(t *testing.T) {
 	if err := validateArrayBoundsWithBytes([]byte(`{"action":{"files":[{"path":"this path is deliberately larger than the byte budget"}]}}`), server.maxManifestEntries, server.maxManifestBytes); !errors.Is(err, ErrRequestTooLarge) {
 		t.Fatalf("nested manifest byte bounds error = %v", err)
 	}
+}
+
+func TestConfigurationFailureReloadsDurableManagerBeforeUnlock(t *testing.T) {
+	now := time.Date(2026, 9, 17, 10, 0, 0, 0, time.UTC)
+	candidate, err := configuration.New(configuration.Options{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer candidate.Close()
+	reloaded, err := configuration.New(configuration.Options{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reloaded.Close()
+
+	var fail atomic.Bool
+	fail.Store(true)
+	var reloads atomic.Int32
+	persistence := &ConfigurationPersistence{CreateConnection: func(ctx context.Context, draft domain.Connection, mutate func(context.Context) (domain.Connection, error)) (domain.Connection, error) {
+		value, mutateErr := mutate(ctx)
+		if fail.CompareAndSwap(true, false) {
+			// The callback models a storage transaction that rolled back after
+			// the manager produced a candidate. The recovery callback must make
+			// that candidate unobservable before the write gate is released.
+			return value, ErrConfigurationStore
+		}
+		return value, mutateErr
+	}}
+	server, err := New(Options{
+		Configuration:            candidate,
+		ConfigurationPersistence: persistence,
+		ConfigurationReload: func(context.Context) (*configuration.Manager, []domain.ConfigID, error) {
+			reloads.Add(1)
+			return reloaded, nil, nil
+		},
+		Ready: true,
+		Now:   func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := api.ConnectionCreate{Id: "reloaded", Kind: api.ConnectionCreateKindQbittorrent, Label: "reloaded", Endpoint: "http://qbt.test"}
+	if _, err := server.CreateConnection(context.Background(), api.CreateConnectionRequestObject{Body: &body}); !errors.Is(err, ErrConfigurationStore) {
+		t.Fatalf("failed create error = %v, want ErrConfigurationStore", err)
+	}
+	if got := reloads.Load(); got != 1 {
+		t.Fatalf("reload calls = %d, want 1", got)
+	}
+	connections, err := server.ListConnections(context.Background(), api.ListConnectionsRequestObject{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, ok := connections.(api.ListConnections200JSONResponse)
+	if !ok {
+		t.Fatalf("list response type = %T, want 200 response", connections)
+	}
+	if len(page.Body.Items) != 0 {
+		t.Fatalf("failed candidate remained visible: %#v", page.Body.Items)
+	}
+	if _, err := server.CreateConnection(context.Background(), api.CreateConnectionRequestObject{Body: &body}); err != nil {
+		t.Fatalf("retry after durable reload = %v", err)
+	}
+}
+
+func TestRequestDigestPreservesJSONNumberText(t *testing.T) {
+	request := func(body string) *http.Request {
+		return httptest.NewRequest(http.MethodPost, "/api/v1/connections", strings.NewReader(body))
+	}
+	low := request(`{"value":9007199254740992}`)
+	high := request(`{"value":9007199254740993}`)
+	if bytes.Equal(requestDigest(low), requestDigest(high)) {
+		t.Fatal("2^53-adjacent JSON numbers produced the same request digest")
+	}
+	ordered := request(`{"b":1,"value":9007199254740993}`)
+	reordered := request(`{"value":9007199254740993,"b":1}`)
+	if !bytes.Equal(requestDigest(ordered), requestDigest(reordered)) {
+		t.Fatal("equivalent object key order produced different request digests")
+	}
+}
+
+func TestDurableIdempotencyReservationSurvivesLostCompletion(t *testing.T) {
+	store := newTestDurableIdempotency()
+	store.failCompletion.Store(true)
+	var dispatches atomic.Int32
+	dependency := func(context.Context, api.CreateConnectionRequestObject) (api.CreateConnectionResponseObject, error) {
+		dispatches.Add(1)
+		return syntheticConnectionResponse("durable"), nil
+	}
+	options := func() Options {
+		return Options{
+			Ready:                  true,
+			Dependencies:           &RouteDependencies{CreateConnection: dependency},
+			IdempotencyPersistence: store.persistence(),
+		}
+	}
+	body := `{"id":"durable","kind":"qbittorrent","label":"durable","endpoint":"http://qbt.test"}`
+	firstServer, err := New(options())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := doJSON(firstServer.Handler(), http.MethodPost, "/api/v1/connections", body, map[string]string{"Idempotency-Key": "lost-completion"})
+	if first.Code != http.StatusServiceUnavailable || !strings.Contains(first.Body.String(), "persistence_unavailable") {
+		t.Fatalf("lost completion response = %d: %s", first.Code, first.Body.String())
+	}
+	if got := dispatches.Load(); got != 1 {
+		t.Fatalf("dispatches after lost completion = %d, want 1", got)
+	}
+
+	secondServer, err := New(options())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := doJSON(secondServer.Handler(), http.MethodPost, "/api/v1/connections", body, map[string]string{"Idempotency-Key": "lost-completion"})
+	if second.Code != http.StatusConflict || !strings.Contains(second.Body.String(), "idempotency_pending") {
+		t.Fatalf("pending restart response = %d: %s", second.Code, second.Body.String())
+	}
+	if got := dispatches.Load(); got != 1 {
+		t.Fatalf("pending restart dispatched again = %d", got)
+	}
+	store.completeLast(t)
+
+	thirdServer, err := New(options())
+	if err != nil {
+		t.Fatal(err)
+	}
+	third := doJSON(thirdServer.Handler(), http.MethodPost, "/api/v1/connections", body, map[string]string{"Idempotency-Key": "lost-completion"})
+	if third.Code != http.StatusCreated || !bytes.Contains(third.Body.Bytes(), []byte(`"id":"durable"`)) {
+		t.Fatalf("durable completion replay = %d: %s", third.Code, third.Body.String())
+	}
+	if got := dispatches.Load(); got != 1 {
+		t.Fatalf("durable replay dispatched again = %d", got)
+	}
+}
+
+func TestDurableReservationSerializesConcurrentServers(t *testing.T) {
+	store := newTestDurableIdempotency()
+	var dispatches atomic.Int32
+	dispatchStarted := make(chan struct{})
+	releaseDispatch := make(chan struct{})
+	var startOnce sync.Once
+	dependency := func(context.Context, api.CreateConnectionRequestObject) (api.CreateConnectionResponseObject, error) {
+		dispatches.Add(1)
+		startOnce.Do(func() { close(dispatchStarted) })
+		<-releaseDispatch
+		return syntheticConnectionResponse("race"), nil
+	}
+	options := func() Options {
+		return Options{Ready: true, Dependencies: &RouteDependencies{CreateConnection: dependency}, IdempotencyPersistence: store.persistence()}
+	}
+	firstServer, err := New(options())
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondServer, err := New(options())
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"id":"race","kind":"qbittorrent","label":"race","endpoint":"http://qbt.test"}`
+	firstResponse := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		firstResponse <- doJSON(firstServer.Handler(), http.MethodPost, "/api/v1/connections", body, map[string]string{"Idempotency-Key": "same-durable-key"})
+	}()
+	select {
+	case <-dispatchStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first durable dispatch did not start")
+	}
+	secondResponse := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		secondResponse <- doJSON(secondServer.Handler(), http.MethodPost, "/api/v1/connections", body, map[string]string{"Idempotency-Key": "same-durable-key"})
+	}()
+	if !store.waitForLoadCalls(2, time.Second) {
+		t.Fatal("second server did not inspect the durable reservation")
+	}
+	close(releaseDispatch)
+	first := <-firstResponse
+	second := <-secondResponse
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first response = %d: %s", first.Code, first.Body.String())
+	}
+	if second.Code != http.StatusConflict || !strings.Contains(second.Body.String(), "idempotency_pending") {
+		t.Fatalf("second response = %d: %s", second.Code, second.Body.String())
+	}
+	if got := dispatches.Load(); got != 1 {
+		t.Fatalf("durable concurrent dispatch count = %d, want 1", got)
+	}
+	if got := store.reserveCalls.Load(); got != 1 {
+		t.Fatalf("durable concurrent reservation count = %d, want 1", got)
+	}
+}
+
+type testDurableIdempotency struct {
+	mu             sync.Mutex
+	records        map[string]IdempotencyRecord
+	lastCompletion IdempotencyRecord
+	loadCalls      atomic.Int32
+	reserveCalls   atomic.Int32
+	failCompletion atomic.Bool
+}
+
+func newTestDurableIdempotency() *testDurableIdempotency {
+	return &testDurableIdempotency{records: make(map[string]IdempotencyRecord)}
+}
+
+func (store *testDurableIdempotency) persistence() *IdempotencyPersistence {
+	return &IdempotencyPersistence{Load: store.load, Reserve: store.reserve, Complete: store.complete}
+}
+
+func (store *testDurableIdempotency) load(_ context.Context, scope, key string) (IdempotencyRecord, bool, error) {
+	store.loadCalls.Add(1)
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	record, found := store.records[scope+"\x00"+key]
+	if !found {
+		return IdempotencyRecord{}, false, nil
+	}
+	return cloneTestIdempotencyRecord(record), true, nil
+}
+
+func (store *testDurableIdempotency) reserve(_ context.Context, record IdempotencyRecord) (bool, error) {
+	store.reserveCalls.Add(1)
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	key := record.Scope + "\x00" + record.Key
+	if current, found := store.records[key]; found {
+		if current.Digest != record.Digest {
+			return false, ErrIdempotencyConflict
+		}
+		return false, nil
+	}
+	record.Pending = true
+	store.records[key] = cloneTestIdempotencyRecord(record)
+	return true, nil
+}
+
+func (store *testDurableIdempotency) complete(_ context.Context, record IdempotencyRecord) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.failCompletion.Load() {
+		store.lastCompletion = cloneTestIdempotencyRecord(record)
+		return errors.New("synthetic completion outage")
+	}
+	key := record.Scope + "\x00" + record.Key
+	current, found := store.records[key]
+	if !found || current.Digest != record.Digest || current.State != IdempotencyStateReserved {
+		return ErrIdempotencyStore
+	}
+	store.records[key] = cloneTestIdempotencyRecord(record)
+	return nil
+}
+
+func (store *testDurableIdempotency) completeLast(t *testing.T) {
+	t.Helper()
+	store.failCompletion.Store(false)
+	store.mu.Lock()
+	record := cloneTestIdempotencyRecord(store.lastCompletion)
+	store.mu.Unlock()
+	if record.State != IdempotencyStateCompleted {
+		t.Fatalf("lost completion record state = %q", record.State)
+	}
+	if err := store.complete(context.Background(), record); err != nil {
+		t.Fatalf("complete recovered reservation: %v", err)
+	}
+}
+
+func (store *testDurableIdempotency) waitForLoadCalls(want int32, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if store.loadCalls.Load() >= want {
+			return true
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return store.loadCalls.Load() >= want
+}
+
+func cloneTestIdempotencyRecord(record IdempotencyRecord) IdempotencyRecord {
+	clone := record
+	clone.Headers = make(map[string][]string, len(record.Headers))
+	for key, values := range record.Headers {
+		clone.Headers[key] = append([]string(nil), values...)
+	}
+	clone.Body = append([]byte(nil), record.Body...)
+	return clone
+}
+
+func syntheticConnectionResponse(id string) api.CreateConnection201JSONResponse {
+	return api.CreateConnection201JSONResponse{Body: api.Connection{Id: id, Kind: api.ConnectionKindQbittorrent, Label: id, Endpoint: "http://qbt.test", Revision: "revision", CredentialState: api.ConnectionCredentialStateMissing, Health: api.ConnectionHealthUnknown}}
 }
 
 func doJSON(handler http.Handler, method, path, body string, headers map[string]string) *httptest.ResponseRecorder {

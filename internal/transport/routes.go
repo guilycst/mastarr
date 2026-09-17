@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	api "github.com/guilycst/mastarr/internal/api/generated"
+	"github.com/guilycst/mastarr/internal/configuration"
 	"github.com/guilycst/mastarr/internal/domain"
 )
 
@@ -32,6 +33,13 @@ type ConfigurationPersistence struct {
 	RetirePathMapping func(context.Context, domain.ConfigID, string, func(context.Context) error) error
 }
 
+// ConfigurationReload rebuilds the effective configuration from its durable
+// sources. The transport invokes it while holding its configuration write
+// gate after a persistence failure so a candidate manager can never remain
+// visible to readers. The returned IDs are ownership metadata only; they do
+// not contain credential material.
+type ConfigurationReload func(context.Context) (*configuration.Manager, []domain.ConfigID, error)
+
 func cloneConfigurationPersistence(value *ConfigurationPersistence) *ConfigurationPersistence {
 	if value == nil {
 		return nil
@@ -40,9 +48,10 @@ func cloneConfigurationPersistence(value *ConfigurationPersistence) *Configurati
 	return &copyValue
 }
 
-// IdempotencyRecord is the sanitized durable representation of one completed
-// mutation response. Response bytes are the generated JSON body and headers
-// contain only replay-safe metadata such as ETag, Location and Cache-Control.
+// IdempotencyRecord is the sanitized durable representation of one idempotent
+// mutation reservation or completion. Response bytes are the generated JSON
+// body and headers contain only replay-safe metadata such as ETag, Location
+// and Cache-Control. A reservation has Pending=true and no replayable body.
 type IdempotencyRecord struct {
 	Scope        string
 	Key          string
@@ -54,14 +63,38 @@ type IdempotencyRecord struct {
 	ResourceID   string
 	CreatedAt    string
 	ExpiresAt    string
+	// State is one of reserved or completed for the append-only durable
+	// protocol. Empty is accepted only for pre-protocol completed records.
+	State string
+	// Replayable distinguishes a durable handler outcome that may be replayed
+	// from an uncertain/server outcome that must remain held for reconciliation.
+	Replayable bool
+	// Pending reports a reservation or non-replayable completion. It is derived
+	// by the persistence implementation and is never trusted as an HTTP body.
+	Pending bool
 }
 
-// IdempotencyPersistence retains immutable request digests and successful
-// responses across process restarts. Load must return found=false for a
-// missing record and must not expose secret or transport-internal details.
+const (
+	// IdempotencyStateReserved is durable before a handler is dispatched.
+	IdempotencyStateReserved = "reserved"
+	// IdempotencyStateCompleted records the handler result in an immutable
+	// completion record. Replayable=false means the outcome remains held for
+	// reconciliation rather than authorizing a blind retry.
+	IdempotencyStateCompleted = "completed"
+)
+
+// IdempotencyPersistence retains an append-only reservation and completion
+// protocol across process restarts. Reserve must durably bind scope, key and
+// digest before dispatch. Complete must durably record the handler outcome
+// before transport caches or replays a successful response. Load must return
+// found=false for a missing record and must not expose secret or transport-
+// internal details. Save is retained for older completed-only stores and is
+// not used when the three protocol callbacks are present.
 type IdempotencyPersistence struct {
-	Load func(context.Context, string, string) (IdempotencyRecord, bool, error)
-	Save func(context.Context, IdempotencyRecord) error
+	Load     func(context.Context, string, string) (IdempotencyRecord, bool, error)
+	Reserve  func(context.Context, IdempotencyRecord) (bool, error)
+	Complete func(context.Context, IdempotencyRecord) error
+	Save     func(context.Context, IdempotencyRecord) error
 }
 
 func cloneIdempotencyPersistence(value *IdempotencyPersistence) *IdempotencyPersistence {

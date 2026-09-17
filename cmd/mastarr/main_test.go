@@ -15,6 +15,7 @@ import (
 
 	"github.com/guilycst/mastarr/internal/bootstrap"
 	"github.com/guilycst/mastarr/internal/storage"
+	"github.com/guilycst/mastarr/internal/transport"
 )
 
 func testEnvironment(t *testing.T, dataDir, listenAddr string) bootstrap.Environment {
@@ -282,5 +283,62 @@ func TestStartupErrorMessageIsSanitized(t *testing.T) {
 	}
 	if !errors.Is(err, ErrStartup) {
 		t.Fatalf("startup error does not preserve category: %v", err)
+	}
+}
+
+func TestSQLiteIdempotencyReservationAndCompletionSurviveRestart(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), databaseName)
+	store, err := storage.Open(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := func() time.Time { return time.Date(2026, 9, 17, 10, 0, 0, 0, time.UTC) }
+	persistence := newSQLiteIdempotencyPersistence(store.DB(), now)
+	digest := strings.Repeat("ab", 32)
+	reservation := transport.IdempotencyRecord{
+		Scope:        "POST /api/v1/connections",
+		Key:          "restart-safe",
+		Digest:       digest,
+		Status:       http.StatusProcessing,
+		ResourceKind: "idempotency_reservation",
+		ResourceID:   "http-restart-safe",
+		CreatedAt:    now().Format(time.RFC3339Nano),
+		State:        transport.IdempotencyStateReserved,
+	}
+	acquired, err := persistence.Reserve(context.Background(), reservation)
+	if err != nil || !acquired {
+		t.Fatalf("reserve = %t, %v; want acquired", acquired, err)
+	}
+	loaded, found, err := persistence.Load(context.Background(), reservation.Scope, reservation.Key)
+	if err != nil || !found || !loaded.Pending || loaded.State != transport.IdempotencyStateReserved {
+		t.Fatalf("reserved load = %#v, found=%t, err=%v; want pending reservation", loaded, found, err)
+	}
+	completed := reservation
+	completed.State = transport.IdempotencyStateCompleted
+	completed.Status = http.StatusCreated
+	completed.ResourceKind = "connection"
+	completed.ResourceID = "restart-safe"
+	completed.Replayable = true
+	completed.Headers = map[string][]string{"Content-Type": {"application/json"}}
+	completed.Body = []byte(`{"id":"restart-safe"}`)
+	if err := persistence.Complete(context.Background(), completed); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted, err := storage.Open(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	reloadedPersistence := newSQLiteIdempotencyPersistence(restarted.DB(), now)
+	reloaded, found, err := reloadedPersistence.Load(context.Background(), reservation.Scope, reservation.Key)
+	if err != nil || !found || reloaded.Pending || !reloaded.Replayable || reloaded.State != transport.IdempotencyStateCompleted {
+		t.Fatalf("completed load after restart = %#v, found=%t, err=%v; want replayable completion", reloaded, found, err)
+	}
+	if !bytes.Equal(reloaded.Body, completed.Body) || reloaded.Status != http.StatusCreated || reloaded.Digest != digest {
+		t.Fatalf("completed response after restart = %#v; want status/body/digest preserved", reloaded)
 	}
 }
