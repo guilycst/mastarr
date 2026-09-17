@@ -44,6 +44,27 @@ var (
 	ErrServe = errors.New("mastarr HTTP server stopped")
 )
 
+// sqliteTransactionKey carries the transaction opened by an API-owned
+// configuration persistence callback into the managed-credential store. The
+// key is private to this package so an arbitrary caller cannot smuggle a
+// transaction into configuration operations.
+type sqliteTransactionKey struct{}
+
+func withSQLiteTx(ctx context.Context, tx *sql.Tx) context.Context {
+	if tx == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, sqliteTransactionKey{}, tx)
+}
+
+func sqliteTxFromContext(ctx context.Context) *sql.Tx {
+	if ctx == nil {
+		return nil
+	}
+	tx, _ := ctx.Value(sqliteTransactionKey{}).(*sql.Tx)
+	return tx
+}
+
 // startupError preserves errors.Is identity without putting paths, SQL
 // statements, endpoints or other private details into a user-facing message.
 type startupError struct {
@@ -189,6 +210,13 @@ func Run(ctx context.Context, environment bootstrap.Environment) error {
 		_ = stopHTTP(httpServer)
 		return failStartup("configuration", err)
 	}
+	httpHandler.SetConfigurationPersistence(newSQLiteConfigurationPersistence(store.DB(), time.Now))
+	httpHandler.SetIdempotencyPersistence(newSQLiteIdempotencyPersistence(store.DB(), time.Now))
+	managedCredentialIDs := make([]domain.ConfigID, 0, len(apiState.ManagedCredentialFields))
+	for id := range apiState.ManagedCredentialFields {
+		managedCredentialIDs = append(managedCredentialIDs, id)
+	}
+	httpHandler.SetManagedCredentialIDs(managedCredentialIDs)
 	httpHandler.SetConfiguration(manager)
 	httpHandler.SetReady(true)
 
@@ -474,7 +502,13 @@ func (store *sqlCredentialStore) Load(ctx context.Context, connectionID domain.C
 	if store == nil || store.db == nil || !connectionID.Valid() {
 		return nil, errors.New("credential store is unavailable")
 	}
-	rows, err := store.db.QueryContext(ctx, `SELECT name, envelope_version, nonce, ciphertext, key_fingerprint FROM encrypted_credentials WHERE connection_id = ? ORDER BY name`, connectionID.String())
+	var queryer interface {
+		QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	} = store.db
+	if tx := sqliteTxFromContext(ctx); tx != nil {
+		queryer = tx
+	}
+	rows, err := queryer.QueryContext(ctx, `SELECT name, envelope_version, nonce, ciphertext, key_fingerprint FROM encrypted_credentials WHERE connection_id = ? ORDER BY name`, connectionID.String())
 	if err != nil {
 		return nil, errors.New("encrypted credentials could not be read")
 	}
@@ -510,11 +544,19 @@ func (store *sqlCredentialStore) Replace(ctx context.Context, connectionID domai
 	if store.now != nil {
 		now = store.now
 	}
-	tx, err := store.db.BeginTx(ctx, nil)
-	if err != nil {
-		return errors.New("credential transaction could not start")
+	tx := sqliteTxFromContext(ctx)
+	owned := false
+	if tx == nil {
+		var err error
+		tx, err = store.db.BeginTx(ctx, nil)
+		if err != nil {
+			return errors.New("credential transaction could not start")
+		}
+		owned = true
 	}
-	defer func() { _ = tx.Rollback() }()
+	if owned {
+		defer func() { _ = tx.Rollback() }()
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM encrypted_credentials WHERE connection_id = ?`, connectionID.String()); err != nil {
 		return errors.New("credential replacement could not clear old values")
 	}
@@ -527,8 +569,10 @@ func (store *sqlCredentialStore) Replace(ctx context.Context, connectionID domai
 			return errors.New("credential replacement could not be stored")
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return errors.New("credential replacement could not commit")
+	if owned {
+		if err := tx.Commit(); err != nil {
+			return errors.New("credential replacement could not commit")
+		}
 	}
 	return nil
 }

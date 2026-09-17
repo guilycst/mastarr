@@ -52,6 +52,8 @@ var (
 	ErrIfMatchMismatch     = errors.New("If-Match precondition does not match")
 	ErrInvalidIdempotency  = errors.New("Idempotency-Key is invalid")
 	ErrInvalidParameter    = errors.New("request parameter is invalid")
+	ErrConfigurationStore  = errors.New("configuration persistence is unavailable")
+	ErrIdempotencyStore    = errors.New("idempotency persistence is unavailable")
 )
 
 // Options controls one API server.  Configuration is optional so a process
@@ -1076,6 +1078,10 @@ func problemFor(ctx context.Context, err error, status int) api.Problem {
 		code, title, retryable = "not_ready", "Service is not ready", true
 	case errors.Is(err, ErrRouteUnavailable):
 		code, title, retryable = "service_unavailable", "Service is unavailable", true
+	case errors.Is(err, ErrIdempotencyStore):
+		code, title, retryable = "persistence_unavailable", "Durable persistence is unavailable", true
+	case errors.Is(err, ErrConfigurationStore):
+		code, title, retryable = "persistence_unavailable", "Durable persistence is unavailable", true
 	case errors.Is(err, ErrRequestTooLarge):
 		code, title = "request_too_large", "Request is too large"
 	case errors.Is(err, ErrUnknownField):
@@ -1084,6 +1090,8 @@ func problemFor(ctx context.Context, err error, status int) api.Problem {
 		code, title = "duplicate_field", "Request contains a duplicate field"
 	case errors.Is(err, ErrInvalidJSON):
 		code, title = "invalid_json", "Request body is invalid"
+	case errors.Is(err, ErrInvalidParameter):
+		code, title = "invalid_parameter", "Request parameter is invalid"
 	case errors.Is(err, ErrOriginForbidden):
 		code, title = "origin_forbidden", "Request origin is not allowed"
 	case errors.Is(err, ErrIdempotencyConflict):
@@ -1144,6 +1152,10 @@ func statusFor(err error) int {
 	case errors.Is(err, configuration.ErrResourceNotFound):
 		return http.StatusNotFound
 	case errors.Is(err, ErrNotReady), errors.Is(err, ErrRouteUnavailable):
+		return http.StatusServiceUnavailable
+	case errors.Is(err, ErrIdempotencyStore):
+		return http.StatusServiceUnavailable
+	case errors.Is(err, ErrConfigurationStore):
 		return http.StatusServiceUnavailable
 	case errors.Is(err, context.Canceled):
 		return http.StatusRequestTimeout
@@ -1237,9 +1249,21 @@ func (server *Server) policy(next http.Handler) http.Handler {
 			writeProblem(w, r, err)
 			return
 		}
-		key := r.Method + " " + r.URL.Path + "\x00" + r.Header.Get("Idempotency-Key")
+		scope := r.Method + " " + r.URL.Path
+		idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+		key := scope + "\x00" + idempotencyKey
 		digest := requestDigest(r)
 		for {
+			entry, found, err := server.lookupDurableIdempotency(r.Context(), scope, idempotencyKey, digest)
+			if err != nil {
+				writeProblem(w, r, err)
+				return
+			}
+			if found {
+				server.rememberIdempotency(key, digest, *entry)
+				replay(w, entry)
+				return
+			}
 			entry, pending, conflict := server.beginIdempotency(key, digest)
 			if conflict {
 				writeProblem(w, r, ErrIdempotencyConflict)
@@ -1267,7 +1291,13 @@ func (server *Server) policy(next http.Handler) http.Handler {
 		defer server.finishIdempotency(key)
 		next.ServeHTTP(capture, r)
 		entry := capture.entry()
-		server.rememberIdempotency(key, digest, entry)
+		if shouldRememberIdempotency(entry) {
+			server.rememberIdempotency(key, digest, entry)
+			if err := server.persistIdempotency(r.Context(), scope, idempotencyKey, digest, entry); err != nil {
+				writeProblem(w, r, err)
+				return
+			}
+		}
 		replay(w, &entry)
 	})
 }
@@ -1346,6 +1376,9 @@ func (server *Server) prepareBody(r *http.Request) error {
 	if err := validateJSONSyntax(data); err != nil {
 		return err
 	}
+	if err := validateArrayBoundsWithBytes(data, server.maxManifestEntries, server.maxManifestBytes); err != nil {
+		return err
+	}
 	allowed := allowedBodyFields(r.URL.Path, r.Method)
 	if allowed == nil {
 		return nil
@@ -1366,9 +1399,6 @@ func (server *Server) prepareBody(r *http.Request) error {
 		if err := decoder.Decode(&extra); err != io.EOF {
 			return ErrInvalidJSON
 		}
-	}
-	if err := validateArrayBoundsWithBytes(data, server.maxManifestEntries, server.maxManifestBytes); err != nil {
-		return err
 	}
 	return nil
 }
@@ -1631,7 +1661,7 @@ func (limits *arrayBounds) walk(value any, field string) error {
 
 func boundedCollectionField(field string) bool {
 	switch field {
-	case "manifest", "files", "steps", "connectionIds", "rootIds", "descriptorIds", "clientItemIds":
+	case "manifest", "files", "steps", "targets", "connectionIds", "rootIds", "descriptorIds", "clientItemIds":
 		return true
 	default:
 		return false
@@ -1748,6 +1778,70 @@ func (server *Server) rememberIdempotency(key string, digest []byte, entry idemp
 	entry.header = entry.header.Clone()
 	entry.body = append([]byte(nil), entry.body...)
 	server.idempotency[key] = entry
+}
+
+func shouldRememberIdempotency(entry idempotencyEntry) bool {
+	// A response that represents a transport/server failure must remain
+	// retryable. Persisting it would turn a transient outage into a permanent
+	// replay even after the dependency recovers.
+	return entry.status >= http.StatusOK && entry.status < http.StatusInternalServerError && entry.status != http.StatusRequestTimeout && entry.status != http.StatusTooManyRequests
+}
+
+func (server *Server) lookupDurableIdempotency(ctx context.Context, scope, key string, digest []byte) (*idempotencyEntry, bool, error) {
+	persistence := server.idempotencyPersistence()
+	if persistence == nil || persistence.Load == nil {
+		return nil, false, nil
+	}
+	record, found, err := persistence.Load(ctx, scope, key)
+	if err != nil {
+		return nil, false, ErrIdempotencyStore
+	}
+	if !found {
+		return nil, false, nil
+	}
+	storedDigest, err := hex.DecodeString(record.Digest)
+	if err != nil || len(storedDigest) == 0 {
+		return nil, false, ErrIdempotencyStore
+	}
+	if !bytes.Equal(storedDigest, digest) {
+		return nil, false, ErrIdempotencyConflict
+	}
+	entry := &idempotencyEntry{digest: storedDigest, status: record.Status, header: sanitizeReplayHeaders(record.Headers), body: append([]byte(nil), record.Body...)}
+	if entry.status < 100 || entry.status > 599 {
+		return nil, false, ErrIdempotencyStore
+	}
+	return entry, true, nil
+}
+
+func (server *Server) persistIdempotency(ctx context.Context, scope, key string, digest []byte, entry idempotencyEntry) error {
+	persistence := server.idempotencyPersistence()
+	if persistence == nil || persistence.Save == nil {
+		return nil
+	}
+	if len(digest) == 0 {
+		return ErrIdempotencyStore
+	}
+	if err := persistence.Save(ctx, IdempotencyRecord{Scope: scope, Key: key, Digest: hex.EncodeToString(digest), Status: entry.status, Headers: sanitizeReplayHeaders(entry.header), Body: append([]byte(nil), entry.body...), ResourceKind: "http_response", ResourceID: stableIdempotencyResourceID(scope, key), CreatedAt: server.now().UTC().Format(time.RFC3339Nano)}); err != nil {
+		return ErrIdempotencyStore
+	}
+	return nil
+}
+
+func sanitizeReplayHeaders(input http.Header) http.Header {
+	result := make(http.Header)
+	for key, values := range input {
+		canonical := http.CanonicalHeaderKey(key)
+		switch canonical {
+		case "Cache-Control", "Content-Type", "ETag", "Location", "Retry-After", "Vary":
+			result[canonical] = append([]string(nil), values...)
+		}
+	}
+	return result
+}
+
+func stableIdempotencyResourceID(scope, key string) string {
+	digest := sha256.Sum256([]byte(scope + "\x00" + key))
+	return "http-" + hex.EncodeToString(digest[:])
 }
 
 type responseCapture struct {

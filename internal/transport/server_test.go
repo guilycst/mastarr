@@ -2,7 +2,9 @@ package transport
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -57,6 +59,31 @@ func TestHealthSeparatesLivenessAndReadiness(t *testing.T) {
 	}
 }
 
+func TestUnassembledRoutesFailClosedAndAssembledRoutesDelegate(t *testing.T) {
+	server, _ := testServer(t, true, "")
+	if _, err := server.ListActionPlans(context.Background(), api.ListActionPlansRequestObject{}); !errors.Is(err, ErrRouteUnavailable) {
+		t.Fatalf("unassembled route error = %v, want ErrRouteUnavailable", err)
+	}
+	called := false
+	want := errors.New("synthetic action-plan service failure")
+	assembled, err := New(Options{
+		Now:   func() time.Time { return time.Date(2026, 9, 17, 10, 0, 0, 0, time.UTC) },
+		Ready: true,
+		Dependencies: &RouteDependencies{
+			ListActionPlans: func(context.Context, api.ListActionPlansRequestObject) (api.ListActionPlansResponseObject, error) {
+				called = true
+				return nil, want
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := assembled.ListActionPlans(context.Background(), api.ListActionPlansRequestObject{}); !errors.Is(err, want) || !called {
+		t.Fatalf("assembled route = called %t, error %v; want delegated synthetic error", called, err)
+	}
+}
+
 func TestConfigurationConnectionETagAndIfMatch(t *testing.T) {
 	server, _ := testServer(t, true, "")
 	handler := server.Handler()
@@ -85,6 +112,15 @@ func TestConfigurationConnectionETagAndIfMatch(t *testing.T) {
 	if got := patch.Header().Get("Content-Type"); got != "application/problem+json" {
 		t.Fatalf("stale patch content type = %q", got)
 	}
+	weak := doJSON(handler, http.MethodPatch, "/api/v1/connections/qbt", `{"label":"weak"}`, map[string]string{"Idempotency-Key": "patch-weak", "If-Match": `W/"` + connection.Revision + `"`})
+	if weak.Code != http.StatusPreconditionFailed {
+		t.Fatalf("weak patch status = %d: %s", weak.Code, weak.Body.String())
+	}
+	getAfterWeak := httptest.NewRecorder()
+	handler.ServeHTTP(getAfterWeak, httptest.NewRequest(http.MethodGet, "/api/v1/connections/qbt", nil))
+	if getAfterWeak.Code != http.StatusOK || strings.Contains(getAfterWeak.Body.String(), `"label":"weak"`) {
+		t.Fatalf("weak patch changed configuration: %d %s", getAfterWeak.Code, getAfterWeak.Body.String())
+	}
 }
 
 func TestIdempotencyReplaysSameRequestAndRejectsChangedRequest(t *testing.T) {
@@ -105,6 +141,30 @@ func TestIdempotencyReplaysSameRequestAndRejectsChangedRequest(t *testing.T) {
 	}
 	if !strings.Contains(changed.Body.String(), "idempotency_conflict") {
 		t.Fatalf("changed request problem = %s", changed.Body.String())
+	}
+}
+
+func TestRetryableMutationResponsesAreNotRemembered(t *testing.T) {
+	now := time.Date(2026, 9, 17, 10, 0, 0, 0, time.UTC)
+	manager, err := configuration.New(configuration.Options{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	server, err := New(Options{Now: func() time.Time { return now }, Ready: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := server.Handler()
+	body := `{"id":"recovered","kind":"qbittorrent","label":"Recovered","endpoint":"http://qbt.test"}`
+	first := doJSON(handler, http.MethodPost, "/api/v1/connections", body, map[string]string{"Idempotency-Key": "recoverable"})
+	if first.Code != http.StatusServiceUnavailable || !strings.Contains(first.Body.String(), "not_ready") {
+		t.Fatalf("pre-start response = %d: %s", first.Code, first.Body.String())
+	}
+	server.SetConfiguration(manager)
+	second := doJSON(handler, http.MethodPost, "/api/v1/connections", body, map[string]string{"Idempotency-Key": "recoverable"})
+	if second.Code != http.StatusCreated {
+		t.Fatalf("recovered response = %d: %s", second.Code, second.Body.String())
 	}
 }
 
@@ -157,6 +217,23 @@ func TestBoundedStrictJSONAndOriginPolicy(t *testing.T) {
 	nestedUnknown := doJSON(handler, http.MethodPost, "/api/v1/workflow-runs", `{"name":"import","steps":[{"id":"step-1","actionPlanId":"00000000-0000-0000-0000-000000000001","unexpected":true}]}`, map[string]string{"Idempotency-Key": "nested-unknown"})
 	if nestedUnknown.Code != http.StatusUnprocessableEntity || !strings.Contains(nestedUnknown.Body.String(), "unknown_field") {
 		t.Fatalf("nested unknown response = %d %s", nestedUnknown.Code, nestedUnknown.Body.String())
+	}
+	invalidLimit := httptest.NewRecorder()
+	handler.ServeHTTP(invalidLimit, httptest.NewRequest(http.MethodGet, "/api/v1/connections?limit=1001", nil))
+	if invalidLimit.Code != http.StatusUnprocessableEntity || !strings.Contains(invalidLimit.Body.String(), "invalid_parameter") {
+		t.Fatalf("invalid limit response = %d %s", invalidLimit.Code, invalidLimit.Body.String())
+	}
+}
+
+func TestRecursiveActionBoundsRejectBeforeRouteDispatch(t *testing.T) {
+	server, _ := testServer(t, true, "")
+	server.maxManifestEntries = 2
+	server.maxManifestBytes = 64
+	if err := validateArrayBoundsWithBytes([]byte(`{"action":{"files":[{"path":"a"},{"path":"b"},{"path":"c"}]}}`), server.maxManifestEntries, server.maxManifestBytes); !errors.Is(err, ErrRequestTooLarge) {
+		t.Fatalf("nested manifest bounds error = %v", err)
+	}
+	if err := validateArrayBoundsWithBytes([]byte(`{"action":{"files":[{"path":"this path is deliberately larger than the byte budget"}]}}`), server.maxManifestEntries, server.maxManifestBytes); !errors.Is(err, ErrRequestTooLarge) {
+		t.Fatalf("nested manifest byte bounds error = %v", err)
 	}
 }
 
