@@ -4499,7 +4499,7 @@
       ]
     },
     "U-04": {
-      "status": "in_progress",
+      "status": "in_review",
       "owner": "/root/c01_implementer",
       "baseSha": "94f118c06aec062da72b2e889a82576a9a37782f",
       "integratedSha": null,
@@ -4516,17 +4516,17 @@
         "26c1355f59c08cdf78c1eb0c426602b230cd8552 independent U-04 round-one review requests three P1 and two P2 corrections; all reviewer checks and offline guardrails passed.",
         "067ebe5fbef03ae915bf31d22234d637a9147cb2 U-04 correction round one closes the three P1 and two P2 findings with production reader-to-handler adversarial fixtures.",
         "51dedbcebb6a998c1302acb0544d1d0033c13e35 U-04 correction handoff records exact product scope, synthetic checks, frozen-schema unknowns and review-round-two dispatch.",
-        "f7d7983284858f855b1c4600952ed7283c4b6a01 independent U-04 correction review round two closes P1-1, P1-3, P2-1 and P2-2 but requests one P1 endpoint canonicalization correction; all checks and offline guardrails passed."
+        "f7d7983284858f855b1c4600952ed7283c4b6a01 independent U-04 correction review round two closes P1-1, P1-3, P2-1 and P2-2 but requests one P1 endpoint canonicalization correction; all checks and offline guardrails passed.",
+        "f9bf91d9c4235196b7a50ec56e3d2039f233b1e9 U-04 correction round two closes the encoded endpoint credential-marker bypass with bounded canonical/component inspection and nested-decoding regressions.",
+        "8dd3171f13f254d5f7468b4d1a09d4bd6e6d7b7e U-04 correction handoff records product scope, zero-reader-call tests, offline guardrails and round-three review dispatch."
       ],
       "review": {
-        "status": "changes_requested",
-        "decision": "changes_requested",
+        "status": "pending",
+        "decision": null,
         "reviewer": "/root/c01_reviewer",
-        "commit": "f7d7983284858f855b1c4600952ed7283c4b6a01",
-        "findings": [
-          "P1-2 percent-encoded credential markers in endpoint draft URL paths bypass validation and are rendered into browser HTML/URL."
-        ],
-        "round": 2
+        "commit": null,
+        "findings": [],
+        "round": 3
       },
       "dispatch": {
         "assignedAt": "2026-09-21",
@@ -4556,9 +4556,9 @@
         "reviewPath": "docs/execution/handoffs/U-04-review-round1.md",
         "handoffPath": "docs/execution/handoffs/U-04.md",
         "nextReviewer": "/root/c01_reviewer",
-        "status": "changes_requested",
-        "waitingOn": "/root/c01_implementer",
-        "waitingReason": "Independent U-04 correction review round two reproduced one P1 percent-encoded endpoint credential-marker bypass; correction round two is required before approval.",
+        "status": "awaiting_review",
+        "waitingOn": "/root/c01_reviewer",
+        "waitingReason": "U-04 correction round two product and handoff are complete; independent correction review round three is required before integration.",
         "dependencyCommits": {
           "U-01": "2f861a0322e8a693550ed6069e19776a1149a48e",
           "W-05": "ea3958b15508d13893b55674b59cfb0bf50d1ffe"
@@ -4573,21 +4573,23 @@
           "13ec09f9f54523788aa4ddee1efa9e7bd9165704",
           "f63cedf1dc93c6def4fb851342a3da1c19fbbd9b"
         ],
-        "correctionStatus": "dispatched",
+        "correctionStatus": "awaiting_review",
         "correctionRound": 2,
         "correctionOwner": "/root/c01_implementer",
         "correctionBaseSha": "f7d7983284858f855b1c4600952ed7283c4b6a01",
-        "correctionDispatchCheckpoint": "f7d7983284858f855b1c4600952ed7283c4b6a01",
+        "correctionDispatchCheckpoint": "3342f17d5ce4615564108da2b3a4ce0574fa39b9",
         "correctionReviewPath": "docs/execution/handoffs/U-04-review-round3.md",
         "correctionHandoffPath": "docs/execution/handoffs/U-04-correction-round2.md",
         "correctionReviewer": "/root/c01_reviewer",
-        "correctionImplementationCommit": null,
-        "correctionHandoffCommit": null,
-        "correctionReviewSourceCommit": null,
+        "correctionImplementationCommit": "f9bf91d9c4235196b7a50ec56e3d2039f233b1e9",
+        "correctionHandoffCommit": "8dd3171f13f254d5f7468b4d1a09d4bd6e6d7b7e",
+        "correctionReviewSourceCommit": "f9bf91d9c4235196b7a50ec56e3d2039f233b1e9",
         "correctionReviewCommit": null,
         "correctionReviewIntegrationCommit": null,
-        "correctionDispatchCommit": null,
-        "correctionProductCommits": []
+        "correctionDispatchCommit": "3342f17d5ce4615564108da2b3a4ce0574fa39b9",
+        "correctionProductCommits": [
+          "f9bf91d9c4235196b7a50ec56e3d2039f233b1e9"
+        ]
       },
       "implementationCommit": "f63cedf1dc93c6def4fb851342a3da1c19fbbd9b",
       "handoffCommit": "b99fb7552be89994e870fa50b6352b2a58e9b533",
@@ -4622,6 +4624,16 @@
           "findings": [
             "P1-2 percent-encoded credential markers in endpoint draft URL paths bypass validation and are rendered into browser HTML/URL."
           ]
+        },
+        {
+          "round": 3,
+          "reviewer": "/root/c01_reviewer",
+          "commit": null,
+          "status": "pending",
+          "sourceCommit": "f9bf91d9c4235196b7a50ec56e3d2039f233b1e9",
+          "receipt": "docs/execution/handoffs/U-04-review-round3.md",
+          "productCommit": "f9bf91d9c4235196b7a50ec56e3d2039f233b1e9",
+          "handoffCommit": "8dd3171f13f254d5f7468b4d1a09d4bd6e6d7b7e"
         }
       ]
     },
@@ -6453,7 +6465,7 @@
       ]
     }
   },
-  "nextAction": "U-04 correction review f7d7983284858f855b1c4600952ed7283c4b6a01 leaves one P1 encoded endpoint credential-marker bypass; dispatch /root/c01_implementer for correction round two, then independent re-review.",
+  "nextAction": "U-04 correction product f9bf91d9c4235196b7a50ec56e3d2039f233b1e9 and handoff 8dd3171f13f254d5f7468b4d1a09d4bd6e6d7b7e are recorded; dispatch /root/c01_reviewer for independent correction review round three.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
