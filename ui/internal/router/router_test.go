@@ -201,6 +201,9 @@ func TestProductionRouterComposesCompleteShellForDeepLinks(t *testing.T) {
 			if !strings.Contains(response.Body.String(), "<main") || !strings.Contains(response.Body.String(), "mastarr-page") {
 				t.Fatalf("response is not a complete shell document: %s", response.Body.String())
 			}
+			if headings := strings.Count(response.Body.String(), "<h1"); headings != 1 {
+				t.Fatalf("delegated shell has %d h1 headings, want one: %s", headings, response.Body.String())
+			}
 			if strings.Contains(response.Body.String(), "attacker.example") || strings.Contains(response.Body.String(), "forwarded.attacker.example") {
 				t.Fatalf("request host escaped into shell metadata: %s", response.Body.String())
 			}

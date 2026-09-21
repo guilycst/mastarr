@@ -244,16 +244,11 @@ func content(view View) templ.Component {
 			_, err := io.WriteString(w, templ.EscapeString(value))
 			return err
 		}
-		if _, err := io.WriteString(w, `<section class="mastarr-page" aria-labelledby="mastarr-page-title">`); err != nil {
-			return err
+		section := `<section class="mastarr-page" aria-labelledby="mastarr-page-title">`
+		if view.ContentHTML != "" {
+			section = `<section class="mastarr-page">`
 		}
-		if _, err := io.WriteString(w, `<h1 id="mastarr-page-title">`); err != nil {
-			return err
-		}
-		if err := write(view.Title); err != nil {
-			return err
-		}
-		if _, err := io.WriteString(w, `</h1>`); err != nil {
+		if _, err := io.WriteString(w, section); err != nil {
 			return err
 		}
 		if view.ContentHTML != "" {
@@ -261,6 +256,15 @@ func content(view View) templ.Component {
 				return err
 			}
 		} else {
+			if _, err := io.WriteString(w, `<h1 id="mastarr-page-title">`); err != nil {
+				return err
+			}
+			if err := write(view.Title); err != nil {
+				return err
+			}
+			if _, err := io.WriteString(w, `</h1>`); err != nil {
+				return err
+			}
 			switch {
 			case view.NotFound:
 				if _, err := io.WriteString(w, `<p role="alert">The requested page was not found.</p>`); err != nil {
