@@ -4651,7 +4651,8 @@
         "Use synthetic API fixtures and browser-visible verification only; no live services, credentials, private coordinates, media or deployment.",
         "Record allowed/denied/repeated consequential-action outcomes, forged GET/POST requests, transport failures, keyboard/focus order, narrow/wide themes and initial metadata/assets with exact effect counts and screenshot or structural evidence.",
         "a753fe0b3164cab2beb456d961d1c679da518ad7 U-05 product adds synthetic production-boundary browser/accessibility tests covering A-26, A-42, A-47 through A-51.",
-        "U-05 handoff records exact request/effect counts, structural metadata/accessibility evidence, synthetic failures, and honest CUA/router limitations; live browser screenshots and composed-route traces remain deferred."
+        "U-05 handoff records exact request/effect counts, structural metadata/accessibility evidence, synthetic failures, and honest CUA/router limitations; live browser screenshots and composed-route traces remain deferred.",
+        "cd710266c841980fc9191bb8e7350ec1c7fa8d48 U-05 handoff link correction fixes the repository-relative browser test reference; planning and fast guardrails pass."
       ],
       "review": {
         "status": "pending",
@@ -4695,14 +4696,14 @@
           "U-04": "9bd8b84d79d3086759d5872be43c4b0814a99948"
         },
         "implementationCommit": "a753fe0b3164cab2beb456d961d1c679da518ad7",
-        "handoffCommit": "45a7553b0df88fff478108a5a391f227f767a767",
+        "handoffCommit": "cd710266c841980fc9191bb8e7350ec1c7fa8d48",
         "reviewSourceCommit": "a753fe0b3164cab2beb456d961d1c679da518ad7",
         "reviewRound": 1,
         "reviewCommit": null,
         "reviewIntegrationCommit": null
       },
       "implementationCommit": "a753fe0b3164cab2beb456d961d1c679da518ad7",
-      "handoffCommit": "45a7553b0df88fff478108a5a391f227f767a767",
+      "handoffCommit": "cd710266c841980fc9191bb8e7350ec1c7fa8d48",
       "reviewSourceCommit": "a753fe0b3164cab2beb456d961d1c679da518ad7",
       "reviewHistory": [
         {
@@ -4713,7 +4714,7 @@
           "sourceCommit": "a753fe0b3164cab2beb456d961d1c679da518ad7",
           "receipt": "docs/execution/handoffs/U-05-review-round1.md",
           "productCommit": "a753fe0b3164cab2beb456d961d1c679da518ad7",
-          "handoffCommit": "45a7553b0df88fff478108a5a391f227f767a767"
+          "handoffCommit": "cd710266c841980fc9191bb8e7350ec1c7fa8d48"
         }
       ]
     },
@@ -6537,7 +6538,7 @@
       ]
     }
   },
-  "nextAction": "U-05 browser verification product a753fe0b3164cab2beb456d961d1c679da518ad7 and handoff 45a7553 are recorded; dispatch /root/c01_reviewer for independent review, with live browser/router gaps explicitly deferred.",
+  "nextAction": "U-05 product a753fe0b3164cab2beb456d961d1c679da518ad7 and corrected handoff cd710266c841980fc9191bb8e7350ec1c7fa8d48 are recorded; dispatch /root/c01_reviewer for independent review, with live browser/router gaps explicitly deferred.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
