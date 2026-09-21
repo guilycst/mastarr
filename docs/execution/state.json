@@ -4499,7 +4499,7 @@
       ]
     },
     "U-04": {
-      "status": "in_progress",
+      "status": "in_review",
       "owner": "/root/c01_implementer",
       "baseSha": "94f118c06aec062da72b2e889a82576a9a37782f",
       "integratedSha": null,
@@ -4513,21 +4513,17 @@
         "f63cedf1dc93c6def4fb851342a3da1c19fbbd9b U-04 coverage follow-up adds production-path coverage for pagination, YAML/API provenance, credential redaction, trash states and identity/bounds checks.",
         "b99fb7552be89994e870fa50b6352b2a58e9b533 U-04 handoff records exact limitations from the frozen API schema, accepted unknowns and full verification commands; router/browser integration remains deferred.",
         "U-04 product and handoff focused/full tests, race, vet, mod verify/tidy, cross-builds, generation/Vacuum, lint, architecture, planning and full offline guardrails passed.",
-        "26c1355f59c08cdf78c1eb0c426602b230cd8552 independent U-04 round-one review requests three P1 and two P2 corrections; all reviewer checks and offline guardrails passed."
+        "26c1355f59c08cdf78c1eb0c426602b230cd8552 independent U-04 round-one review requests three P1 and two P2 corrections; all reviewer checks and offline guardrails passed.",
+        "067ebe5fbef03ae915bf31d22234d637a9147cb2 U-04 correction round one closes the three P1 and two P2 findings with production reader-to-handler adversarial fixtures.",
+        "51dedbcebb6a998c1302acb0544d1d0033c13e35 U-04 correction handoff records exact product scope, synthetic checks, frozen-schema unknowns and review-round-two dispatch."
       ],
       "review": {
-        "status": "changes_requested",
-        "decision": "changes_requested",
+        "status": "pending",
+        "decision": null,
         "reviewer": "/root/c01_reviewer",
-        "commit": "26c1355f59c08cdf78c1eb0c426602b230cd8552",
-        "findings": [
-          "P1-1 trash confirmation accepts unsupported action=delete and can mismatch the visible restore/purge choice.",
-          "P1-2 credential-bearing endpoint drafts with userinfo/query material are rendered into private HTML and URLs.",
-          "P1-3 duplicate trash manifest/original targets are accepted and returned type, digest and observedAt identity evidence is omitted from confirmation HTML.",
-          "P2-1 YAML source evidence can claim editable=true and render an edit draft instead of enforcing read-only ownership.",
-          "P2-2 restore view omits the stopped/no-auto-re-add/no-auto-resume policy required after torrent removal."
-        ],
-        "round": 1
+        "commit": null,
+        "findings": [],
+        "round": 2
       },
       "dispatch": {
         "assignedAt": "2026-09-21",
@@ -4557,9 +4553,9 @@
         "reviewPath": "docs/execution/handoffs/U-04-review-round1.md",
         "handoffPath": "docs/execution/handoffs/U-04.md",
         "nextReviewer": "/root/c01_reviewer",
-        "status": "changes_requested",
-        "waitingOn": "/root/c01_implementer",
-        "waitingReason": "Independent U-04 round-one review found three P1 and two P2 UI correctness and redaction findings; correction round one is required before approval.",
+        "status": "awaiting_review",
+        "waitingOn": "/root/c01_reviewer",
+        "waitingReason": "U-04 correction round one product and handoff are complete; independent correction review round two is required before integration.",
         "dependencyCommits": {
           "U-01": "2f861a0322e8a693550ed6069e19776a1149a48e",
           "W-05": "ea3958b15508d13893b55674b59cfb0bf50d1ffe"
@@ -4574,7 +4570,7 @@
           "13ec09f9f54523788aa4ddee1efa9e7bd9165704",
           "f63cedf1dc93c6def4fb851342a3da1c19fbbd9b"
         ],
-        "correctionStatus": "dispatched",
+        "correctionStatus": "awaiting_review",
         "correctionRound": 1,
         "correctionOwner": "/root/c01_implementer",
         "correctionBaseSha": "26c1355f59c08cdf78c1eb0c426602b230cd8552",
@@ -4582,13 +4578,15 @@
         "correctionReviewPath": "docs/execution/handoffs/U-04-review-round2.md",
         "correctionHandoffPath": "docs/execution/handoffs/U-04-correction-round1.md",
         "correctionReviewer": "/root/c01_reviewer",
-        "correctionImplementationCommit": null,
-        "correctionHandoffCommit": null,
-        "correctionReviewSourceCommit": null,
+        "correctionImplementationCommit": "067ebe5fbef03ae915bf31d22234d637a9147cb2",
+        "correctionHandoffCommit": "51dedbcebb6a998c1302acb0544d1d0033c13e35",
+        "correctionReviewSourceCommit": "067ebe5fbef03ae915bf31d22234d637a9147cb2",
         "correctionReviewCommit": null,
         "correctionReviewIntegrationCommit": null,
-        "correctionDispatchCommit": null,
-        "correctionProductCommits": []
+        "correctionDispatchCommit": "eefef5f1b71f0bee9d587887d99023889e751787",
+        "correctionProductCommits": [
+          "067ebe5fbef03ae915bf31d22234d637a9147cb2"
+        ]
       },
       "implementationCommit": "f63cedf1dc93c6def4fb851342a3da1c19fbbd9b",
       "handoffCommit": "b99fb7552be89994e870fa50b6352b2a58e9b533",
@@ -4610,6 +4608,16 @@
             "P2-1 YAML source evidence can claim editable=true and render an edit draft instead of enforcing read-only ownership.",
             "P2-2 restore view omits the stopped/no-auto-re-add/no-auto-resume policy required after torrent removal."
           ]
+        },
+        {
+          "round": 2,
+          "reviewer": "/root/c01_reviewer",
+          "commit": null,
+          "status": "pending",
+          "sourceCommit": "067ebe5fbef03ae915bf31d22234d637a9147cb2",
+          "receipt": "docs/execution/handoffs/U-04-review-round2.md",
+          "productCommit": "067ebe5fbef03ae915bf31d22234d637a9147cb2",
+          "handoffCommit": "51dedbcebb6a998c1302acb0544d1d0033c13e35"
         }
       ]
     },
@@ -6441,7 +6449,7 @@
       ]
     }
   },
-  "nextAction": "U-04 review receipt 26c1355f59c08cdf78c1eb0c426602b230cd8552 requests three P1 and two P2 corrections; dispatch /root/c01_implementer for correction round one, then independent re-review.",
+  "nextAction": "U-04 correction product 067ebe5fbef03ae915bf31d22234d637a9147cb2 and handoff 51dedbcebb6a998c1302acb0544d1d0033c13e35 are recorded; dispatch /root/c01_reviewer for independent correction review round two.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
