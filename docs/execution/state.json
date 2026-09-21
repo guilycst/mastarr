@@ -6576,7 +6576,7 @@
       ]
     },
     "U-06": {
-      "status": "changes_requested",
+      "status": "in_progress",
       "owner": "/root/c01_implementer",
       "baseSha": "5f8bc875beb1284e800b981a962f3a34d588d225",
       "integratedSha": null,
@@ -6626,9 +6626,9 @@
         "reviewPath": "docs/execution/handoffs/U-06-review-round1.md",
         "handoffPath": "docs/execution/handoffs/U-06.md",
         "nextReviewer": "/root/c01_reviewer",
-        "status": "changes_requested",
+        "status": "in_progress",
         "waitingOn": "/root",
-        "waitingReason": "Independent review found one P1 route-composition gap and one P2 static-header contradiction; correction must preserve normalized handler behavior while restoring shared shell metadata and public asset headers.",
+        "waitingReason": "Review correction is being dispatched for the P1 route-composition gap and P2 static-header contradiction.",
         "dependencyCommits": {
           "U-03": "a1b986a833d808b761a724f7522a1ece66a31748",
           "U-04": "9bd8b84d79d3086759d5872be43c4b0814a99948",
