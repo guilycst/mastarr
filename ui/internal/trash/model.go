@@ -378,7 +378,7 @@ func (h *Handler) renderDetail(w http.ResponseWriter, query queryState, item Tra
 	p.value(query.listEncoded())
 	p.text("\">Back to Trash</a></p><h1 id=\"trash-title\">Trash entry ")
 	p.value(known(item.ID))
-	p.text("</h1><p>Restore and purge are two-step API-owned actions. These GET forms preserve operator context only; they never dispatch a mutation. Permanent delete has no UI shortcut outside this trash flow.</p><dl>")
+	p.text("</h1><p>Restore and purge are two-step API-owned actions. These GET forms preserve operator context only; they never dispatch a mutation. Permanent delete has no UI shortcut outside this trash flow. Restore policy keeps any associated client stopped; restore performs no automatic re-add or automatic resume. Stop, remove, and client association observations remain unknown when the API supplies no evidence.</p><dl>")
 	detailTerm(&p, "State", stateLabel(item.State))
 	detailTerm(&p, "Expires at", timeLabel(item.ExpiresAt))
 	detailTerm(&p, "Retention", retentionLabel(item))
@@ -388,7 +388,20 @@ func (h *Handler) renderDetail(w http.ResponseWriter, query queryState, item Tra
 	p.text("</dl>")
 	p.text("<section aria-labelledby=\"trash-draft\"><h2 id=\"trash-draft\">Action draft</h2><p id=\"trash-draft-help\">Keep the idempotency and operator context here, then submit the corresponding API action after reviewing the exact plan and current ETag.</p><form method=\"get\" action=\"/trash/")
 	p.value(url.PathEscape(item.ID))
-	p.text("\" aria-describedby=\"trash-draft-help\"><fieldset><legend>Step 1: choose the API-owned action</legend><label>Action<select name=\"action\"><option value=\"restore\">restore</option><option value=\"purge\">purge</option></select></label>")
+	action := query.value("action", "restore")
+	if !validTrashAction(action) {
+		action = "restore"
+	}
+	p.text("\" aria-describedby=\"trash-draft-help\"><fieldset><legend>Step 1: choose the API-owned action</legend><label>Action<select name=\"action\">")
+	p.text("<option value=\"restore\"")
+	if action == "restore" {
+		p.text(" selected")
+	}
+	p.text(">restore</option><option value=\"purge\"")
+	if action == "purge" {
+		p.text(" selected")
+	}
+	p.text(">purge</option></select></label>")
 	writeInput(&p, "idempotencyKey", "Idempotency key", query.value("idempotencyKey", ""))
 	writeInput(&p, "operator", "Operator context", query.value("operator", ""))
 	writeInput(&p, "reason", "Reason", query.value("reason", ""))
@@ -396,7 +409,7 @@ func (h *Handler) renderDetail(w http.ResponseWriter, query queryState, item Tra
 	p.text("<button type=\"submit\">Keep action draft</button></fieldset></form><form method=\"get\" action=\"/trash/")
 	p.value(url.PathEscape(item.ID))
 	p.text("\" aria-label=\"Confirm trash action draft\"><fieldset><legend>Step 2: confirmation context</legend><input type=\"hidden\" name=\"action\" value=\"")
-	p.value(query.value("action", ""))
+	p.value(action)
 	p.text("\"><input type=\"hidden\" name=\"idempotencyKey\" value=\"")
 	p.value(query.value("idempotencyKey", ""))
 	p.text("\"><input type=\"hidden\" name=\"operator\" value=\"")
@@ -406,7 +419,7 @@ func (h *Handler) renderDetail(w http.ResponseWriter, query queryState, item Tra
 	p.text("\"><input type=\"hidden\" name=\"ifMatch\" value=\"")
 	p.value(query.value("ifMatch", item.ETag))
 	p.text("\"><label>Confirm exact manifest and current state<input name=\"confirm\" value=\"")
-	p.value(query.value("confirm", ""))
+	p.value(query.value("confirm", action))
 	p.text("\"></label><button type=\"submit\">Keep confirmation draft</button></fieldset></form></section>")
 	writeTargets(&p, "Original locations", item.OriginalPaths)
 	writeManifest(&p, item.Files)
@@ -503,7 +516,20 @@ func parseQuery(raw string, detail bool, defaultSize, maxSize int) (queryState, 
 		}
 		state.Values[key] = value
 	}
+	if action, present := state.Values["action"]; present && !validTrashAction(action) {
+		return queryState{}, errors.New("trash action invalid")
+	}
+	if confirm, present := state.Values["confirm"]; present {
+		action, actionPresent := state.Values["action"]
+		if !actionPresent || !validTrashAction(action) || confirm != action {
+			return queryState{}, errors.New("trash confirmation is not bound to action")
+		}
+	}
 	return state, nil
+}
+
+func validTrashAction(value string) bool {
+	return value == "restore" || value == "purge"
 }
 
 func validDraftKey(value string) bool {
@@ -660,14 +686,33 @@ func validTrashEntry(item TrashEntry) bool {
 	if !validStringList(item.Capabilities, 128) || !validStringList(item.ClientAssociations, 256) || !validStringList(item.Holds, 256) || !validStringList(item.RestoreConflicts, 256) || !validStringList(item.UnresolvedEffects, 256) || !validStringList(item.LateEffects, 256) {
 		return false
 	}
+	seenTargets := make(map[string]struct{}, len(item.OriginalPaths))
 	for _, target := range item.OriginalPaths {
 		if !validConfigID(target.RootID) || !validRelativePath(target.RelativePath) {
 			return false
 		}
+		key := target.RootID + "\x00" + target.RelativePath
+		if _, exists := seenTargets[key]; exists {
+			return false
+		}
+		seenTargets[key] = struct{}{}
 	}
+	seenFiles := make(map[string]struct{}, len(item.Files))
+	seenIdentities := make(map[string]struct{}, len(item.Files))
 	for _, file := range item.Files {
 		if !validConfigID(file.RootID) || !validRelativePath(file.RelativePath) || !knownFileType(file.Type) || !knownFileRole(file.Role) || file.Size < 0 || !validBounded(file.Identity, 128, true) || !validBounded(file.Digest, 256, true) {
 			return false
+		}
+		fileKey := file.RootID + "\x00" + file.RelativePath
+		if _, exists := seenFiles[fileKey]; exists {
+			return false
+		}
+		seenFiles[fileKey] = struct{}{}
+		if file.Identity != "" {
+			if _, exists := seenIdentities[file.Identity]; exists {
+				return false
+			}
+			seenIdentities[file.Identity] = struct{}{}
 		}
 	}
 	return true
@@ -814,14 +859,20 @@ func writeManifest(p *pageWriter, files []ManifestEntry) {
 		p.text("<p>unknown.</p></section>")
 		return
 	}
-	p.text("<table><caption>Selected file identities</caption><thead><tr><th scope=\"col\">Identity</th><th scope=\"col\">Role</th><th scope=\"col\">Size</th><th scope=\"col\">Target</th></tr></thead><tbody>")
+	p.text("<table><caption>Selected file identities</caption><thead><tr><th scope=\"col\">Identity</th><th scope=\"col\">Type</th><th scope=\"col\">Role</th><th scope=\"col\">Size</th><th scope=\"col\">Digest</th><th scope=\"col\">Observed at</th><th scope=\"col\">Target</th></tr></thead><tbody>")
 	for _, file := range files {
 		p.text("<tr><th scope=\"row\">")
 		p.value(known(file.Identity))
 		p.text("</th><td>")
+		p.value(known(file.Type))
+		p.text("</td><td>")
 		p.value(known(file.Role))
 		p.text("</td><td>")
 		p.value(strconv.Itoa(file.Size))
+		p.text("</td><td>")
+		p.value(known(file.Digest))
+		p.text("</td><td>")
+		p.value(optionalTimeLabel(file.ObservedAt))
 		p.text("</td><td>")
 		p.value(file.RootID + ":" + file.RelativePath)
 		p.text("</td></tr>")

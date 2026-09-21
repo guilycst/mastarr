@@ -63,11 +63,11 @@ func TestHTTPReaderAndHandlersPreserveSettingsProvenanceAndRedactCredentials(t *
 		t.Fatalf("endpoint credential was not redacted: %q", configuration.Connections[0].Endpoint)
 	}
 	connection, err := reader.GetConnection(context.Background(), "qbittorrent-main")
-	if err != nil || connection.ETag != `"conn-r1"` || connection.CredentialState != "managed" {
+	if err != nil || connection.ETag != `"conn-r1"` || connection.CredentialState != "managed" || connection.RetiredAt == nil {
 		t.Fatalf("connection projection = %#v, err=%v", connection, err)
 	}
 	root, err := reader.GetStorageRoot(context.Background(), "library")
-	if err != nil || root.WatchIntervalSeconds != 30 || root.Permission != "read_write" {
+	if err != nil || root.WatchIntervalSeconds != 30 || root.Permission != "read_write" || root.RetiredAt == nil {
 		t.Fatalf("storage root projection = %#v, err=%v", root, err)
 	}
 	mapping, err := reader.GetPathMapping(context.Background(), "mapping-main")
@@ -107,6 +107,58 @@ func TestHTTPReaderAndHandlersPreserveSettingsProvenanceAndRedactCredentials(t *
 	}
 	if !strings.Contains(connectionBody, "stale") || !strings.Contains(connectionBody, "GET draft") {
 		t.Fatalf("connection detail violated redaction/draft contract: %s", connectionBody)
+	}
+	for _, rawQuery := range []string{
+		"?endpoint=https%3A%2F%2Foperator%3Asynthetic-secret%40example.invalid%2Fapi",
+		"?endpoint=https%3A%2F%2Fexample.invalid%2Fapi%3Ftoken%3Dsynthetic-token",
+		"?endpoint=https%3A%2F%2Fexample.invalid%2Fapi%23synthetic-secret",
+	} {
+		unsafeRecorder := httptest.NewRecorder()
+		NewHandler(reader).ServeHTTP(unsafeRecorder, httptest.NewRequest(http.MethodGet, "/connections/qbittorrent-main"+rawQuery, nil))
+		if unsafeRecorder.Code != http.StatusBadRequest || strings.Contains(unsafeRecorder.Body.String(), "synthetic-secret") || strings.Contains(unsafeRecorder.Body.String(), "synthetic-token") {
+			t.Fatalf("unsafe endpoint draft was retained/rendered: query=%q status=%d body=%s", rawQuery, unsafeRecorder.Code, unsafeRecorder.Body.String())
+		}
+	}
+}
+
+func TestSettingsReaderRejectsContradictoryYAMLOwnership(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		read func(*HTTPReader) error
+	}{
+		{name: "configuration", body: strings.Replace(configurationJSON(), `"source":{"source":"yaml","editable":false`, `"source":{"source":"yaml","editable":true`, 1), read: func(reader *HTTPReader) error {
+			_, err := reader.GetConfiguration(context.Background())
+			return err
+		}},
+		{name: "connection", body: strings.Replace(connectionJSON(), `"source":{"source":"api","editable":true`, `"source":{"source":"yaml","editable":true`, 1), read: func(reader *HTTPReader) error {
+			_, err := reader.GetConnection(context.Background(), "qbittorrent-main")
+			return err
+		}},
+		{name: "storage root", body: strings.Replace(storageRootJSON(), `"source":{"source":"yaml","editable":false`, `"source":{"source":"yaml","editable":true`, 1), read: func(reader *HTTPReader) error {
+			_, err := reader.GetStorageRoot(context.Background(), "library")
+			return err
+		}},
+		{name: "path mapping", body: strings.Replace(pathMappingJSON(), `"source":{"source":"api","editable":true`, `"source":{"source":"yaml","editable":true`, 1), read: func(reader *HTTPReader) error {
+			_, err := reader.GetPathMapping(context.Background(), "mapping-main")
+			return err
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprint(w, tc.body)
+			}))
+			defer server.Close()
+			reader, err := NewHTTPReader(server.URL, server.Client(), time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := tc.read(reader); !errors.Is(err, ErrProtocol) {
+				t.Fatalf("read error = %v, want protocol", err)
+			}
+		})
 	}
 }
 
@@ -207,7 +259,7 @@ func configurationJSON() string {
 }
 
 func connectionJSON() string {
-	return `{"id":"qbittorrent-main","kind":"qbittorrent","label":"qBittorrent <main>","endpoint":"https://user:secret@example.invalid/api?token=secret","health":"healthy","credentialState":"managed","observedVersion":"5.1.0","capabilities":["stop","read"],"revision":"conn-r1","source":{"source":"api","editable":true,"documentId":"connections","revision":"conn-r1","startupAt":"2026-09-21T09:00:00Z","reloadPolicy":"restart_required"}}`
+	return `{"id":"qbittorrent-main","kind":"qbittorrent","label":"qBittorrent <main>","endpoint":"https://user:secret@example.invalid/api?token=secret","health":"healthy","credentialState":"managed","observedVersion":"5.1.0","capabilities":["stop","read"],"retiredAt":"2026-09-20T12:00:00Z","revision":"conn-r1","source":{"source":"api","editable":true,"documentId":"connections","revision":"conn-r1","startupAt":"2026-09-21T09:00:00Z","reloadPolicy":"restart_required"}}`
 }
 
 func connectionListJSON() string {
@@ -215,7 +267,7 @@ func connectionListJSON() string {
 }
 
 func storageRootJSON() string {
-	return `{"id":"library","label":"Library","purpose":"library","path":"/srv/library","permission":"read_write","capabilities":["watch","read"],"revision":"root-r1","watch":{"enabled":true,"intervalSeconds":30},"source":{"source":"yaml","editable":false,"documentId":"config.yaml","revision":"yaml-r1","startupAt":"2026-09-21T09:00:00Z","reloadPolicy":"restart_required"}}`
+	return `{"id":"library","label":"Library","purpose":"library","path":"/srv/library","permission":"read_write","capabilities":["watch","read"],"retiredAt":"2026-09-20T12:00:00Z","revision":"root-r1","watch":{"enabled":true,"intervalSeconds":30},"source":{"source":"yaml","editable":false,"documentId":"config.yaml","revision":"yaml-r1","startupAt":"2026-09-21T09:00:00Z","reloadPolicy":"restart_required"}}`
 }
 
 func storageRootListJSON() string {

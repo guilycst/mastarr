@@ -540,6 +540,10 @@ func parseQuery(raw string, detail bool, route string, defaultSize, maxSize int)
 				return queryState{}, errors.New("limit invalid")
 			}
 			state.Limit = parsed
+		case "endpoint":
+			if !validEndpointDraft(value) {
+				return queryState{}, errors.New("endpoint draft is unsafe")
+			}
 		default:
 			if (!detail && route != "settings" && route != "configuration") || !validDraftKey(route, key) {
 				return queryState{}, errors.New("unknown query")
@@ -664,7 +668,27 @@ func (q queryState) next(cursor string) string {
 }
 
 func validateSource(source SourceMetadata) bool {
-	return (source.Source == "yaml" || source.Source == "api") && validBounded(source.DocumentID, 256, false) && validBounded(source.Revision, 256, false) && !source.StartupAt.IsZero() && source.ReloadPolicy == "restart_required"
+	return (source.Source == "yaml" || source.Source == "api") && (source.Source != "yaml" || !source.Editable) && validBounded(source.DocumentID, 256, false) && validBounded(source.Revision, 256, false) && !source.StartupAt.IsZero() && source.ReloadPolicy == "restart_required"
+}
+
+func validEndpointDraft(value string) bool {
+	if value == "" {
+		return true
+	}
+	if !validBounded(value, 1024, false) {
+		return false
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed == nil || parsed.Opaque != "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+	lower := strings.ToLower(value)
+	for _, marker := range []string{"password", "passwd", "secret", "token", "api_key", "api-key", "apikey", "access_token", "refresh_token", "client_secret", "credential"} {
+		if strings.Contains(lower, marker) {
+			return false
+		}
+	}
+	return true
 }
 
 func validateConfiguration(value Configuration) error {
