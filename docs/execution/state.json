@@ -15,7 +15,9 @@
   "resumeDocument": "docs/execution/RESUME.md",
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
-  "activeImplementationTasks": [],
+  "activeImplementationTasks": [
+    "U-06"
+  ],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
   "guardrailBaseline": {
@@ -6574,16 +6576,71 @@
       ]
     },
     "U-06": {
-      "status": "planned",
-      "owner": null,
-      "baseSha": null,
+      "status": "in_progress",
+      "owner": "/root/c01_implementer",
+      "baseSha": "5f8bc875beb1284e800b981a962f3a34d588d225",
       "integratedSha": null,
-      "evidence": [],
-      "review": null,
-      "dispatch": null
+      "evidence": [
+        "Dispatched from clean coordinator checkpoint 5f8bc87 after U-03/U-04 approvals and U-05 corrected evidence review.",
+        "Own only ui/cmd/mastarr/ and ui/internal/router/ plus docs/execution/handoffs/U-06.md; do not edit API/generated code, root modules, standalone clients, product UI packages or state.",
+        "Compose existing normalized HTTP readers through one production BFF router. Preserve no-write GET/HEAD boundary, configured-origin metadata, sanitized readiness/errors, exact route and opaque-ID handling, static asset headers and synthetic-only verification."
+      ],
+      "review": {
+        "status": "pending",
+        "decision": null,
+        "reviewer": "/root/c01_reviewer",
+        "commit": null,
+        "findings": [],
+        "round": 1
+      },
+      "dispatch": {
+        "assignedAt": "2026-09-21",
+        "model": "gpt-5.6-luna",
+        "reasoning": "max",
+        "role": "implementer",
+        "baseSha": "5f8bc875beb1284e800b981a962f3a34d588d225",
+        "ownedPaths": [
+          "ui/cmd/mastarr/",
+          "ui/internal/router/",
+          "docs/execution/handoffs/U-06.md"
+        ],
+        "checkout": "shared main",
+        "expectedChecks": [
+          "A-47 cross-origin/forwarded-origin/redirect and GET/HEAD mutation policy",
+          "A-48 readiness/transport/retry and route recovery behavior",
+          "A-49 exact deep-link route and opaque-ID selection without stale reuse",
+          "A-50 route shell accessibility/error and asset composition boundaries",
+          "A-51 initial metadata/unknown-route/asset status through production router",
+          "HTTP-only import architecture",
+          "GOWORK=off UI tests/race/vet/mod verify/tidy",
+          "generation/Vacuum/lint/planning/full offline guardrails",
+          "Linux amd64/arm64 CGO-free UI build"
+        ],
+        "reviewPath": "docs/execution/handoffs/U-06-review-round1.md",
+        "handoffPath": "docs/execution/handoffs/U-06.md",
+        "nextReviewer": "/root/c01_reviewer",
+        "status": "dispatched",
+        "waitingOn": "/root/c01_implementer",
+        "waitingReason": "U-06 route composition is dispatched; product and handoff are required before independent review.",
+        "dependencyCommits": {
+          "U-03": "a1b986a833d808b761a724f7522a1ece66a31748",
+          "U-04": "9bd8b84d79d3086759d5872be43c4b0814a99948",
+          "U-05-corrected": "3eb7c415f8da12316a3ed3c0c9798229a3d68ec0"
+        },
+        "implementationCommit": null,
+        "handoffCommit": null,
+        "reviewSourceCommit": null,
+        "reviewRound": 1,
+        "reviewCommit": null,
+        "reviewIntegrationCommit": null
+      },
+      "implementationCommit": null,
+      "handoffCommit": null,
+      "reviewSourceCommit": null,
+      "reviewHistory": []
     }
   },
-  "nextAction": "U-05 corrected evidence is approved but blocked at review 3eb7c415f8da12316a3ed3c0c9798229a3d68ec0; add and dispatch U-06 production BFF route composition before rerunning browser verification.",
+  "nextAction": "U-06 production BFF route composition dispatched to /root/c01_implementer from 5f8bc875beb1284e800b981a962f3a34d588d225; record exact route checks and independent review before rerunning blocked U-05 browser acceptance.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
