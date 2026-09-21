@@ -4499,7 +4499,7 @@
       ]
     },
     "U-04": {
-      "status": "in_progress",
+      "status": "in_review",
       "owner": "/root/c01_implementer",
       "baseSha": "94f118c06aec062da72b2e889a82576a9a37782f",
       "integratedSha": null,
@@ -4508,9 +4508,20 @@
         "Own only ui/internal/trash/, ui/internal/settings/ and docs/execution/handoffs/U-04.md; do not edit state.json, API contract, generated API code, router composition or other UI lanes.",
         "UI remains an HTTP-only BFF. Consume normalized generated-client data; never import root internals, database, storage, upstream clients, media mounts or safety decisions.",
         "Render trash list/detail with original paths, exact selected items, expiry, holds, client stop/remove state, restore conflicts and purge evidence. UI permanent deletion is only a two-step trash flow; direct API hard delete remains visible as API-owned.",
-        "Render API/YAML configuration source, immutable YAML read-only state and restart instructions, API-owned ETag/draft controls, multi-instance connections/storage roots/path mappings and credential replacement without plaintext rendering or arbitrary secret paths."
+        "Render API/YAML configuration source, immutable YAML read-only state and restart instructions, API-owned ETag/draft controls, multi-instance connections/storage roots/path mappings and credential replacement without plaintext rendering or arbitrary secret paths.",
+        "13ec09f9f54523788aa4ddee1efa9e7bd9165704 U-04 product adds HTTP-only trash and settings readers, normalized views, redaction, GET/HEAD-only drafts and synthetic fixtures.",
+        "f63cedf1dc93c6def4fb851342a3da1c19fbbd9b U-04 coverage follow-up adds production-path coverage for pagination, YAML/API provenance, credential redaction, trash states and identity/bounds checks.",
+        "b99fb7552be89994e870fa50b6352b2a58e9b533 U-04 handoff records exact limitations from the frozen API schema, accepted unknowns and full verification commands; router/browser integration remains deferred.",
+        "U-04 product and handoff focused/full tests, race, vet, mod verify/tidy, cross-builds, generation/Vacuum, lint, architecture, planning and full offline guardrails passed."
       ],
-      "review": null,
+      "review": {
+        "status": "pending",
+        "decision": null,
+        "reviewer": "/root/c01_reviewer",
+        "commit": null,
+        "findings": [],
+        "round": 1
+      },
       "dispatch": {
         "assignedAt": "2026-09-21",
         "model": "gpt-5.6-luna",
@@ -4539,20 +4550,39 @@
         "reviewPath": "docs/execution/handoffs/U-04-review-round1.md",
         "handoffPath": "docs/execution/handoffs/U-04.md",
         "nextReviewer": "/root/c01_reviewer",
-        "status": "assigned",
-        "waitingOn": "/root/c01_implementer",
-        "waitingReason": "U-04 trash/settings UI product and handoff are required before independent review.",
+        "status": "awaiting_review",
+        "waitingOn": "/root/c01_reviewer",
+        "waitingReason": "U-04 product and handoff are complete; independent review round one is required before integration.",
         "dependencyCommits": {
           "U-01": "2f861a0322e8a693550ed6069e19776a1149a48e",
           "W-05": "ea3958b15508d13893b55674b59cfb0bf50d1ffe"
         },
-        "implementationCommit": null,
-        "handoffCommit": null,
-        "reviewSourceCommit": null,
-        "reviewRound": 0,
+        "implementationCommit": "f63cedf1dc93c6def4fb851342a3da1c19fbbd9b",
+        "handoffCommit": "b99fb7552be89994e870fa50b6352b2a58e9b533",
+        "reviewSourceCommit": "f63cedf1dc93c6def4fb851342a3da1c19fbbd9b",
+        "reviewRound": 1,
         "reviewCommit": null,
-        "reviewIntegrationCommit": null
-      }
+        "reviewIntegrationCommit": null,
+        "productCommits": [
+          "13ec09f9f54523788aa4ddee1efa9e7bd9165704",
+          "f63cedf1dc93c6def4fb851342a3da1c19fbbd9b"
+        ]
+      },
+      "implementationCommit": "f63cedf1dc93c6def4fb851342a3da1c19fbbd9b",
+      "handoffCommit": "b99fb7552be89994e870fa50b6352b2a58e9b533",
+      "reviewSourceCommit": "f63cedf1dc93c6def4fb851342a3da1c19fbbd9b",
+      "reviewHistory": [
+        {
+          "round": 1,
+          "reviewer": "/root/c01_reviewer",
+          "commit": null,
+          "status": "pending",
+          "sourceCommit": "f63cedf1dc93c6def4fb851342a3da1c19fbbd9b",
+          "receipt": "docs/execution/handoffs/U-04-review-round1.md",
+          "productCommit": "f63cedf1dc93c6def4fb851342a3da1c19fbbd9b",
+          "handoffCommit": "b99fb7552be89994e870fa50b6352b2a58e9b533"
+        }
+      ]
     },
     "U-05": {
       "status": "planned",
@@ -6382,7 +6412,7 @@
       ]
     }
   },
-  "nextAction": "U-04 is dispatched to /root/c01_implementer from clean coordinator checkpoint 94f118c06aec062da72b2e889a82576a9a37782f; await the trash/settings product and handoff before independent review.",
+  "nextAction": "U-04 product f63cedf1dc93c6def4fb851342a3da1c19fbbd9b and handoff b99fb7552be89994e870fa50b6352b2a58e9b533 are recorded; dispatch /root/c01_reviewer for independent round-one review.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
