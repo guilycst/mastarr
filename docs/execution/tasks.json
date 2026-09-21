@@ -898,6 +898,29 @@
       "verificationScope": "Prove the assigned contribution to linked acceptance cases; full cross-system cases close in verification tasks. Record exact checks at dispatch and outcomes in handoff."
     },
     {
+      "id": "U-06",
+      "lane": "U",
+      "title": "Compose production BFF routes",
+      "dependsOn": [
+        "U-03",
+        "U-04"
+      ],
+      "ownedPaths": [
+        "ui/cmd/mastarr/",
+        "ui/internal/router/"
+      ],
+      "acceptance": [
+        "A-47",
+        "A-48",
+        "A-49",
+        "A-50",
+        "A-51"
+      ],
+      "deliverable": "Compose the HTTP-only UI readers and handlers behind the production BFF router. Preserve GET/HEAD-only behavior, configured-origin metadata, sanitized readiness and transport failures, exact deep-link routing, static asset policy, and no direct writes or root-module imports. Add synthetic end-to-end HTTP coverage so U-05 can later run against real routes.",
+      "handoff": "docs/execution/handoffs/U-06.md",
+      "verificationScope": "Prove the assigned contribution to linked acceptance cases; browser screenshots and live accessibility traces remain in U-05. Record exact checks at dispatch and outcomes in handoff."
+    },
+    {
       "id": "V-01",
       "lane": "V",
       "title": "Run cross-system fault and recovery acceptance",

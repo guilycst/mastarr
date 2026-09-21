@@ -15,9 +15,7 @@
   "resumeDocument": "docs/execution/RESUME.md",
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
-  "activeImplementationTasks": [
-    "U-05"
-  ],
+  "activeImplementationTasks": [],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
   "guardrailBaseline": {
@@ -4641,7 +4639,7 @@
       ]
     },
     "U-05": {
-      "status": "in_review",
+      "status": "blocked",
       "owner": "/root/c01_implementer",
       "baseSha": "61336c2aa6a30b3322e850809e421f37971303ce",
       "integratedSha": null,
@@ -4655,13 +4653,14 @@
         "cd710266c841980fc9191bb8e7350ec1c7fa8d48 U-05 handoff link correction fixes the repository-relative browser test reference; planning and fast guardrails pass.",
         "aa258dc4a815d4df8a8c74064351612b775d36cd independent U-05 round-one review requests correction: retain partial synthetic evidence, correct A-47-A-50 mapping, remove unsupported claims, and defer unavailable browser/router cases.",
         "4a93164b98c09b687598538de7dfa6be8309d4e1 U-05 correction round one fixes acceptance mapping, marks unavailable browser/router scenarios NOT RUN / BLOCKED, and adds direct asset HEAD/cache/nosniff checks.",
-        "37aefb6156829a1db64239901fe4105596907f37 U-05 correction handoff records scoped partial evidence and the actual CUA/router blocker; full browser acceptance remains pending."
+        "37aefb6156829a1db64239901fe4105596907f37 U-05 correction handoff records scoped partial evidence and the actual CUA/router blocker; full browser acceptance remains pending.",
+        "3eb7c415f8da12316a3ed3c0c9798229a3d68ec0 independent U-05 correction review approves the corrected partial evidence record with no P1/P2 findings; browser-level completion remains blocked by CUA browsers:[] and uncomposed production router."
       ],
       "review": {
-        "status": "pending",
-        "decision": null,
+        "status": "approved",
+        "decision": "approved",
         "reviewer": "/root/c01_reviewer",
-        "commit": null,
+        "commit": "3eb7c415f8da12316a3ed3c0c9798229a3d68ec0",
         "findings": [],
         "round": 2
       },
@@ -4690,10 +4689,10 @@
         ],
         "reviewPath": "docs/execution/handoffs/U-05-review-round1.md",
         "handoffPath": "docs/execution/handoffs/U-05.md",
-        "nextReviewer": "/root/c01_reviewer",
-        "status": "awaiting_review",
-        "waitingOn": "/root/c01_reviewer",
-        "waitingReason": "U-05 correction round one product and handoff are complete; independent correction review round two is required before integrating the partial evidence.",
+        "nextReviewer": null,
+        "status": "blocked",
+        "waitingOn": "U-06",
+        "waitingReason": "Corrected partial evidence is approved, but browser-level U-05 cases cannot run until the production UI router is composed and a browser surface is available.",
         "dependencyCommits": {
           "U-03": "a1b986a833d808b761a724f7522a1ece66a31748",
           "U-04": "9bd8b84d79d3086759d5872be43c4b0814a99948"
@@ -4701,10 +4700,10 @@
         "implementationCommit": "a753fe0b3164cab2beb456d961d1c679da518ad7",
         "handoffCommit": "cd710266c841980fc9191bb8e7350ec1c7fa8d48",
         "reviewSourceCommit": "a753fe0b3164cab2beb456d961d1c679da518ad7",
-        "reviewRound": 1,
-        "reviewCommit": "aa258dc4a815d4df8a8c74064351612b775d36cd",
-        "reviewIntegrationCommit": null,
-        "correctionStatus": "awaiting_review",
+        "reviewRound": 2,
+        "reviewCommit": "3eb7c415f8da12316a3ed3c0c9798229a3d68ec0",
+        "reviewIntegrationCommit": "3eb7c415f8da12316a3ed3c0c9798229a3d68ec0",
+        "correctionStatus": "approved",
         "correctionRound": 1,
         "correctionOwner": "/root/c01_implementer",
         "correctionBaseSha": "aa258dc4a815d4df8a8c74064351612b775d36cd",
@@ -4715,12 +4714,13 @@
         "correctionImplementationCommit": "4a93164b98c09b687598538de7dfa6be8309d4e1",
         "correctionHandoffCommit": "37aefb6156829a1db64239901fe4105596907f37",
         "correctionReviewSourceCommit": "4a93164b98c09b687598538de7dfa6be8309d4e1",
-        "correctionReviewCommit": null,
-        "correctionReviewIntegrationCommit": null,
+        "correctionReviewCommit": "3eb7c415f8da12316a3ed3c0c9798229a3d68ec0",
+        "correctionReviewIntegrationCommit": "3eb7c415f8da12316a3ed3c0c9798229a3d68ec0",
         "correctionDispatchCommit": "d8eecc06414d1e7b02294128b5cdb7a7878a3205",
         "correctionProductCommits": [
           "4a93164b98c09b687598538de7dfa6be8309d4e1"
-        ]
+        ],
+        "blocker": "CUA reports browsers:[] and ui/cmd/mastarr/main.go does not compose review, workflow, trash or settings handlers. Rerun U-05 after U-06 route composition and browser availability."
       },
       "implementationCommit": "a753fe0b3164cab2beb456d961d1c679da518ad7",
       "handoffCommit": "cd710266c841980fc9191bb8e7350ec1c7fa8d48",
@@ -4743,12 +4743,14 @@
         {
           "round": 2,
           "reviewer": "/root/c01_reviewer",
-          "commit": null,
-          "status": "pending",
+          "commit": "3eb7c415f8da12316a3ed3c0c9798229a3d68ec0",
+          "status": "approved",
           "sourceCommit": "4a93164b98c09b687598538de7dfa6be8309d4e1",
           "receipt": "docs/execution/handoffs/U-05-review-round2.md",
           "productCommit": "4a93164b98c09b687598538de7dfa6be8309d4e1",
-          "handoffCommit": "37aefb6156829a1db64239901fe4105596907f37"
+          "handoffCommit": "37aefb6156829a1db64239901fe4105596907f37",
+          "findings": [],
+          "integratedCommit": "3eb7c415f8da12316a3ed3c0c9798229a3d68ec0"
         }
       ]
     },
@@ -6570,9 +6572,18 @@
           "integratedCommit": "3da4ebecec41e8cd3684d68ebd7376f6b1425275"
         }
       ]
+    },
+    "U-06": {
+      "status": "planned",
+      "owner": null,
+      "baseSha": null,
+      "integratedSha": null,
+      "evidence": [],
+      "review": null,
+      "dispatch": null
     }
   },
-  "nextAction": "U-05 correction product 4a93164b98c09b687598538de7dfa6be8309d4e1 and handoff 37aefb6156829a1db64239901fe4105596907f37 are recorded; dispatch /root/c01_reviewer for independent correction review, with browser/router prerequisites still open.",
+  "nextAction": "U-05 corrected evidence is approved but blocked at review 3eb7c415f8da12316a3ed3c0c9798229a3d68ec0; add and dispatch U-06 production BFF route composition before rerunning browser verification.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",

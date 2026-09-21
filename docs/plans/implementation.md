@@ -678,6 +678,22 @@ Run consequential-action allowed/denied/repeated ledger, direct forged requests,
 - Handoff: `docs/execution/handoffs/U-05.md`.
 - Exit gate: focused checks pass, exact commit/effect evidence recorded, independent review clears findings, coordinator integrates.
 
+### U-06: Compose production BFF routes
+
+Lane U. Dependencies: U-03 and U-04.
+
+Compose the HTTP-only inventory, review, workflow, trash and settings readers
+behind the running UI BFF. Keep the global GET/HEAD boundary, configured-origin
+metadata, sanitized readiness and transport errors, exact deep-link routing and
+static asset policy. Do not add direct writes, authentication or root-module
+imports. Add synthetic end-to-end HTTP coverage so U-05 can rerun against real
+routes when a browser surface is available.
+
+- Owned paths: `ui/cmd/mastarr/`, `ui/internal/router/`.
+- Acceptance contributions: A-47, A-48, A-49, A-50, A-51.
+- Handoff: `docs/execution/handoffs/U-06.md`.
+- Exit gate: focused checks pass, exact route/effect evidence recorded, independent review clears findings, coordinator integrates.
+
 ### V-01: Run cross-system fault and recovery acceptance
 
 Lane V. Dependencies: C-04, U-05.
