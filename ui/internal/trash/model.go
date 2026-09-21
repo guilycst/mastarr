@@ -340,9 +340,9 @@ func (h *Handler) renderList(w http.ResponseWriter, query queryState, page Trash
 	p := pageWriter{w: w, status: http.StatusOK, title: "Trash"}
 	p.start()
 	p.text("<main id=\"trash-content\" aria-labelledby=\"trash-title\"><h1 id=\"trash-title\">Trash</h1><p>Entries remain held until the API-owned retention and effect checks permit purge. A browser request never restores or purges an entry.</p>")
-	p.text("<table><caption>Trash entries</caption><thead><tr><th scope=\"col\">Entry</th><th scope=\"col\">State</th><th scope=\"col\">Expires</th><th scope=\"col\">Files</th><th scope=\"col\">Client associations</th></tr></thead><tbody>")
+	p.text("<table><caption>Trash entries</caption><thead><tr><th scope=\"col\">Entry</th><th scope=\"col\">State</th><th scope=\"col\">Expires</th><th scope=\"col\">Files</th><th scope=\"col\">Client associations</th><th scope=\"col\">Coverage</th></tr></thead><tbody>")
 	if len(page.Items) == 0 {
-		p.text("<tr><td colspan=\"5\">No entries on this page; incomplete coverage does not prove absence.</td></tr>")
+		p.text("<tr><td colspan=\"6\">No entries on this page; incomplete coverage does not prove absence.</td></tr>")
 	}
 	for _, item := range page.Items {
 		p.text("<tr><th scope=\"row\"><a href=\"")
@@ -357,6 +357,8 @@ func (h *Handler) renderList(w http.ResponseWriter, query queryState, page Trash
 		p.value(strconv.Itoa(len(item.Files)))
 		p.text("</td><td>")
 		p.value(countOrUnknown(len(item.ClientAssociations)))
+		p.text("</td><td>")
+		p.value(coverageLabel(page.Page))
 		p.text("</td></tr>")
 	}
 	p.text("</tbody></table>")
@@ -382,6 +384,7 @@ func (h *Handler) renderDetail(w http.ResponseWriter, query queryState, item Tra
 	detailTerm(&p, "Retention", retentionLabel(item))
 	detailTerm(&p, "ETag", known(item.ETag))
 	detailTerm(&p, "Capabilities", strings.Join(item.Capabilities, ", "))
+	detailTerm(&p, "Coverage", "unknown; detail response has no page envelope")
 	p.text("</dl>")
 	p.text("<section aria-labelledby=\"trash-draft\"><h2 id=\"trash-draft\">Action draft</h2><p id=\"trash-draft-help\">Keep the idempotency and operator context here, then submit the corresponding API action after reviewing the exact plan and current ETag.</p><form method=\"get\" action=\"/trash/")
 	p.value(url.PathEscape(item.ID))
@@ -720,6 +723,17 @@ func countOrUnknown(value int) string {
 		return "unknown"
 	}
 	return strconv.Itoa(value)
+}
+
+func coverageLabel(page PageInfo) string {
+	if len(page.Coverage) == 0 {
+		return "unknown"
+	}
+	values := make([]string, 0, len(page.Coverage))
+	for _, coverage := range page.Coverage {
+		values = append(values, coverage.Completeness)
+	}
+	return strings.Join(values, ", ")
 }
 
 func timeLabel(value time.Time) string {

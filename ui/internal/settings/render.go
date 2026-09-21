@@ -68,6 +68,7 @@ func (h *Handler) renderConnectionList(w http.ResponseWriter, query queryState, 
 	}
 	p.text("</tbody></table>")
 	writeNext(&p, query, page.Page.NextCursor)
+	writePageEvidence(&p, page.Page)
 	p.text("</main></body></html>")
 	p.finish()
 }
@@ -128,6 +129,7 @@ func (h *Handler) renderStorageRootList(w http.ResponseWriter, query queryState,
 	}
 	p.text("</tbody></table>")
 	writeNext(&p, query, page.Page.NextCursor)
+	writePageEvidence(&p, page.Page)
 	p.text("</main></body></html>")
 	p.finish()
 }
@@ -187,6 +189,7 @@ func (h *Handler) renderPathMappingList(w http.ResponseWriter, query queryState,
 	}
 	p.text("</tbody></table>")
 	writeNext(&p, query, page.Page.NextCursor)
+	writePageEvidence(&p, page.Page)
 	p.text("</main></body></html>")
 	p.finish()
 }
@@ -244,6 +247,7 @@ func (h *Handler) renderConnectionCheckList(w http.ResponseWriter, query querySt
 	}
 	p.text("</tbody></table>")
 	writeNext(&p, query, page.Page.NextCursor)
+	writePageEvidence(&p, page.Page)
 	p.text("</main></body></html>")
 	p.finish()
 }
@@ -317,6 +321,21 @@ func writeNext(p *pageWriter, query queryState, cursor string) {
 	p.text("<p><a rel=\"next\" href=\"?")
 	p.value(query.next(cursor))
 	p.text("\">Next page</a></p>")
+}
+
+func writePageEvidence(p *pageWriter, page PageInfo) {
+	p.text("<section aria-labelledby=\"page-evidence\"><h2 id=\"page-evidence\">Page coverage</h2><dl>")
+	detailTerm(p, "Observed at", timeLabel(page.ObservedAt))
+	if len(page.Coverage) == 0 {
+		detailTerm(p, "Coverage", "unknown")
+	} else {
+		values := make([]string, 0, len(page.Coverage))
+		for _, coverage := range page.Coverage {
+			values = append(values, known(coverage.Completeness))
+		}
+		detailTerm(p, "Coverage", strings.Join(values, ", "))
+	}
+	p.text("</dl></section>")
 }
 
 func linkCount(p *pageWriter, path, label string, count int) {
