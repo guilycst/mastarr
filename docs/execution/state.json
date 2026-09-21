@@ -4366,22 +4366,20 @@
         "36e4a29 integrates the independent review receipt. Planning validation identified awaiting_review as unsupported; this correction changes the task status to validator-supported in_progress/in_review vocabulary.",
         "e5b6c6ee39b2b1bdd771ac4375661d2c0698f16f U-03 correction product closes review R1-R6 with bound action-run/plan joins, per-step plan evidence, honest effect identity normalization, authority-scope rendering, duplicate-key rejection and 4096-byte reason boundaries.",
         "4047e726a9289d23db45d1b0f93c8dc03eca532a U-03 correction handoff records the six closed findings, exact synthetic HTTP fixtures and full offline verification; production router/browser integration remains deferred.",
-        "Correction product and handoff checks passed: focused/full UI tests and race, vet, mod verify/tidy, generation/Vacuum, architecture/planning/lint, CGO-free cross-builds and full offline guardrails."
+        "Correction product and handoff checks passed: focused/full UI tests and race, vet, mod verify/tidy, generation/Vacuum, architecture/planning/lint, CGO-free cross-builds and full offline guardrails.",
+        "7728d0118f334b837e7d4fc30b73b0adeedfded6 independent U-03 round-two review closes R1-R6 but requests RR2-1 and RR2-2: valid trash/delete target validation and workflow-wide effect identity uniqueness. Composed registration/import production HTTPReader coverage and all guardrails passed.",
+        "Round-two receipt is already on the clean shared checkout; correction round two is required before U-03 can be approved."
       ],
       "review": {
         "status": "changes_requested",
         "decision": "changes_requested",
-        "reviewer": "/root/x05_reviewer",
-        "commit": "40d9c954d4db04271b84256289e56d1cd6e7f818",
+        "reviewer": "/root/c01_reviewer",
+        "commit": "7728d0118f334b837e7d4fc30b73b0adeedfded6",
         "findings": [
-          "R1 P1 foreign action-run/plan/workflow/step identity is accepted and displayed under the requested workflow step.",
-          "R2 P1 production workflow reader does not load or bind referenced action plans, leaving per-step action kind, immutable binding and impacts absent.",
-          "R3 P1 unresolved effects are duplicated and overlapping/contradictory evidence inflates rendered effect counts.",
-          "R4 P1 review detail omits exact client/torrent IDs, stopped-client prerequisites, retention, capabilities, subtitle SDH state and copy storage estimate.",
-          "R5 P2 duplicate JSON object keys are accepted by both HTTP readers.",
-          "R6 P2 reason forms advertise 4096 bytes but reject values above 512 bytes."
+          "RR2-1 P1 valid fs.trash and fs.delete FileTarget arrays are incorrectly validated as Arr ImportFile entries, so production review/workflow readers reject contract-valid plans.",
+          "RR2-2 P1 effect identity uniqueness is scoped per workflow step, so the same effect ID across steps is accepted and aggregateEffectCount double-counts it."
         ],
-        "round": 1
+        "round": 2
       },
       "dispatch": {
         "assignedAt": "2026-09-17",
@@ -4412,9 +4410,9 @@
         "reviewPath": "docs/execution/handoffs/U-03-review-round1.md",
         "handoffPath": "docs/execution/handoffs/U-03.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "awaiting_review",
-        "waitingOn": "/root/x05_reviewer",
-        "waitingReason": "U-03 correction round one is complete; independent review round two is required before integration.",
+        "status": "changes_requested",
+        "waitingOn": "/root/x05_implementer",
+        "waitingReason": "Round-two review found two P1 U-03 correctness gaps; correction round two is required before re-review.",
         "dependencyCommits": {
           "U-02": "ef215ce2eee56d82cfdeb72df26c61140547e9ff",
           "W-04": "780c00e92498660c08b6ac67259bbb4147c58531"
@@ -4422,23 +4420,23 @@
         "implementationCommit": "ac732775c0877932687148ddb1c77596c80d9be5",
         "handoffCommit": "a7536bad70b157d2db3fec6aed5b42a6ba135d50",
         "reviewSourceCommit": "ac732775c0877932687148ddb1c77596c80d9be5",
-        "reviewRound": 1,
-        "reviewCommit": "40d9c954d4db04271b84256289e56d1cd6e7f818",
-        "reviewIntegrationCommit": "36e4a29",
-        "correctionStatus": "awaiting_review",
-        "correctionRound": 1,
+        "reviewRound": 2,
+        "reviewCommit": "7728d0118f334b837e7d4fc30b73b0adeedfded6",
+        "reviewIntegrationCommit": "7728d0118f334b837e7d4fc30b73b0adeedfded6",
+        "correctionStatus": "assigned",
+        "correctionRound": 2,
         "correctionOwner": "/root/x05_implementer",
-        "correctionBaseSha": "d4241bf",
-        "correctionDispatchCheckpoint": "d4241bf",
-        "correctionReviewPath": "docs/execution/handoffs/U-03-review-round2.md",
-        "correctionHandoffPath": "docs/execution/handoffs/U-03-correction-round1.md",
-        "correctionReviewer": "/root/x05_reviewer",
-        "correctionImplementationCommit": "e5b6c6ee39b2b1bdd771ac4375661d2c0698f16f",
-        "correctionHandoffCommit": "4047e726a9289d23db45d1b0f93c8dc03eca532a",
-        "correctionReviewSourceCommit": "e5b6c6ee39b2b1bdd771ac4375661d2c0698f16f",
+        "correctionBaseSha": "7728d0118f334b837e7d4fc30b73b0adeedfded6",
+        "correctionDispatchCheckpoint": "7728d0118f334b837e7d4fc30b73b0adeedfded6",
+        "correctionReviewPath": "docs/execution/handoffs/U-03-review-round3.md",
+        "correctionHandoffPath": "docs/execution/handoffs/U-03-correction-round2.md",
+        "correctionReviewer": "/root/c01_reviewer",
+        "correctionImplementationCommit": null,
+        "correctionHandoffCommit": null,
+        "correctionReviewSourceCommit": null,
         "correctionReviewCommit": null,
         "correctionReviewIntegrationCommit": null,
-        "correctionDispatchCommit": "d4241bf",
+        "correctionDispatchCommit": "7728d0118f334b837e7d4fc30b73b0adeedfded6",
         "correctionProductCommits": [
           "e5b6c6ee39b2b1bdd771ac4375661d2c0698f16f"
         ]
@@ -4469,13 +4467,18 @@
         {
           "round": 2,
           "reviewer": "/root/x05_reviewer",
-          "commit": null,
-          "status": "pending",
+          "commit": "7728d0118f334b837e7d4fc30b73b0adeedfded6",
+          "status": "changes_requested",
           "sourceCommit": "e5b6c6ee39b2b1bdd771ac4375661d2c0698f16f",
           "receipt": "docs/execution/handoffs/U-03-review-round2.md",
           "productCommit": "e5b6c6ee39b2b1bdd771ac4375661d2c0698f16f",
           "handoffCommit": "4047e726a9289d23db45d1b0f93c8dc03eca532a",
-          "priorReviewCommit": "40d9c954d4db04271b84256289e56d1cd6e7f818"
+          "priorReviewCommit": "40d9c954d4db04271b84256289e56d1cd6e7f818",
+          "integratedCommit": "7728d0118f334b837e7d4fc30b73b0adeedfded6",
+          "findings": [
+            "RR2-1 P1 valid fs.trash and fs.delete FileTarget arrays are incorrectly validated as Arr ImportFile entries, so production review/workflow readers reject contract-valid plans.",
+            "RR2-2 P1 effect identity uniqueness is scoped per workflow step, so the same effect ID across steps is accepted and aggregateEffectCount double-counts it."
+          ]
         }
       ]
     },
@@ -6315,7 +6318,7 @@
       ]
     }
   },
-  "nextAction": "U-03 correction product e5b6c6ee39b2b1bdd771ac4375661d2c0698f16f and handoff 4047e726a9289d23db45d1b0f93c8dc03eca532a are recorded; dispatch /root/x05_reviewer for independent round-two review.",
+  "nextAction": "U-03 round-two review 7728d0118f334b837e7d4fc30b73b0adeedfded6 is recorded; correction round two is assigned to /root/x05_implementer for RR2-1 and RR2-2 from clean checkpoint 7728d0118f334b837e7d4fc30b73b0adeedfded6.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
