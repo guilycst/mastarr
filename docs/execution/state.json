@@ -4368,7 +4368,10 @@
         "4047e726a9289d23db45d1b0f93c8dc03eca532a U-03 correction handoff records the six closed findings, exact synthetic HTTP fixtures and full offline verification; production router/browser integration remains deferred.",
         "Correction product and handoff checks passed: focused/full UI tests and race, vet, mod verify/tidy, generation/Vacuum, architecture/planning/lint, CGO-free cross-builds and full offline guardrails.",
         "7728d0118f334b837e7d4fc30b73b0adeedfded6 independent U-03 round-two review closes R1-R6 but requests RR2-1 and RR2-2: valid trash/delete target validation and workflow-wide effect identity uniqueness. Composed registration/import production HTTPReader coverage and all guardrails passed.",
-        "Round-two receipt is already on the clean shared checkout; correction round two is required before U-03 can be approved."
+        "Round-two receipt is already on the clean shared checkout; correction round two is required before U-03 can be approved.",
+        "75df6ac7bc5903bcdbfd9eae7a07862d033b6dc0 U-03 correction round two fixes RR2-1 with distinct direct FileTarget validation for fs.trash/fs.delete and RR2-2 with workflow-wide effect identity uniqueness and count checks.",
+        "6bff56a18890c8939f3098423cb4b2ea7189d677 U-03 correction round-two handoff records production generated-client fixtures for every action discriminator and cross-step/cross-run effect regressions.",
+        "Correction round-two focused/full tests, race, vet, mod verify/tidy, cross-builds, generation/Vacuum, lint, architecture, planning and full offline guardrails passed."
       ],
       "review": {
         "status": "changes_requested",
@@ -4410,9 +4413,9 @@
         "reviewPath": "docs/execution/handoffs/U-03-review-round1.md",
         "handoffPath": "docs/execution/handoffs/U-03.md",
         "nextReviewer": "/root/x05_reviewer",
-        "status": "changes_requested",
-        "waitingOn": "/root/x05_implementer",
-        "waitingReason": "Round-two review found two P1 U-03 correctness gaps; correction round two is required before re-review.",
+        "status": "awaiting_review",
+        "waitingOn": "/root/c01_reviewer",
+        "waitingReason": "U-03 correction round two is complete; independent review round three is required before integration.",
         "dependencyCommits": {
           "U-02": "ef215ce2eee56d82cfdeb72df26c61140547e9ff",
           "W-04": "780c00e92498660c08b6ac67259bbb4147c58531"
@@ -4423,7 +4426,7 @@
         "reviewRound": 2,
         "reviewCommit": "7728d0118f334b837e7d4fc30b73b0adeedfded6",
         "reviewIntegrationCommit": "7728d0118f334b837e7d4fc30b73b0adeedfded6",
-        "correctionStatus": "assigned",
+        "correctionStatus": "awaiting_review",
         "correctionRound": 2,
         "correctionOwner": "/root/x05_implementer",
         "correctionBaseSha": "7728d0118f334b837e7d4fc30b73b0adeedfded6",
@@ -4431,19 +4434,20 @@
         "correctionReviewPath": "docs/execution/handoffs/U-03-review-round3.md",
         "correctionHandoffPath": "docs/execution/handoffs/U-03-correction-round2.md",
         "correctionReviewer": "/root/c01_reviewer",
-        "correctionImplementationCommit": null,
-        "correctionHandoffCommit": null,
-        "correctionReviewSourceCommit": null,
+        "correctionImplementationCommit": "75df6ac7bc5903bcdbfd9eae7a07862d033b6dc0",
+        "correctionHandoffCommit": "6bff56a18890c8939f3098423cb4b2ea7189d677",
+        "correctionReviewSourceCommit": "75df6ac7bc5903bcdbfd9eae7a07862d033b6dc0",
         "correctionReviewCommit": null,
         "correctionReviewIntegrationCommit": null,
         "correctionDispatchCommit": "7728d0118f334b837e7d4fc30b73b0adeedfded6",
         "correctionProductCommits": [
-          "e5b6c6ee39b2b1bdd771ac4375661d2c0698f16f"
+          "e5b6c6ee39b2b1bdd771ac4375661d2c0698f16f",
+          "75df6ac7bc5903bcdbfd9eae7a07862d033b6dc0"
         ]
       },
-      "implementationCommit": "e5b6c6ee39b2b1bdd771ac4375661d2c0698f16f",
-      "handoffCommit": "4047e726a9289d23db45d1b0f93c8dc03eca532a",
-      "reviewSourceCommit": "e5b6c6ee39b2b1bdd771ac4375661d2c0698f16f",
+      "implementationCommit": "75df6ac7bc5903bcdbfd9eae7a07862d033b6dc0",
+      "handoffCommit": "6bff56a18890c8939f3098423cb4b2ea7189d677",
+      "reviewSourceCommit": "75df6ac7bc5903bcdbfd9eae7a07862d033b6dc0",
       "reviewHistory": [
         {
           "round": 1,
@@ -4479,6 +4483,17 @@
             "RR2-1 P1 valid fs.trash and fs.delete FileTarget arrays are incorrectly validated as Arr ImportFile entries, so production review/workflow readers reject contract-valid plans.",
             "RR2-2 P1 effect identity uniqueness is scoped per workflow step, so the same effect ID across steps is accepted and aggregateEffectCount double-counts it."
           ]
+        },
+        {
+          "round": 3,
+          "reviewer": "/root/c01_reviewer",
+          "commit": null,
+          "status": "pending",
+          "sourceCommit": "75df6ac7bc5903bcdbfd9eae7a07862d033b6dc0",
+          "receipt": "docs/execution/handoffs/U-03-review-round3.md",
+          "productCommit": "75df6ac7bc5903bcdbfd9eae7a07862d033b6dc0",
+          "handoffCommit": "6bff56a18890c8939f3098423cb4b2ea7189d677",
+          "priorReviewCommit": "7728d0118f334b837e7d4fc30b73b0adeedfded6"
         }
       ]
     },
@@ -6318,7 +6333,7 @@
       ]
     }
   },
-  "nextAction": "U-03 round-two review 7728d0118f334b837e7d4fc30b73b0adeedfded6 is recorded; correction round two is assigned to /root/x05_implementer for RR2-1 and RR2-2 from clean checkpoint 7728d0118f334b837e7d4fc30b73b0adeedfded6.",
+  "nextAction": "U-03 correction product 75df6ac7bc5903bcdbfd9eae7a07862d033b6dc0 and handoff 6bff56a18890c8939f3098423cb4b2ea7189d677 are recorded; dispatch /root/c01_reviewer for independent round-three review.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
