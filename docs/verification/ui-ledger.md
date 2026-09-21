@@ -25,13 +25,13 @@ deployment coordinates, media paths, or live services are used.
 
 | Case | Exact exercised request and result | Effect/read evidence | Status |
 | --- | --- | --- | --- |
-| A-26 | `GET /trash/123e4567-e89b-12d3-a456-426614174000?action=restore&confirm=restore` and the matching `purge` request returned `200`; action and confirmation remained bound in separate GET forms. Invalid `action=delete`, mismatched confirmation, and duplicate action returned `400`. Forged `POST` and `DELETE` returned `405 Allow: GET, HEAD`. | Synthetic API saw exactly four allowed `GET` reads (restore, purge, repeated purge twice) and zero mutation requests. Invalid drafts reached zero reader calls. Test also asserts stopped/no automatic re-add policy and no POST/DELETE form. | Production handler pass; browser route pending until router composition. |
-| A-42 | `GET /settings` returned `200` with YAML provenance, `editable=false`, API-owned draft guidance, private/no-store headers, and redacted connection data. Five literal, encoded, and nested-encoded credential-like endpoint drafts returned `400`; safe endpoint draft returned `200`. | Unsafe endpoint drafts caused zero `GetConnection` calls and did not echo markers or values. Response contains no plaintext credential, write-only, or browser-storage secret. | Production handler pass; browser URL/storage inspection pending. |
-| A-47 | Shell render for `/media/opaque-record?root=/private/media` produced title, allowlisted canonical `/media`, OG/X metadata, generic `/preview.svg`, private robots/referrer metadata, and escaped title. Preview `GET /preview.svg?...` returned `200` with generic 1200x630 SVG; `POST`/`PUT` returned `405`. Unknown route produced structural `Page not found` alert. | Opaque IDs, query strings, private paths, and request-controlled preview data were absent from rendered output. | Metadata/asset structural pass; final router route-status check pending. |
-| A-48 | Shell structural capture contains one semantic `h1`, labelled main section, skip link, focusable main target, labelled menu, navigation `aria-current`, status/alert roles, and configuration landmark. Outage capture keeps a safe Retry link and states no successful state is inferred. | Settings/trash drafts preserve GET-only operator/ETag context; repeated trash drafts perform reads only. | Structural pass; real tab order, focus restoration, repeated-click browser behavior, and back/forward remain pending. |
-| A-49 | `shell.NewConfig()` exposes `goshtoso` default theme, system color scheme, persisted preference policy, drawer navigation, and labelled navigation items. | No live viewport or browser theme surface was available. | Configuration evidence pass; 390px/1440px light/dark browser captures pending. |
-| A-50 | Synthetic readiness API returned `503` with a private body; normalized client error omitted body/host details. Blocking API honored a 10ms deadline and caller cancellation. Unavailable shell escaped request-controlled route data and rendered sanitized Retry guidance. | `errors.Is` preserved `context.DeadlineExceeded` and `context.Canceled`; no synthetic secret appeared in normalized errors or HTML. | Transport and structural rendering pass; browser visual failure capture pending. |
-| A-51 | HTTPS shell capture includes initial title/description/canonical/OG/X metadata and generic safe preview. Asset boundary is GET/HEAD-only with immutable cache and `nosniff`; mutation methods are rejected. | Asset body never reflects request query data. | Initial/asset structural pass; composed route status, screenshot, and browser-origin evidence pending. |
+| A-26 | `GET /trash/123e4567-e89b-12d3-a456-426614174000?action=restore&confirm=restore` and matching `purge` returned `200`; action and confirmation stayed bound in separate GET forms. Invalid `action=delete`, mismatched confirmation, and duplicate action returned `400`. Forged `POST` and `DELETE` returned `405 Allow: GET, HEAD`. | Synthetic API saw exactly four allowed `GET` reads (restore, purge, repeated purge twice) and zero mutation requests. Invalid drafts reached zero reader calls. Test asserts stopped/no automatic re-add policy and no POST/DELETE form. | Partial production-handler evidence. Browser consequential-action flow is **BLOCKED** by absent browser and uncomposed router. |
+| A-42 | `GET /settings` returned `200` with YAML provenance, `editable=false`, API-owned draft guidance, private/no-store headers, and redacted connection data. Five literal, encoded, and nested-encoded credential-like endpoint drafts returned `400`; safe endpoint draft returned `200`. | Unsafe endpoint drafts caused zero `GetConnection` calls and did not echo markers or values. Production HTML contains no plaintext credential, write-only, or browser-storage marker. | Partial production-handler evidence. Browser URL/storage inspection is **NOT RUN** because CUA has no browser. |
+| A-47 | No cross-origin form/JSON mutation, forged `Host` or forwarded origin, redirect, CSRF/CORS policy, or unauthenticated direct-client-origin scenario was run by this batch. | No effect or origin count exists for these unavailable scenarios. | **NOT RUN / BLOCKED** by absent browser and uncomposed router. |
+| A-48 | Synthetic readiness API returned `503` with a private body; normalized client error omitted body/host details. Blocking API honored a 10ms deadline and caller cancellation. Unavailable shell escaped request-controlled route data and rendered sanitized Retry guidance. | `errors.Is` preserved `context.DeadlineExceeded` and `context.Canceled`. No stale approval, same-key idempotency retry, reload/back-forward, or actual consequential-action effect scenario was run. | Partial transport evidence. Remaining browser/action checks are **NOT RUN / BLOCKED**. |
+| A-49 | No exact media/episode/subtitle identity, selection, executed-payload identity, or deep-link switching scenario was run. | No identity/effect evidence exists for this case. | **NOT RUN / BLOCKED** by absent media route composition and browser. |
+| A-50 | Structural shell capture asserts one semantic `h1`, labelled main section, skip link, focusable main target, labelled menu/navigation, `aria-current`, status/alert roles, configuration landmark, and shell system-theme configuration. | No 390px/1440px viewport, light/dark visual, keyboard/dialog escape, contrast/zoom, focus restoration, or announced-error browser run was available. | Partial structural evidence only. Browser checks are **NOT RUN / BLOCKED**. |
+| A-51 | HTTPS shell capture includes initial title/description/canonical/OG/X metadata, generic preview URL, and escaped route data. Unknown route produces structural `Page not found` alert. Preview `GET` and `HEAD` return `200` with generic 1200x630 SVG, immutable cache, and `nosniff`; `POST`/`PUT` return `405`. | Preview body never reflects request query data. Composed initial HTTP status, unknown-ID route, configured-origin preview loading, and browser screenshot were not run. | Partial shell/asset structural evidence. Composed-route/browser checks are **NOT RUN / BLOCKED**. |
 
 ## Reproduction
 
@@ -41,14 +41,17 @@ From `ui/`:
 GOWORK=off go test ./tests/browser -count=1 -timeout=120s
 ```
 
-The test names map directly to acceptance groups:
+The tests map only to acceptance portions runnable without a browser or
+composed router:
 
 - `TestA26TrashActionsStayReadOnlyAndBindDraftChoices`
 - `TestA42SettingsRedactsCredentialsAndRejectsEncodedEndpointDrafts`
-- `TestA47A48A49A51ShellMetadataAccessibilityAndAssetBoundary`
-- `TestA50TransportFailuresTimeoutCancellationAndEscapedErrors`
+- `TestA48TransportFailureAndSanitizedRecovery`
+- `TestA50AccessibilityStructureOnly`
+- `TestA51InitialMetadataUnknownRouteAndAssetStructure`
 
-The absence of CUA/browser and the uncomposed router are review risks, not
-claims of browser-level completion. U-05 must be revisited after route
-composition to collect screenshots, keyboard traversal, viewport/theme,
-browser-storage, and actual status/effect traces.
+The absence of CUA/browser and the uncomposed router make A-47, A-49 and the
+browser portions of A-26, A-42, A-48, A-50 and A-51 **NOT RUN / BLOCKED**. U-05
+must be revisited after route composition to collect screenshots, keyboard
+traversal, viewport/theme, browser-storage, origin-policy, identity/deep-link,
+approval/idempotency, and actual effect traces.

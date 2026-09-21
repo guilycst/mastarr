@@ -115,16 +115,12 @@ func TestA26TrashActionsStayReadOnlyAndBindDraftChoices(t *testing.T) {
 }
 
 func TestA42SettingsRedactsCredentialsAndRejectsEncodedEndpointDrafts(t *testing.T) {
-	var connectionReads atomic.Int32
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v1/configuration":
-			w.Header().Set("ETag", `"cfg-r1"`)
 			_, _ = io.WriteString(w, configurationJSON())
 		case "/api/v1/connections/qbittorrent-main":
-			connectionReads.Add(1)
-			w.Header().Set("ETag", `"conn-r1"`)
 			_, _ = io.WriteString(w, connectionJSON())
 		default:
 			http.NotFound(w, r)
@@ -190,11 +186,11 @@ func TestA42SettingsRedactsCredentialsAndRejectsEncodedEndpointDrafts(t *testing
 	}
 }
 
-func TestA47A48A49A51ShellMetadataAccessibilityAndAssetBoundary(t *testing.T) {
+func TestA50AccessibilityStructureOnly(t *testing.T) {
 	var rendered bytes.Buffer
-	err := shell.Render(context.Background(), &rendered, "/media/opaque-record?root=/private/media", "https://ui.example.test/", shell.View{
-		Route:    "/media/opaque-record?root=/private/media",
-		Title:    "Media <synthetic>",
+	err := shell.Render(context.Background(), &rendered, "/workflows", "https://ui.example.test/", shell.View{
+		Route:    "/workflows",
+		Title:    "Workflows",
 		APIState: shell.APIAvailable,
 	})
 	if err != nil {
@@ -202,12 +198,6 @@ func TestA47A48A49A51ShellMetadataAccessibilityAndAssetBoundary(t *testing.T) {
 	}
 	body := rendered.String()
 	for _, want := range []string{
-		"<title>Media &lt;synthetic&gt;</title>",
-		`rel="canonical" href="https://ui.example.test/media"`,
-		`property="og:url" content="https://ui.example.test/media"`,
-		`name="twitter:card" content="summary_large_image"`,
-		`name="robots" content="noindex,nofollow"`,
-		"https://ui.example.test/preview.svg",
 		`aria-labelledby="mastarr-page-title"`,
 		`<h1 id="mastarr-page-title">`,
 		`role="status"`,
@@ -219,11 +209,6 @@ func TestA47A48A49A51ShellMetadataAccessibilityAndAssetBoundary(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("shell missing %q", want)
-		}
-	}
-	for _, forbidden := range []string{"opaque-record", "/private/media", "root=/private", "delete"} {
-		if strings.Contains(strings.ToLower(body), strings.ToLower(forbidden)) {
-			t.Errorf("shell leaked or exposed forbidden %q", forbidden)
 		}
 	}
 	if got := strings.Count(body, "<h1"); got != 1 {
@@ -242,6 +227,36 @@ func TestA47A48A49A51ShellMetadataAccessibilityAndAssetBoundary(t *testing.T) {
 			t.Fatalf("navigation item lacks accessible label or href: %#v", item)
 		}
 	}
+}
+
+func TestA51InitialMetadataUnknownRouteAndAssetStructure(t *testing.T) {
+	var rendered bytes.Buffer
+	err := shell.Render(context.Background(), &rendered, "/media/opaque-record?root=/private/media", "https://ui.example.test/", shell.View{
+		Route:    "/media/opaque-record?root=/private/media",
+		Title:    "Media <synthetic>",
+		APIState: shell.APIAvailable,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := rendered.String()
+	for _, want := range []string{
+		"<title>Media &lt;synthetic&gt;</title>",
+		`rel="canonical" href="https://ui.example.test/media"`,
+		`property="og:url" content="https://ui.example.test/media"`,
+		`name="twitter:card" content="summary_large_image"`,
+		`name="robots" content="noindex,nofollow"`,
+		"https://ui.example.test/preview.svg",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("shell missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"opaque-record", "/private/media", "root=/private"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("shell leaked forbidden %q", forbidden)
+		}
+	}
 
 	missing := new(bytes.Buffer)
 	if err := shell.Render(context.Background(), missing, "/not-a-route?secret=synthetic", "https://ui.example.test", shell.View{NotFound: true}); err != nil {
@@ -254,7 +269,7 @@ func TestA47A48A49A51ShellMetadataAccessibilityAndAssetBoundary(t *testing.T) {
 
 	preview := assets.Handler()
 	asset := perform(preview, http.MethodGet, "/preview.svg?private=%2Fmedia%2Fsynthetic.mkv", nil)
-	if asset.Code != http.StatusOK || asset.Header().Get("Content-Type") != assets.PreviewMIMEType || !strings.Contains(asset.Body.String(), `width="1200"`) || !strings.Contains(asset.Body.String(), `height="630"`) {
+	if asset.Code != http.StatusOK || asset.Header().Get("Content-Type") != assets.PreviewMIMEType || asset.Header().Get("Cache-Control") != "public, max-age=31536000, immutable" || asset.Header().Get("X-Content-Type-Options") != "nosniff" || !strings.Contains(asset.Body.String(), `width="1200"`) || !strings.Contains(asset.Body.String(), `height="630"`) {
 		t.Fatalf("preview response status=%d type=%q body=%s", asset.Code, asset.Header().Get("Content-Type"), asset.Body.String())
 	}
 	if strings.Contains(asset.Body.String(), "synthetic.mkv") {
@@ -265,9 +280,13 @@ func TestA47A48A49A51ShellMetadataAccessibilityAndAssetBoundary(t *testing.T) {
 			t.Errorf("preview %s status=%d", method, got)
 		}
 	}
+	head := perform(preview, http.MethodHead, "/preview.svg", nil)
+	if head.Code != http.StatusOK || head.Header().Get("Content-Type") != assets.PreviewMIMEType || head.Header().Get("Cache-Control") != "public, max-age=31536000, immutable" || head.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("preview HEAD status=%d type=%q cache=%q nosniff=%q", head.Code, head.Header().Get("Content-Type"), head.Header().Get("Cache-Control"), head.Header().Get("X-Content-Type-Options"))
+	}
 }
 
-func TestA50TransportFailuresTimeoutCancellationAndEscapedErrors(t *testing.T) {
+func TestA48TransportFailureAndSanitizedRecovery(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/health/ready" {
 			http.NotFound(w, r)
