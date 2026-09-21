@@ -15,9 +15,7 @@
   "resumeDocument": "docs/execution/RESUME.md",
   "contractsStatus": "c03_domain_bootstrap_complete",
   "implementationLanesDefined": true,
-  "activeImplementationTasks": [
-    "U-04"
-  ],
+  "activeImplementationTasks": [],
   "featureLanesPaused": false,
   "pauseReason": "Guardrails-first pause requested by user on 2026-09-11; released after clean-checkout pass",
   "guardrailBaseline": {
@@ -4499,10 +4497,10 @@
       ]
     },
     "U-04": {
-      "status": "in_review",
+      "status": "done",
       "owner": "/root/c01_implementer",
       "baseSha": "94f118c06aec062da72b2e889a82576a9a37782f",
-      "integratedSha": null,
+      "integratedSha": "9bd8b84d79d3086759d5872be43c4b0814a99948",
       "evidence": [
         "Dispatched from clean coordinator checkpoint 94f118c06aec062da72b2e889a82576a9a37782f after U-01 and W-05 approvals.",
         "Own only ui/internal/trash/, ui/internal/settings/ and docs/execution/handoffs/U-04.md; do not edit state.json, API contract, generated API code, router composition or other UI lanes.",
@@ -4518,13 +4516,14 @@
         "51dedbcebb6a998c1302acb0544d1d0033c13e35 U-04 correction handoff records exact product scope, synthetic checks, frozen-schema unknowns and review-round-two dispatch.",
         "f7d7983284858f855b1c4600952ed7283c4b6a01 independent U-04 correction review round two closes P1-1, P1-3, P2-1 and P2-2 but requests one P1 endpoint canonicalization correction; all checks and offline guardrails passed.",
         "f9bf91d9c4235196b7a50ec56e3d2039f233b1e9 U-04 correction round two closes the encoded endpoint credential-marker bypass with bounded canonical/component inspection and nested-decoding regressions.",
-        "8dd3171f13f254d5f7468b4d1a09d4bd6e6d7b7e U-04 correction handoff records product scope, zero-reader-call tests, offline guardrails and round-three review dispatch."
+        "8dd3171f13f254d5f7468b4d1a09d4bd6e6d7b7e U-04 correction handoff records product scope, zero-reader-call tests, offline guardrails and round-three review dispatch.",
+        "9bd8b84d79d3086759d5872be43c4b0814a99948 independent U-04 correction review round three approves the encoded endpoint hardening; no P1/P2 findings and all offline guardrails pass."
       ],
       "review": {
-        "status": "pending",
-        "decision": null,
+        "status": "approved",
+        "decision": "approved",
         "reviewer": "/root/c01_reviewer",
-        "commit": null,
+        "commit": "9bd8b84d79d3086759d5872be43c4b0814a99948",
         "findings": [],
         "round": 3
       },
@@ -4555,10 +4554,10 @@
         ],
         "reviewPath": "docs/execution/handoffs/U-04-review-round1.md",
         "handoffPath": "docs/execution/handoffs/U-04.md",
-        "nextReviewer": "/root/c01_reviewer",
-        "status": "awaiting_review",
-        "waitingOn": "/root/c01_reviewer",
-        "waitingReason": "U-04 correction round two product and handoff are complete; independent correction review round three is required before integration.",
+        "nextReviewer": null,
+        "status": "done",
+        "waitingOn": null,
+        "waitingReason": null,
         "dependencyCommits": {
           "U-01": "2f861a0322e8a693550ed6069e19776a1149a48e",
           "W-05": "ea3958b15508d13893b55674b59cfb0bf50d1ffe"
@@ -4566,14 +4565,14 @@
         "implementationCommit": "f63cedf1dc93c6def4fb851342a3da1c19fbbd9b",
         "handoffCommit": "b99fb7552be89994e870fa50b6352b2a58e9b533",
         "reviewSourceCommit": "f63cedf1dc93c6def4fb851342a3da1c19fbbd9b",
-        "reviewRound": 1,
-        "reviewCommit": "26c1355f59c08cdf78c1eb0c426602b230cd8552",
-        "reviewIntegrationCommit": null,
+        "reviewRound": 3,
+        "reviewCommit": "9bd8b84d79d3086759d5872be43c4b0814a99948",
+        "reviewIntegrationCommit": "9bd8b84d79d3086759d5872be43c4b0814a99948",
         "productCommits": [
           "13ec09f9f54523788aa4ddee1efa9e7bd9165704",
           "f63cedf1dc93c6def4fb851342a3da1c19fbbd9b"
         ],
-        "correctionStatus": "awaiting_review",
+        "correctionStatus": "approved",
         "correctionRound": 2,
         "correctionOwner": "/root/c01_implementer",
         "correctionBaseSha": "f7d7983284858f855b1c4600952ed7283c4b6a01",
@@ -4584,8 +4583,8 @@
         "correctionImplementationCommit": "f9bf91d9c4235196b7a50ec56e3d2039f233b1e9",
         "correctionHandoffCommit": "8dd3171f13f254d5f7468b4d1a09d4bd6e6d7b7e",
         "correctionReviewSourceCommit": "f9bf91d9c4235196b7a50ec56e3d2039f233b1e9",
-        "correctionReviewCommit": null,
-        "correctionReviewIntegrationCommit": null,
+        "correctionReviewCommit": "9bd8b84d79d3086759d5872be43c4b0814a99948",
+        "correctionReviewIntegrationCommit": "9bd8b84d79d3086759d5872be43c4b0814a99948",
         "correctionDispatchCommit": "3342f17d5ce4615564108da2b3a4ce0574fa39b9",
         "correctionProductCommits": [
           "f9bf91d9c4235196b7a50ec56e3d2039f233b1e9"
@@ -4628,12 +4627,14 @@
         {
           "round": 3,
           "reviewer": "/root/c01_reviewer",
-          "commit": null,
-          "status": "pending",
+          "commit": "9bd8b84d79d3086759d5872be43c4b0814a99948",
+          "status": "approved",
           "sourceCommit": "f9bf91d9c4235196b7a50ec56e3d2039f233b1e9",
           "receipt": "docs/execution/handoffs/U-04-review-round3.md",
           "productCommit": "f9bf91d9c4235196b7a50ec56e3d2039f233b1e9",
-          "handoffCommit": "8dd3171f13f254d5f7468b4d1a09d4bd6e6d7b7e"
+          "handoffCommit": "8dd3171f13f254d5f7468b4d1a09d4bd6e6d7b7e",
+          "findings": [],
+          "integratedCommit": "9bd8b84d79d3086759d5872be43c4b0814a99948"
         }
       ]
     },
@@ -6465,7 +6466,7 @@
       ]
     }
   },
-  "nextAction": "U-04 correction product f9bf91d9c4235196b7a50ec56e3d2039f233b1e9 and handoff 8dd3171f13f254d5f7468b4d1a09d4bd6e6d7b7e are recorded; dispatch /root/c01_reviewer for independent correction review round three.",
+  "nextAction": "U-04 is approved and closed at 9bd8b84d79d3086759d5872be43c4b0814a99948; dispatch U-05 browser and accessibility verification from this clean checkpoint.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
