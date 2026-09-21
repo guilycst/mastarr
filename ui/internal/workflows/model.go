@@ -486,6 +486,7 @@ func validateWorkflow(item Workflow) error {
 		return validationError("workflow has too many steps")
 	}
 	seen := make(map[string]struct{}, len(item.Steps))
+	seenEffects := make(map[string]struct{})
 	effects := 0
 	unresolved := 0
 	for index, step := range item.Steps {
@@ -530,7 +531,8 @@ func validateWorkflow(item Workflow) error {
 		if step.LastObservedAt != nil && step.LastObservedAt.IsZero() || step.RetryAt != nil && step.RetryAt.IsZero() {
 			return validationError("workflow observation time is invalid")
 		}
-		if err := validateStepScope(step); err != nil {
+		stepEffects, stepUnresolved, err := validateStepScopeWithEffects(step, seenEffects)
+		if err != nil {
 			return err
 		}
 		if len(step.Effects)+len(step.UnresolvedEffects) > MaxEffects {
@@ -539,8 +541,8 @@ func validateWorkflow(item Workflow) error {
 		if (step.Outcome == "applied" || step.Outcome == "already_satisfied") && len(step.Effects) == 0 && len(step.UnresolvedEffects) == 0 {
 			return validationError("workflow complete effect evidence is empty")
 		}
-		effects += len(step.Effects)
-		unresolved += len(step.UnresolvedEffects)
+		effects += stepEffects
+		unresolved += stepUnresolved
 		if effects > MaxEffects {
 			return validationError("workflow effects exceed the UI limit")
 		}
@@ -558,73 +560,90 @@ func validateWorkflow(item Workflow) error {
 }
 
 func validateStepScope(step Step) error {
+	_, _, err := validateStepScopeWithEffects(step, make(map[string]struct{}, len(step.Effects)+len(step.UnresolvedEffects)))
+	return err
+}
+
+func validateStepScopeWithEffects(step Step, seenEffects map[string]struct{}) (int, int, error) {
 	if len(step.ActionFiles) > MaxEffects || len(step.Manifest) > MaxEffects || len(step.ActionClientIDs) > MaxEffects || len(step.ActionStoppedIDs) > MaxEffects {
-		return validationError("workflow action scope exceeds the UI limit")
+		return 0, 0, validationError("workflow action scope exceeds the UI limit")
 	}
 	for _, file := range step.ActionFiles {
 		if file.SourcePath == "" && file.DestinationPath == "" && file.Identity == "" && file.MovieOrEpisodeID == 0 {
-			return validationError("workflow action file identity is incomplete")
+			return 0, 0, validationError("workflow action file identity is incomplete")
 		}
 		if !validOptionalEvidenceID(file.SourceRootID) || !validOptionalEvidenceID(file.DestinationRootID) || !validOptionalEvidenceID(file.Identity) || !validOptionalEvidenceID(file.Role) || !validOptionalEvidenceID(file.Language) || file.SourcePath != "" && (invalidRelativePath(file.SourcePath) || len(file.SourcePath) > MaxValueLength) || file.DestinationPath != "" && (invalidRelativePath(file.DestinationPath) || len(file.DestinationPath) > MaxValueLength) {
-			return validationError("workflow action path is invalid")
+			return 0, 0, validationError("workflow action path is invalid")
 		}
 		if file.Size < 0 {
-			return validationError("workflow action file size is invalid")
+			return 0, 0, validationError("workflow action file size is invalid")
 		}
 		if file.MovieOrEpisodeID < 0 {
-			return validationError("workflow action episode identity is invalid")
+			return 0, 0, validationError("workflow action episode identity is invalid")
 		}
 	}
 	for _, entry := range step.Manifest {
 		if !validEvidenceID(entry.RootID) || entry.RelativePath == "" || invalidRelativePath(entry.RelativePath) || len(entry.RelativePath) > MaxValueLength || entry.Size < 0 || !validManifestType(entry.Type) || !validOptionalEvidenceID(entry.Role) || !validOptionalEvidenceID(entry.Identity) || !validOptionalEvidenceID(entry.Digest) || entry.ObservedAt != nil && entry.ObservedAt.IsZero() {
-			return validationError("workflow manifest is invalid")
+			return 0, 0, validationError("workflow manifest is invalid")
 		}
 		if entry.Role != "" && !validFileRole(entry.Role) {
-			return validationError("workflow manifest role is unknown")
+			return 0, 0, validationError("workflow manifest role is unknown")
 		}
 	}
 	for _, identity := range append(append([]string{}, step.ActionClientIDs...), step.ActionStoppedIDs...) {
 		if !validEvidenceID(identity) {
-			return validationError("workflow client identity is invalid")
+			return 0, 0, validationError("workflow client identity is invalid")
 		}
 	}
-	seenEffects := make(map[string]struct{}, len(step.Effects)+len(step.UnresolvedEffects))
+	localEffects := make(map[string]struct{}, len(step.Effects)+len(step.UnresolvedEffects))
+	observed := 0
 	for _, effect := range step.Effects {
 		if !validEvidenceID(effect.ID) || !validEffectState(effect.State) || !validOutcome(effect.Outcome) {
-			return validationError("workflow effect evidence is incomplete")
+			return 0, 0, validationError("workflow effect evidence is incomplete")
+		}
+		if _, exists := localEffects[effect.ID]; exists {
+			return 0, 0, validationError("workflow effect identity is duplicated")
 		}
 		if _, exists := seenEffects[effect.ID]; exists {
-			return validationError("workflow effect identity is duplicated")
+			return 0, 0, validationError("workflow effect identity is duplicated across steps")
 		}
+		localEffects[effect.ID] = struct{}{}
 		seenEffects[effect.ID] = struct{}{}
+		observed++
 		if effect.State != "" && effect.Outcome != "" && effect.State != "observed" && effect.State != "unresolved" && effect.State != effect.Outcome {
-			return validationError("workflow effect state is contradictory")
+			return 0, 0, validationError("workflow effect state is contradictory")
 		}
 		if effect.Evidence != "" && (!utf8.ValidString(effect.Evidence) || len(effect.Evidence) > MaxTextLength) {
-			return validationError("workflow effect evidence is too large")
+			return 0, 0, validationError("workflow effect evidence is too large")
 		}
 		if effect.Error != "" && (!utf8.ValidString(effect.Error) || len(effect.Error) > MaxTextLength) {
-			return validationError("workflow effect error is too large")
+			return 0, 0, validationError("workflow effect error is too large")
 		}
 	}
+	pending := 0
 	for _, effect := range step.UnresolvedEffects {
 		if !validEvidenceID(effect) {
-			return validationError("workflow unresolved effect identity is incomplete")
+			return 0, 0, validationError("workflow unresolved effect identity is incomplete")
+		}
+		if _, exists := localEffects[effect]; exists {
+			return 0, 0, validationError("workflow effect is both resolved and unresolved")
 		}
 		if _, exists := seenEffects[effect]; exists {
-			return validationError("workflow effect is both resolved and unresolved")
+			return 0, 0, validationError("workflow effect identity is duplicated across steps")
 		}
+		localEffects[effect] = struct{}{}
 		seenEffects[effect] = struct{}{}
+		pending++
 	}
 	for _, value := range append(append([]string{}, step.Impacts...), step.Capabilities...) {
 		if !validEvidenceID(value) || len(value) > MaxTextLength {
-			return validationError("workflow authority evidence is too large")
+			return 0, 0, validationError("workflow authority evidence is too large")
 		}
 	}
 	if err := validateStepActionScope(step); err != nil {
-		return err
+		return 0, 0, err
 	}
-	return nil
+	return observed, pending, nil
 }
 
 func validateStepActionScope(step Step) error {

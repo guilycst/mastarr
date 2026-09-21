@@ -449,19 +449,22 @@ func convertAction(input generated.ActionInput) (Action, error) {
 		}
 		action.Irreversible = bool(item.IrreversibleAcknowledgement)
 	case "jellyfin.refresh":
-		item, err := input.ValueByDiscriminator()
+		refresh, err := input.AsJellyfinRefreshInput()
 		if err != nil {
 			return Action{}, err
 		}
-		switch typed := item.(type) {
-		case generated.JellyfinLibraryRefreshInput:
-			action.ConnectionID = typed.ConnectionId
-		case generated.JellyfinItemRefreshInput:
-			action.ConnectionID = typed.ConnectionId
-			action.Files = []ActionFile{{Identity: typed.ItemId}}
-		default:
-			return Action{}, errors.New("unknown refresh input")
+		item, itemErr := refresh.AsJellyfinItemRefreshInput()
+		if itemErr == nil && string(item.Scope) == "item" && item.ItemId != "" {
+			action.ConnectionID = item.ConnectionId
+			action.Files = []ActionFile{{Identity: item.ItemId}}
+			break
 		}
+		library, libraryErr := refresh.AsJellyfinLibraryRefreshInput()
+		if libraryErr == nil && string(library.Scope) == "library" {
+			action.ConnectionID = library.ConnectionId
+			break
+		}
+		return Action{}, errors.New("unknown refresh input")
 	default:
 		return Action{}, errors.New("unknown action kind")
 	}

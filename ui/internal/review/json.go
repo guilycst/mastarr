@@ -140,17 +140,17 @@ func validateActionUnion(raw json.RawMessage) error {
 		if err := objectFields(object, []string{"kind", "connectionId", "files", "previewRevision", "registeredExternalId", "transfer"}, []string{"kind", "connectionId", "files", "previewRevision", "registeredExternalId", "transfer"}); err != nil {
 			return err
 		}
-		return validateRawFiles(object["files"], false)
+		return validateRawFiles(object["files"], rawImportFiles)
 	case "fs.copy", "fs.hardlink":
 		if err := objectFields(object, []string{"kind", "files"}, []string{"kind", "files"}); err != nil {
 			return err
 		}
-		return validateRawFiles(object["files"], true)
+		return validateRawFiles(object["files"], rawMappedFiles)
 	case "fs.move", "fs.rename":
 		if err := objectFields(object, []string{"kind", "executor", "files"}, []string{"kind", "executor", "files"}); err != nil {
 			return err
 		}
-		return validateRawFiles(object["files"], true)
+		return validateRawFiles(object["files"], rawMappedFiles)
 	case "client.stop":
 		return objectFields(object, []string{"kind", "connectionId", "clientItemIds"}, []string{"kind", "connectionId", "clientItemIds"})
 	case "client.remove":
@@ -159,17 +159,17 @@ func validateActionUnion(raw json.RawMessage) error {
 		if err := objectFields(object, []string{"kind", "files", "retentionDays", "stoppedClientIds"}, []string{"kind", "files", "retentionDays"}); err != nil {
 			return err
 		}
-		return validateRawFiles(object["files"], false)
+		return validateRawFiles(object["files"], rawTargetFiles)
 	case "fs.restore":
 		if err := objectFields(object, []string{"kind", "files", "trashId"}, []string{"kind", "files", "trashId"}); err != nil {
 			return err
 		}
-		return validateRawFiles(object["files"], true)
+		return validateRawFiles(object["files"], rawMappedFiles)
 	case "fs.delete":
 		if err := objectFields(object, []string{"kind", "files", "permanent", "irreversibleAcknowledgement"}, []string{"kind", "files", "permanent", "irreversibleAcknowledgement"}); err != nil {
 			return err
 		}
-		return validateRawFiles(object["files"], false)
+		return validateRawFiles(object["files"], rawTargetFiles)
 	case "descriptor.delete":
 		return objectFields(object, []string{"kind", "descriptorIds", "irreversibleAcknowledgement"}, []string{"kind", "descriptorIds", "irreversibleAcknowledgement"})
 	case "jellyfin.refresh":
@@ -193,17 +193,31 @@ func validateActionUnion(raw json.RawMessage) error {
 	}
 }
 
-func validateRawFiles(raw json.RawMessage, mapped bool) error {
+type rawFileShape uint8
+
+const (
+	rawImportFiles rawFileShape = iota
+	rawMappedFiles
+	rawTargetFiles
+)
+
+func validateRawFiles(raw json.RawMessage, shape rawFileShape) error {
 	var entries []json.RawMessage
 	if err := decodeJSON(raw, &entries); err != nil {
 		return errors.New("response action files are malformed")
 	}
 	for _, entry := range entries {
+		if shape == rawTargetFiles {
+			if err := validateRawTarget(entry); err != nil {
+				return err
+			}
+			continue
+		}
 		object, err := jsonObject(entry)
 		if err != nil {
 			return err
 		}
-		if mapped {
+		if shape == rawMappedFiles {
 			if err := objectFields(object, []string{"source", "destination"}, []string{"source", "destination"}); err != nil {
 				return err
 			}
@@ -214,6 +228,9 @@ func validateRawFiles(raw json.RawMessage, mapped bool) error {
 				return err
 			}
 			continue
+		}
+		if shape != rawImportFiles {
+			return errors.New("response action file shape is unknown")
 		}
 		allowed := []string{"source", "movieOrEpisodeId", "subtitle", "language", "forced", "hearingImpaired"}
 		required := []string{"source", "movieOrEpisodeId"}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -50,6 +51,142 @@ func TestHTTPReaderNormalizesWorkflowAndActionEvidence(t *testing.T) {
 		if !strings.Contains(recorder.Body.String(), expected) {
 			t.Fatalf("rendered workflow missing %q: %s", expected, recorder.Body.String())
 		}
+	}
+}
+
+func generatedWorkflowPlan(action string) string {
+	return `{"id":"00000000-0000-0000-0000-000000000012","revision":4,"digest":"sha256:generated-workflow-fixture","status":"ready","requiredApproval":"review","action":` + action + `,"manifest":[{"rootId":"root-downloads","relativePath":"Show/E01.mkv","type":"file","size":42,"fileIdentity":"inode-1","role":"video"}],"preconditions":["read-back"],"capabilities":["read-only"],"impacts":["unselected payload remains outside this exact plan"],"desiredState":{}}`
+}
+
+func TestHTTPReaderGeneratedActionFixturesReachReadOnlyWorkflowHandler(t *testing.T) {
+	const workflowID = "00000000-0000-0000-0000-000000000010"
+	const planID = "00000000-0000-0000-0000-000000000012"
+	actions := map[string]string{
+		"arr.registration":  `{"kind":"arr.registration","connectionId":"sonarr-a","mediaKind":"episode","providerId":"tvdb:42","fields":{"monitored":false,"seasonFolder":true,"seriesType":"standard"}}`,
+		"arr.import":        `{"kind":"arr.import","connectionId":"sonarr-a","registeredExternalId":"series-42","files":[{"source":{"rootId":"root-downloads","relativePath":"Show/E01.mkv"},"movieOrEpisodeId":42,"subtitle":false}],"previewRevision":"preview-4","transfer":"copy"}`,
+		"fs.copy":           `{"kind":"fs.copy","files":[{"source":{"rootId":"root-downloads","relativePath":"Show/E01.mkv"},"destination":{"rootId":"root-library","relativePath":"Show/E01.mkv"}}]}`,
+		"fs.hardlink":       `{"kind":"fs.hardlink","files":[{"source":{"rootId":"root-downloads","relativePath":"Show/E01.mkv"},"destination":{"rootId":"root-library","relativePath":"Show/E01.mkv"}}]}`,
+		"fs.move":           `{"kind":"fs.move","executor":"mastarr","files":[{"source":{"rootId":"root-downloads","relativePath":"Show/E01.mkv"},"destination":{"rootId":"root-library","relativePath":"Show/E01.mkv"}}]}`,
+		"fs.rename":         `{"kind":"fs.rename","executor":"native_client","files":[{"source":{"rootId":"root-downloads","relativePath":"Show/E01.mkv"},"destination":{"rootId":"root-library","relativePath":"Show/E01.mkv"}}]}`,
+		"client.stop":       `{"kind":"client.stop","connectionId":"qbittorrent-a","clientItemIds":["torrent-exact-1"]}`,
+		"client.remove":     `{"kind":"client.remove","connectionId":"qbittorrent-a","clientItemIds":["torrent-exact-1"],"retainPayload":true}`,
+		"fs.trash":          `{"kind":"fs.trash","files":[{"rootId":"root-downloads","relativePath":"Show/E01.mkv"}],"retentionDays":30,"stoppedClientIds":["torrent-exact-1"]}`,
+		"fs.restore":        `{"kind":"fs.restore","trashId":"00000000-0000-0000-0000-000000000002","files":[{"source":{"rootId":"root-trash","relativePath":"Show/E01.mkv"},"destination":{"rootId":"root-library","relativePath":"Show/E01.mkv"}}]}`,
+		"fs.delete":         `{"kind":"fs.delete","files":[{"rootId":"root-trash","relativePath":"Show/E01.mkv"}],"permanent":true,"irreversibleAcknowledgement":true}`,
+		"descriptor.delete": `{"kind":"descriptor.delete","descriptorIds":["00000000-0000-0000-0000-000000000003"],"irreversibleAcknowledgement":true}`,
+		"jellyfin.refresh":  `{"kind":"jellyfin.refresh","connectionId":"jellyfin-a","scope":"item","itemId":"item-42"}`,
+	}
+	for kind, action := range actions {
+		t.Run(kind, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/v1/workflow-runs/" + workflowID:
+					_, _ = io.WriteString(w, `{"id":"`+workflowID+`","name":"generated-action-fixture","state":"running","currentStep":"fixture","deadlineAt":null,"steps":[{"id":"fixture","actionPlanId":"`+planID+`","approvalGate":"review","state":"queued"}]}`)
+				case "/api/v1/action-plans/" + planID:
+					_, _ = io.WriteString(w, generatedWorkflowPlan(action))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+
+			reader, err := NewHTTPReader(server.URL, server.Client(), time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			item, err := reader.GetWorkflow(context.Background(), workflowID)
+			if err != nil {
+				t.Fatalf("GetWorkflow() error = %v", err)
+			}
+			if len(item.Steps) != 1 || item.Steps[0].ActionKind != kind {
+				t.Fatalf("normalized step = %#v", item.Steps)
+			}
+			if kind == "fs.trash" {
+				if item.Steps[0].ActionRetention == nil || *item.Steps[0].ActionRetention != 30 || len(item.Steps[0].ActionStoppedIDs) != 1 || item.Steps[0].ActionStoppedIDs[0] != "torrent-exact-1" {
+					t.Fatalf("trash authority = %#v", item.Steps[0])
+				}
+			}
+			if kind == "fs.delete" {
+				if item.Steps[0].ActionPermanent == nil || !*item.Steps[0].ActionPermanent || !item.Steps[0].ActionIrreversible || len(item.Steps[0].ActionFiles) != 1 || item.Steps[0].ActionFiles[0].SourceRootID != "root-trash" {
+					t.Fatalf("delete authority = %#v", item.Steps[0])
+				}
+			}
+			recorder := httptest.NewRecorder()
+			NewHandler(reader).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/workflows/"+workflowID, nil))
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("handler status = %d body=%s", recorder.Code, recorder.Body.String())
+			}
+			if kind == "fs.trash" {
+				for _, expected := range []string{"Retention days", "30", "Stopped-client prerequisites", "torrent-exact-1", "unselected payload remains"} {
+					if !strings.Contains(recorder.Body.String(), expected) {
+						t.Fatalf("trash body missing %q: %s", expected, recorder.Body.String())
+					}
+				}
+			}
+			if kind == "fs.delete" {
+				for _, expected := range []string{"Permanent deletion", "true", "unselected payload remains"} {
+					if !strings.Contains(recorder.Body.String(), expected) {
+						t.Fatalf("delete body missing %q: %s", expected, recorder.Body.String())
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestHTTPReaderRejectsCrossStepEffectIdentityThroughGeneratedRuns(t *testing.T) {
+	const workflowID = "00000000-0000-0000-0000-000000000010"
+	const planID = "00000000-0000-0000-0000-000000000012"
+	const firstRunID = "00000000-0000-0000-0000-000000000013"
+	const secondRunID = "00000000-0000-0000-0000-000000000014"
+	for _, testCase := range []struct {
+		name             string
+		aggregate        int
+		unresolved       int
+		firstEffects     string
+		firstUnresolved  string
+		secondEffects    string
+		secondUnresolved string
+	}{
+		{name: "duplicate observed", aggregate: 2, firstEffects: `["file:1"]`, secondEffects: `["file:1"]`, firstUnresolved: `[]`, secondUnresolved: `[]`},
+		{name: "cross resolved", aggregate: 1, unresolved: 1, firstEffects: `["file:1"]`, secondEffects: `[]`, firstUnresolved: `[]`, secondUnresolved: `["file:1"]`},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/v1/workflow-runs/" + workflowID:
+					_, _ = io.WriteString(w, `{"id":"`+workflowID+`","name":"cross-step-effect-fixture","state":"running","currentStep":"second","aggregateEffectCount":`+strconv.Itoa(testCase.aggregate)+`,"unresolvedCount":`+strconv.Itoa(testCase.unresolved)+`,"deadlineAt":null,"steps":[{"id":"first","actionPlanId":"`+planID+`","actionRunId":"`+firstRunID+`","approvalGate":"review","state":"running"},{"id":"second","actionPlanId":"`+planID+`","actionRunId":"`+secondRunID+`","approvalGate":"review","state":"running"}]}`)
+				case "/api/v1/action-plans/" + planID:
+					_, _ = io.WriteString(w, generatedWorkflowPlan(`{"kind":"fs.trash","files":[{"rootId":"root-downloads","relativePath":"Show/E01.mkv"}],"retentionDays":30,"stoppedClientIds":["torrent-exact-1"]}`))
+				case "/api/v1/action-runs/" + firstRunID:
+					_, _ = io.WriteString(w, `{"id":"`+firstRunID+`","planId":"`+planID+`","workflowRunId":"`+workflowID+`","stepId":"first","attempts":1,"revision":1,"state":"running","outcome":"unknown","effects":`+testCase.firstEffects+`,"unresolvedEffects":`+testCase.firstUnresolved+`,"retryPolicy":{"backoffSeconds":5,"inactivityTimeoutSeconds":30,"maxAttempts":3}}`)
+				case "/api/v1/action-runs/" + secondRunID:
+					_, _ = io.WriteString(w, `{"id":"`+secondRunID+`","planId":"`+planID+`","workflowRunId":"`+workflowID+`","stepId":"second","attempts":1,"revision":1,"state":"running","outcome":"unknown","effects":`+testCase.secondEffects+`,"unresolvedEffects":`+testCase.secondUnresolved+`,"retryPolicy":{"backoffSeconds":5,"inactivityTimeoutSeconds":30,"maxAttempts":3}}`)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+
+			reader, err := NewHTTPReader(server.URL, server.Client(), time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			item, err := reader.GetWorkflow(context.Background(), workflowID)
+			if err != nil {
+				t.Fatalf("GetWorkflow() error = %v", err)
+			}
+			if len(item.Steps) != 2 || item.Steps[0].ActionRunID != firstRunID || item.Steps[1].ActionRunID != secondRunID {
+				t.Fatalf("normalized workflow = %#v", item)
+			}
+			recorder := httptest.NewRecorder()
+			NewHandler(reader).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/workflows/"+workflowID, nil))
+			if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), "incomplete or invalid") {
+				t.Fatalf("handler status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+		})
 	}
 }
 

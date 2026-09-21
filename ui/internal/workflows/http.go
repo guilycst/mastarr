@@ -526,19 +526,22 @@ func mergeActionInput(step *Step, input generated.ActionInput, kind string) erro
 		}
 		step.ActionIrreversible = bool(item.IrreversibleAcknowledgement)
 	case "jellyfin.refresh":
-		item, err := input.ValueByDiscriminator()
+		refresh, err := input.AsJellyfinRefreshInput()
 		if err != nil {
 			return err
 		}
-		switch typed := item.(type) {
-		case generated.JellyfinLibraryRefreshInput:
-			step.ActionConnection = typed.ConnectionId
-		case generated.JellyfinItemRefreshInput:
-			step.ActionConnection = typed.ConnectionId
-			step.ActionFiles = []ActionFile{{Identity: typed.ItemId}}
-		default:
-			return errors.New("unknown refresh input")
+		item, itemErr := refresh.AsJellyfinItemRefreshInput()
+		if itemErr == nil && string(item.Scope) == "item" && item.ItemId != "" {
+			step.ActionConnection = item.ConnectionId
+			step.ActionFiles = []ActionFile{{Identity: item.ItemId}}
+			break
 		}
+		library, libraryErr := refresh.AsJellyfinLibraryRefreshInput()
+		if libraryErr == nil && string(library.Scope) == "library" {
+			step.ActionConnection = library.ConnectionId
+			break
+		}
+		return errors.New("unknown refresh input")
 	}
 	return nil
 }
