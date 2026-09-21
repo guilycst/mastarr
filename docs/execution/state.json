@@ -4641,7 +4641,7 @@
       ]
     },
     "U-05": {
-      "status": "in_progress",
+      "status": "in_review",
       "owner": "/root/c01_implementer",
       "baseSha": "61336c2aa6a30b3322e850809e421f37971303ce",
       "integratedSha": null,
@@ -4649,7 +4649,9 @@
         "Dispatched from clean coordinator checkpoint 61336c2aa6a30b3322e850809e421f37971303ce after U-03 and U-04 approvals.",
         "Own only ui/tests/browser/, docs/verification/ui-ledger.md and docs/execution/handoffs/U-05.md; do not edit UI product packages, API, generated code, root state outside coordinator handoff.",
         "Use synthetic API fixtures and browser-visible verification only; no live services, credentials, private coordinates, media or deployment.",
-        "Record allowed/denied/repeated consequential-action outcomes, forged GET/POST requests, transport failures, keyboard/focus order, narrow/wide themes and initial metadata/assets with exact effect counts and screenshot or structural evidence."
+        "Record allowed/denied/repeated consequential-action outcomes, forged GET/POST requests, transport failures, keyboard/focus order, narrow/wide themes and initial metadata/assets with exact effect counts and screenshot or structural evidence.",
+        "a753fe0b3164cab2beb456d961d1c679da518ad7 U-05 product adds synthetic production-boundary browser/accessibility tests covering A-26, A-42, A-47 through A-51.",
+        "U-05 handoff records exact request/effect counts, structural metadata/accessibility evidence, synthetic failures, and honest CUA/router limitations; live browser screenshots and composed-route traces remain deferred."
       ],
       "review": {
         "status": "pending",
@@ -4685,24 +4687,35 @@
         "reviewPath": "docs/execution/handoffs/U-05-review-round1.md",
         "handoffPath": "docs/execution/handoffs/U-05.md",
         "nextReviewer": "/root/c01_reviewer",
-        "status": "dispatched",
-        "waitingOn": "/root/c01_implementer",
-        "waitingReason": "U-05 browser/accessibility verification is dispatched; product and ledger handoff are required before independent review.",
+        "status": "awaiting_review",
+        "waitingOn": "/root/c01_reviewer",
+        "waitingReason": "U-05 product and handoff are complete; independent verification review is required before integration.",
         "dependencyCommits": {
           "U-03": "a1b986a833d808b761a724f7522a1ece66a31748",
           "U-04": "9bd8b84d79d3086759d5872be43c4b0814a99948"
         },
-        "implementationCommit": null,
-        "handoffCommit": null,
-        "reviewSourceCommit": null,
+        "implementationCommit": "a753fe0b3164cab2beb456d961d1c679da518ad7",
+        "handoffCommit": "45a7553b0df88fff478108a5a391f227f767a767",
+        "reviewSourceCommit": "a753fe0b3164cab2beb456d961d1c679da518ad7",
         "reviewRound": 1,
         "reviewCommit": null,
         "reviewIntegrationCommit": null
       },
-      "implementationCommit": null,
-      "handoffCommit": null,
-      "reviewSourceCommit": null,
-      "reviewHistory": []
+      "implementationCommit": "a753fe0b3164cab2beb456d961d1c679da518ad7",
+      "handoffCommit": "45a7553b0df88fff478108a5a391f227f767a767",
+      "reviewSourceCommit": "a753fe0b3164cab2beb456d961d1c679da518ad7",
+      "reviewHistory": [
+        {
+          "round": 1,
+          "reviewer": "/root/c01_reviewer",
+          "commit": null,
+          "status": "pending",
+          "sourceCommit": "a753fe0b3164cab2beb456d961d1c679da518ad7",
+          "receipt": "docs/execution/handoffs/U-05-review-round1.md",
+          "productCommit": "a753fe0b3164cab2beb456d961d1c679da518ad7",
+          "handoffCommit": "45a7553b0df88fff478108a5a391f227f767a767"
+        }
+      ]
     },
     "V-01": {
       "status": "planned",
@@ -6524,7 +6537,7 @@
       ]
     }
   },
-  "nextAction": "U-05 browser/accessibility verification dispatched to /root/c01_implementer from 61336c2; record the synthetic browser ledger and independent review before integration.",
+  "nextAction": "U-05 browser verification product a753fe0b3164cab2beb456d961d1c679da518ad7 and handoff 45a7553 are recorded; dispatch /root/c01_reviewer for independent review, with live browser/router gaps explicitly deferred.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
