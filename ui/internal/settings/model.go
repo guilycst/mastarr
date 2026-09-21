@@ -682,13 +682,57 @@ func validEndpointDraft(value string) bool {
 	if err != nil || parsed == nil || parsed.Opaque != "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return false
 	}
+	candidates := []string{value, parsed.String(), parsed.Scheme, parsed.Host, parsed.Path, parsed.RawPath, parsed.EscapedPath(), parsed.RawQuery, parsed.Fragment, parsed.RawFragment}
+	seen := make(map[string]struct{}, len(candidates))
+	for pass := 0; pass < 4; pass++ {
+		changed := false
+		next := make([]string, 0, len(candidates)*2)
+		for _, candidate := range candidates {
+			if candidate == "" {
+				continue
+			}
+			if !validBounded(candidate, 1024, false) || containsCredentialMarker(candidate) {
+				return false
+			}
+			decoded, decodeErr := url.PathUnescape(candidate)
+			if decodeErr != nil || !validBounded(decoded, 1024, false) {
+				return false
+			}
+			if decoded != candidate {
+				changed = true
+			}
+			if containsCredentialMarker(decoded) || endpointURLHasSecrets(decoded) {
+				return false
+			}
+			if _, exists := seen[decoded]; !exists {
+				seen[decoded] = struct{}{}
+				next = append(next, decoded)
+			}
+		}
+		if !changed {
+			return true
+		}
+		candidates = next
+	}
+	return false
+}
+
+func containsCredentialMarker(value string) bool {
 	lower := strings.ToLower(value)
 	for _, marker := range []string{"password", "passwd", "secret", "token", "api_key", "api-key", "apikey", "access_token", "refresh_token", "client_secret", "credential"} {
 		if strings.Contains(lower, marker) {
-			return false
+			return true
 		}
 	}
-	return true
+	return false
+}
+
+func endpointURLHasSecrets(value string) bool {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed == nil || parsed.Opaque != "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return true
+	}
+	return false
 }
 
 func validateConfiguration(value Configuration) error {

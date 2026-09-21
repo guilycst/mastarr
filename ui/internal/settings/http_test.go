@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -119,6 +120,11 @@ func TestHTTPReaderAndHandlersPreserveSettingsProvenanceAndRedactCredentials(t *
 			t.Fatalf("unsafe endpoint draft was retained/rendered: query=%q status=%d body=%s", rawQuery, unsafeRecorder.Code, unsafeRecorder.Body.String())
 		}
 	}
+	safeRecorder := httptest.NewRecorder()
+	NewHandler(reader).ServeHTTP(safeRecorder, httptest.NewRequest(http.MethodGet, "/connections/qbittorrent-main?endpoint=https%3A%2F%2Fexample.invalid%2Fapi", nil))
+	if safeRecorder.Code != http.StatusOK || !strings.Contains(safeRecorder.Body.String(), "https://example.invalid/api") {
+		t.Fatalf("safe endpoint draft was rejected: status=%d body=%s", safeRecorder.Code, safeRecorder.Body.String())
+	}
 }
 
 func TestSettingsReaderRejectsContradictoryYAMLOwnership(t *testing.T) {
@@ -157,6 +163,46 @@ func TestSettingsReaderRejectsContradictoryYAMLOwnership(t *testing.T) {
 			}
 			if err := tc.read(reader); !errors.Is(err, ErrProtocol) {
 				t.Fatalf("read error = %v, want protocol", err)
+			}
+		})
+	}
+}
+
+func TestSettingsHandlerRejectsEscapedEndpointCredentialsBeforeReader(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, connectionJSON())
+	}))
+	defer server.Close()
+	reader, err := NewHTTPReader(server.URL, server.Client(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counting := &countingSettingsReader{Reader: reader}
+	for _, tc := range []struct {
+		name     string
+		endpoint string
+	}{
+		{name: "literal userinfo", endpoint: "https://operator:synthetic-secret@example.invalid/api"},
+		{name: "literal query", endpoint: "https://example.invalid/api?token=synthetic-token"},
+		{name: "literal fragment", endpoint: "https://example.invalid/api#synthetic-secret"},
+		{name: "single escaped marker", endpoint: "https://example.invalid/api/s%65cret=synthetic-value"},
+		{name: "nested escaped marker", endpoint: "https://example.invalid/api/s%252565cret=synthetic-value"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			rawQuery := "endpoint=" + url.QueryEscape(tc.endpoint)
+			NewHandler(counting).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/connections/qbittorrent-main?"+rawQuery, nil))
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+			}
+			if counting.connectionCalls.Load() != 0 {
+				t.Fatalf("reader was called for unsafe endpoint: %d", counting.connectionCalls.Load())
+			}
+			for _, marker := range []string{"secret", "token", "synthetic-value", "%65", "%2565"} {
+				if strings.Contains(recorder.Body.String(), marker) {
+					t.Fatalf("error response echoed endpoint marker %q: %s", marker, recorder.Body.String())
+				}
 			}
 		})
 	}
@@ -221,6 +267,16 @@ func TestSettingsReaderRefusesRedirect(t *testing.T) {
 
 type fakeSettingsReader struct {
 	configuration func(context.Context) (Configuration, error)
+}
+
+type countingSettingsReader struct {
+	Reader
+	connectionCalls atomic.Int32
+}
+
+func (r *countingSettingsReader) GetConnection(ctx context.Context, id string) (Connection, error) {
+	r.connectionCalls.Add(1)
+	return r.Reader.GetConnection(ctx, id)
 }
 
 func (f fakeSettingsReader) GetConfiguration(ctx context.Context) (Configuration, error) {
