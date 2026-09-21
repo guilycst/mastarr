@@ -4499,7 +4499,7 @@
       ]
     },
     "U-04": {
-      "status": "in_review",
+      "status": "in_progress",
       "owner": "/root/c01_implementer",
       "baseSha": "94f118c06aec062da72b2e889a82576a9a37782f",
       "integratedSha": null,
@@ -4515,14 +4515,17 @@
         "U-04 product and handoff focused/full tests, race, vet, mod verify/tidy, cross-builds, generation/Vacuum, lint, architecture, planning and full offline guardrails passed.",
         "26c1355f59c08cdf78c1eb0c426602b230cd8552 independent U-04 round-one review requests three P1 and two P2 corrections; all reviewer checks and offline guardrails passed.",
         "067ebe5fbef03ae915bf31d22234d637a9147cb2 U-04 correction round one closes the three P1 and two P2 findings with production reader-to-handler adversarial fixtures.",
-        "51dedbcebb6a998c1302acb0544d1d0033c13e35 U-04 correction handoff records exact product scope, synthetic checks, frozen-schema unknowns and review-round-two dispatch."
+        "51dedbcebb6a998c1302acb0544d1d0033c13e35 U-04 correction handoff records exact product scope, synthetic checks, frozen-schema unknowns and review-round-two dispatch.",
+        "f7d7983284858f855b1c4600952ed7283c4b6a01 independent U-04 correction review round two closes P1-1, P1-3, P2-1 and P2-2 but requests one P1 endpoint canonicalization correction; all checks and offline guardrails passed."
       ],
       "review": {
-        "status": "pending",
-        "decision": null,
+        "status": "changes_requested",
+        "decision": "changes_requested",
         "reviewer": "/root/c01_reviewer",
-        "commit": null,
-        "findings": [],
+        "commit": "f7d7983284858f855b1c4600952ed7283c4b6a01",
+        "findings": [
+          "P1-2 percent-encoded credential markers in endpoint draft URL paths bypass validation and are rendered into browser HTML/URL."
+        ],
         "round": 2
       },
       "dispatch": {
@@ -4553,9 +4556,9 @@
         "reviewPath": "docs/execution/handoffs/U-04-review-round1.md",
         "handoffPath": "docs/execution/handoffs/U-04.md",
         "nextReviewer": "/root/c01_reviewer",
-        "status": "awaiting_review",
-        "waitingOn": "/root/c01_reviewer",
-        "waitingReason": "U-04 correction round one product and handoff are complete; independent correction review round two is required before integration.",
+        "status": "changes_requested",
+        "waitingOn": "/root/c01_implementer",
+        "waitingReason": "Independent U-04 correction review round two reproduced one P1 percent-encoded endpoint credential-marker bypass; correction round two is required before approval.",
         "dependencyCommits": {
           "U-01": "2f861a0322e8a693550ed6069e19776a1149a48e",
           "W-05": "ea3958b15508d13893b55674b59cfb0bf50d1ffe"
@@ -4570,23 +4573,21 @@
           "13ec09f9f54523788aa4ddee1efa9e7bd9165704",
           "f63cedf1dc93c6def4fb851342a3da1c19fbbd9b"
         ],
-        "correctionStatus": "awaiting_review",
-        "correctionRound": 1,
+        "correctionStatus": "dispatched",
+        "correctionRound": 2,
         "correctionOwner": "/root/c01_implementer",
-        "correctionBaseSha": "26c1355f59c08cdf78c1eb0c426602b230cd8552",
-        "correctionDispatchCheckpoint": "26c1355f59c08cdf78c1eb0c426602b230cd8552",
-        "correctionReviewPath": "docs/execution/handoffs/U-04-review-round2.md",
-        "correctionHandoffPath": "docs/execution/handoffs/U-04-correction-round1.md",
+        "correctionBaseSha": "f7d7983284858f855b1c4600952ed7283c4b6a01",
+        "correctionDispatchCheckpoint": "f7d7983284858f855b1c4600952ed7283c4b6a01",
+        "correctionReviewPath": "docs/execution/handoffs/U-04-review-round3.md",
+        "correctionHandoffPath": "docs/execution/handoffs/U-04-correction-round2.md",
         "correctionReviewer": "/root/c01_reviewer",
-        "correctionImplementationCommit": "067ebe5fbef03ae915bf31d22234d637a9147cb2",
-        "correctionHandoffCommit": "51dedbcebb6a998c1302acb0544d1d0033c13e35",
-        "correctionReviewSourceCommit": "067ebe5fbef03ae915bf31d22234d637a9147cb2",
+        "correctionImplementationCommit": null,
+        "correctionHandoffCommit": null,
+        "correctionReviewSourceCommit": null,
         "correctionReviewCommit": null,
         "correctionReviewIntegrationCommit": null,
-        "correctionDispatchCommit": "eefef5f1b71f0bee9d587887d99023889e751787",
-        "correctionProductCommits": [
-          "067ebe5fbef03ae915bf31d22234d637a9147cb2"
-        ]
+        "correctionDispatchCommit": null,
+        "correctionProductCommits": []
       },
       "implementationCommit": "f63cedf1dc93c6def4fb851342a3da1c19fbbd9b",
       "handoffCommit": "b99fb7552be89994e870fa50b6352b2a58e9b533",
@@ -4612,12 +4613,15 @@
         {
           "round": 2,
           "reviewer": "/root/c01_reviewer",
-          "commit": null,
-          "status": "pending",
+          "commit": "f7d7983284858f855b1c4600952ed7283c4b6a01",
+          "status": "changes_requested",
           "sourceCommit": "067ebe5fbef03ae915bf31d22234d637a9147cb2",
           "receipt": "docs/execution/handoffs/U-04-review-round2.md",
           "productCommit": "067ebe5fbef03ae915bf31d22234d637a9147cb2",
-          "handoffCommit": "51dedbcebb6a998c1302acb0544d1d0033c13e35"
+          "handoffCommit": "51dedbcebb6a998c1302acb0544d1d0033c13e35",
+          "findings": [
+            "P1-2 percent-encoded credential markers in endpoint draft URL paths bypass validation and are rendered into browser HTML/URL."
+          ]
         }
       ]
     },
@@ -6449,7 +6453,7 @@
       ]
     }
   },
-  "nextAction": "U-04 correction product 067ebe5fbef03ae915bf31d22234d637a9147cb2 and handoff 51dedbcebb6a998c1302acb0544d1d0033c13e35 are recorded; dispatch /root/c01_reviewer for independent correction review round two.",
+  "nextAction": "U-04 correction review f7d7983284858f855b1c4600952ed7283c4b6a01 leaves one P1 encoded endpoint credential-marker bypass; dispatch /root/c01_implementer for correction round two, then independent re-review.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
