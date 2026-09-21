@@ -6587,7 +6587,8 @@
         "d5b6484951dc0cda2611a3d3756c82634a0037d1 U-06 product composes production BFF routes and synthetic end-to-end coverage.",
         "2c297e7cc7965ce4deae67fb61636d0e2cf34c66 U-06 handoff records route checks, limitations and independent review scope.",
         "fb6a874861f1a38fc62ee3f4b7b0a5df5d34f41a independent U-06 review requests correction for configured-origin/shared-shell metadata and static Pragma policy; all listed checks pass.",
-        "docs/execution/handoffs/U-06-review-round1.md"
+        "docs/execution/handoffs/U-06-review-round1.md",
+        "Correction dispatch checkpoint 5d3a0abf566e3b802fb105767c5894b727156eb6 assigns router and shell composition correction to /root/c01_implementer after review fb6a874861f1a38fc62ee3f4b7b0a5df5d34f41a."
       ],
       "review": {
         "status": "changes_requested",
@@ -6626,9 +6627,9 @@
         "reviewPath": "docs/execution/handoffs/U-06-review-round1.md",
         "handoffPath": "docs/execution/handoffs/U-06.md",
         "nextReviewer": "/root/c01_reviewer",
-        "status": "in_progress",
-        "waitingOn": "/root",
-        "waitingReason": "Review correction is being dispatched for the P1 route-composition gap and P2 static-header contradiction.",
+        "status": "dispatched",
+        "waitingOn": "/root/c01_implementer",
+        "waitingReason": "U-06 correction dispatched from the review checkpoint to restore the shared shell on delegated pages and isolate public static headers.",
         "dependencyCommits": {
           "U-03": "a1b986a833d808b761a724f7522a1ece66a31748",
           "U-04": "9bd8b84d79d3086759d5872be43c4b0814a99948",
@@ -6640,12 +6641,20 @@
         "reviewRound": 1,
         "reviewCommit": "fb6a874861f1a38fc62ee3f4b7b0a5df5d34f41a",
         "reviewIntegrationCommit": "fb6a874861f1a38fc62ee3f4b7b0a5df5d34f41a",
-        "correctionStatus": "pending",
+        "correctionStatus": "dispatched",
         "correctionRound": 1,
         "correctionOwner": "/root/c01_implementer",
         "correctionReviewer": "/root/c01_reviewer",
         "correctionReviewPath": "docs/execution/handoffs/U-06-review-round2.md",
-        "correctionHandoffPath": "docs/execution/handoffs/U-06-correction-round1.md"
+        "correctionHandoffPath": "docs/execution/handoffs/U-06-correction-round1.md",
+        "correctionBaseSha": "5d3a0abf566e3b802fb105767c5894b727156eb6",
+        "correctionDispatchCheckpoint": "5d3a0abf566e3b802fb105767c5894b727156eb6",
+        "correctionProductCommits": [],
+        "correctionOwnedPaths": [
+          "ui/cmd/mastarr/",
+          "ui/internal/router/",
+          "ui/internal/shell/"
+        ]
       },
       "implementationCommit": "d5b6484951dc0cda2611a3d3756c82634a0037d1",
       "handoffCommit": "2c297e7cc7965ce4deae67fb61636d0e2cf34c66",
@@ -6666,7 +6675,7 @@
       ]
     }
   },
-  "nextAction": "Dispatch U-06 correction from review checkpoint; restore shared shell metadata on delegated pages and isolate public asset headers, then obtain independent round-two review.",
+  "nextAction": "U-06 correction dispatched from 5d3a0abf566e3b802fb105767c5894b727156eb6; await product and handoff, then obtain independent round-two review.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
