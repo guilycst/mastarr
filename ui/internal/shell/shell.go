@@ -41,6 +41,10 @@ type View struct {
 	NotFound        bool
 	ConfigSource    string
 	RestartGuidance string
+	// ContentHTML is normalized package output captured by the production
+	// router. It is emitted inside the shared shell after the route heading;
+	// only trusted, package-owned renderers may populate it.
+	ContentHTML string
 }
 
 const (
@@ -252,28 +256,34 @@ func content(view View) templ.Component {
 		if _, err := io.WriteString(w, `</h1>`); err != nil {
 			return err
 		}
-		switch {
-		case view.NotFound:
-			if _, err := io.WriteString(w, `<p role="alert">The requested page was not found.</p>`); err != nil {
+		if view.ContentHTML != "" {
+			if _, err := io.WriteString(w, view.ContentHTML); err != nil {
 				return err
 			}
-		case view.APIState == APIUnavailable:
-			if _, err := io.WriteString(w, `<div role="alert" class="mastarr-status mastarr-status--unavailable"><p>The Mastarr API is temporarily unavailable.</p><p>Retry to load API-owned state. No successful state is inferred while the API is unavailable.</p><a href="`); err != nil {
-				return err
-			}
-			if err := write(CanonicalPath(view.Route)); err != nil {
-				return err
-			}
-			if _, err := io.WriteString(w, `">Retry</a></div>`); err != nil {
-				return err
-			}
-		case view.APIState == APIDegraded:
-			if _, err := io.WriteString(w, `<p role="status" class="mastarr-status mastarr-status--degraded">The API is ready with degraded services. Observed state remains authoritative.</p>`); err != nil {
-				return err
-			}
-		default:
-			if _, err := io.WriteString(w, `<p role="status" class="mastarr-status">The API is ready. Observed state is authoritative.</p>`); err != nil {
-				return err
+		} else {
+			switch {
+			case view.NotFound:
+				if _, err := io.WriteString(w, `<p role="alert">The requested page was not found.</p>`); err != nil {
+					return err
+				}
+			case view.APIState == APIUnavailable:
+				if _, err := io.WriteString(w, `<div role="alert" class="mastarr-status mastarr-status--unavailable"><p>The Mastarr API is temporarily unavailable.</p><p>Retry to load API-owned state. No successful state is inferred while the API is unavailable.</p><a href="`); err != nil {
+					return err
+				}
+				if err := write(CanonicalPath(view.Route)); err != nil {
+					return err
+				}
+				if _, err := io.WriteString(w, `">Retry</a></div>`); err != nil {
+					return err
+				}
+			case view.APIState == APIDegraded:
+				if _, err := io.WriteString(w, `<p role="status" class="mastarr-status mastarr-status--degraded">The API is ready with degraded services. Observed state remains authoritative.</p>`); err != nil {
+					return err
+				}
+			default:
+				if _, err := io.WriteString(w, `<p role="status" class="mastarr-status">The API is ready. Observed state is authoritative.</p>`); err != nil {
+					return err
+				}
 			}
 		}
 		if _, err := io.WriteString(w, `<aside class="mastarr-config-note" aria-label="Configuration guidance"><p>`); err != nil {
@@ -309,11 +319,26 @@ func CanonicalPath(requestPath string) string {
 		return "/"
 	}
 	for _, route := range []string{
-		"/discoveries", "/media", "/reviews", "/workflows", "/actions", "/trash",
+		"/discoveries", "/media", "/downloads", "/descriptors", "/reviews", "/workflows", "/actions", "/trash",
 		"/settings/connections", "/settings/storage", "/settings/mappings",
+		"/settings",
 	} {
 		if requestPath == route || strings.HasPrefix(requestPath, route+"/") {
 			return route
+		}
+	}
+	for _, alias := range []struct {
+		path      string
+		canonical string
+	}{
+		{path: "/configuration", canonical: "/settings"},
+		{path: "/connections", canonical: "/settings/connections"},
+		{path: "/storage-roots", canonical: "/settings/storage"},
+		{path: "/path-mappings", canonical: "/settings/mappings"},
+		{path: "/connection-checks", canonical: "/settings"},
+	} {
+		if requestPath == alias.path || strings.HasPrefix(requestPath, alias.path+"/") {
+			return alias.canonical
 		}
 	}
 	return "/"
@@ -347,6 +372,10 @@ func titleForPath(path string) string {
 		return "Discoveries"
 	case "/media":
 		return "Media"
+	case "/downloads":
+		return "Downloads"
+	case "/descriptors":
+		return "Descriptors"
 	case "/reviews":
 		return "Reviews"
 	case "/workflows":
@@ -355,6 +384,8 @@ func titleForPath(path string) string {
 		return "Actions"
 	case "/trash":
 		return "Trash"
+	case "/settings":
+		return "Settings"
 	case "/settings/connections":
 		return "Connection settings"
 	case "/settings/storage":

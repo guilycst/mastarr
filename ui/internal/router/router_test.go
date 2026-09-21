@@ -174,8 +174,66 @@ func TestProductionRouterDispatchesReaderRoutes(t *testing.T) {
 			if got := response.Header().Get("Cache-Control"); got != "no-store, private" {
 				t.Fatalf("Cache-Control = %q, want private no-store", got)
 			}
+			assertConfiguredShell(t, response.Body.String(), "https://ui.example.test", tc.path)
 		})
 	}
+}
+
+func TestProductionRouterComposesCompleteShellForDeepLinks(t *testing.T) {
+	handler := testRouter(&fakeReadiness{state: client.StateReady})
+	cases := []struct {
+		path       string
+		wantStatus int
+	}{
+		{path: "/media/opaque-media-id", wantStatus: http.StatusNotFound},
+		{path: "/reviews/opaque-review-id", wantStatus: http.StatusNotFound},
+		{path: "/workflows/opaque-workflow-id", wantStatus: http.StatusNotFound},
+		{path: "/trash/opaque-trash-id", wantStatus: http.StatusNotFound},
+		{path: "/settings/connections/opaque-connection-id", wantStatus: http.StatusNotFound},
+	}
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			response := request(t, handler, http.MethodGet, tc.path)
+			if response.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d; body=%s", response.Code, tc.wantStatus, response.Body.String())
+			}
+			assertConfiguredShell(t, response.Body.String(), "https://ui.example.test", tc.path)
+			if !strings.Contains(response.Body.String(), "<main") || !strings.Contains(response.Body.String(), "mastarr-page") {
+				t.Fatalf("response is not a complete shell document: %s", response.Body.String())
+			}
+			if strings.Contains(response.Body.String(), "attacker.example") || strings.Contains(response.Body.String(), "forwarded.attacker.example") {
+				t.Fatalf("request host escaped into shell metadata: %s", response.Body.String())
+			}
+		})
+	}
+}
+
+func assertConfiguredShell(t *testing.T, body, origin, requestPath string) {
+	t.Helper()
+	canonical := shellCanonicalPath(requestPath)
+	for _, want := range []string{
+		`<link rel="canonical" href="` + origin + canonical + `">`,
+		`property="og:url" content="` + origin + canonical + `"`,
+		`name="twitter:image" content="` + origin + "/preview.svg" + `"`,
+		`/consoleshell/assets/shell.css`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body missing %q: %s", want, body)
+		}
+	}
+}
+
+func shellCanonicalPath(path string) string {
+	for _, route := range []string{
+		"/discoveries", "/media", "/downloads", "/descriptors", "/reviews",
+		"/workflows", "/trash", "/settings/connections", "/settings/storage",
+		"/settings/mappings", "/settings",
+	} {
+		if path == route || strings.HasPrefix(path, route+"/") {
+			return route
+		}
+	}
+	return "/"
 }
 
 func TestProductionRouterHandlesDetailsUnknownRoutesAndMethods(t *testing.T) {
@@ -224,6 +282,43 @@ func TestProductionRouterShellMetadataAssetsAndActionOverview(t *testing.T) {
 	if preview.Code != http.StatusOK || preview.Header().Get("Content-Type") != "image/svg+xml" {
 		t.Fatalf("preview response = %d content-type=%q", preview.Code, preview.Header().Get("Content-Type"))
 	}
+	if got := preview.Header().Get("Pragma"); got != "" {
+		t.Fatalf("preview Pragma = %q, want absent", got)
+	}
+	if got := preview.Header().Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
+		t.Fatalf("preview Cache-Control = %q, want immutable public policy", got)
+	}
+	consoleAsset := firstQuotedAsset(root.Body.String(), `/consoleshell/assets/shell.css`)
+	if consoleAsset == "" {
+		t.Fatalf("root shell did not expose a console stylesheet asset")
+	}
+	for _, path := range []string{"/consoleshell/assets/shell.css", consoleAsset, "/assets/styles.css"} {
+		asset := request(t, handler, http.MethodGet, path)
+		if asset.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, want 200", path, asset.Code)
+		}
+		if got := asset.Header().Get("Pragma"); got != "" {
+			t.Fatalf("%s Pragma = %q, want absent", path, got)
+		}
+		if got := asset.Header().Get("Cache-Control"); got == "" || strings.Contains(got, "no-store") {
+			t.Fatalf("%s Cache-Control = %q, want public policy", path, got)
+		}
+		if strings.Contains(path, "?v=") && !strings.Contains(asset.Header().Get("Cache-Control"), "immutable") {
+			t.Fatalf("%s Cache-Control = %q, want immutable versioned policy", path, asset.Header().Get("Cache-Control"))
+		}
+	}
+}
+
+func firstQuotedAsset(body, prefix string) string {
+	start := strings.Index(body, prefix)
+	if start < 0 {
+		return ""
+	}
+	endRelative := strings.IndexByte(body[start:], '"')
+	if endRelative < 0 {
+		return ""
+	}
+	return body[start : start+endRelative]
 }
 
 func TestProductionRouterSanitizesReadinessOutageAndCancellation(t *testing.T) {

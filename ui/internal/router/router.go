@@ -68,12 +68,13 @@ func New(cfg config.Config, deps Dependencies) http.Handler {
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	setPrivateHeaders(w)
 	if r == nil || r.URL == nil {
+		setPrivateHeaders(w)
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		setPrivateHeaders(w)
 		w.Header().Set("Allow", http.MethodGet+", "+http.MethodHead)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -90,6 +91,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(path, "/consoleshell/assets/"):
 		h.console.ServeHTTP(w, r)
 		return
+	}
+
+	setPrivateHeaders(w)
+	switch {
 	case routePrefix(path, "/discoveries") || routePrefix(path, "/media") || routePrefix(path, "/downloads") || routePrefix(path, "/descriptors"):
 		h.servePrivate(w, h.inventory, r)
 		return
@@ -133,7 +138,7 @@ func (h *Handler) serveSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if rewritten == r.URL.Path {
-		h.servePrivate(w, h.settings, r)
+		h.servePrivatePath(w, h.settings, r, r.URL.Path)
 		return
 	}
 	clone := r.Clone(r.Context())
@@ -141,11 +146,37 @@ func (h *Handler) serveSettings(w http.ResponseWriter, r *http.Request) {
 	urlCopy.Path = rewritten
 	urlCopy.RawPath = ""
 	clone.URL = &urlCopy
-	h.servePrivate(w, h.settings, clone)
+	h.servePrivatePath(w, h.settings, clone, r.URL.Path)
 }
 
 func (h *Handler) servePrivate(w http.ResponseWriter, delegate http.Handler, r *http.Request) {
-	delegate.ServeHTTP(&privateResponseWriter{ResponseWriter: w}, r)
+	h.servePrivatePath(w, delegate, r, r.URL.Path)
+}
+
+func (h *Handler) servePrivatePath(w http.ResponseWriter, delegate http.Handler, r *http.Request, publicPath string) {
+	captured := newComposedResponseWriter()
+	delegate.ServeHTTP(captured, r)
+	status := captured.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	view := shell.View{
+		Route:           publicPath,
+		Active:          shell.ActiveID(publicPath),
+		APIState:        shell.APIAvailable,
+		ConfigSource:    h.config.Source,
+		RestartGuidance: h.config.RestartGuidance,
+		ContentHTML:     extractMain(captured.body.String()),
+	}
+	if status >= http.StatusInternalServerError {
+		view.APIState = shell.APIUnavailable
+	}
+	if captured.tooLarge {
+		status = http.StatusServiceUnavailable
+		view.APIState = shell.APIUnavailable
+		view.ContentHTML = ""
+	}
+	h.renderShell(w, r, status, view)
 }
 
 func (h *Handler) serveShell(w http.ResponseWriter, r *http.Request) {
@@ -234,23 +265,54 @@ func setPrivateHeaders(w http.ResponseWriter) {
 	w.Header().Set("Referrer-Policy", "no-referrer")
 }
 
-type privateResponseWriter struct {
-	http.ResponseWriter
-	wroteHeader bool
+const maxComposedBody = 1 << 20
+
+type composedResponseWriter struct {
+	header   http.Header
+	body     bytes.Buffer
+	status   int
+	tooLarge bool
 }
 
-func (w *privateResponseWriter) WriteHeader(status int) {
-	if w.wroteHeader {
+func newComposedResponseWriter() *composedResponseWriter {
+	return &composedResponseWriter{header: make(http.Header)}
+}
+
+func (w *composedResponseWriter) Header() http.Header { return w.header }
+
+func (w *composedResponseWriter) WriteHeader(status int) {
+	if w.status != 0 {
 		return
 	}
-	setPrivateHeaders(w.ResponseWriter)
-	w.wroteHeader = true
-	w.ResponseWriter.WriteHeader(status)
+	w.status = status
 }
 
-func (w *privateResponseWriter) Write(body []byte) (int, error) {
-	if !w.wroteHeader {
-		w.WriteHeader(http.StatusOK)
+func (w *composedResponseWriter) Write(body []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
 	}
-	return w.ResponseWriter.Write(body)
+	if w.body.Len()+len(body) > maxComposedBody {
+		w.tooLarge = true
+		return len(body), nil
+	}
+	return w.body.Write(body)
+}
+
+func extractMain(document string) string {
+	lower := strings.ToLower(document)
+	start := strings.Index(lower, "<main")
+	if start < 0 {
+		return ""
+	}
+	openEnd := strings.IndexByte(lower[start:], '>')
+	if openEnd < 0 {
+		return ""
+	}
+	openEnd += start + 1
+	endRelative := strings.Index(lower[openEnd:], "</main>")
+	if endRelative < 0 {
+		return ""
+	}
+	end := openEnd + endRelative + len("</main>")
+	return document[start:end]
 }

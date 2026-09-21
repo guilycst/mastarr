@@ -116,12 +116,13 @@ type server struct {
 }
 
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	setPrivateHeaders(w)
 	if r == nil || r.URL == nil {
+		setPrivateHeaders(w)
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		setPrivateHeaders(w)
 		w.Header().Set("Allow", http.MethodGet+", "+http.MethodHead)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -138,6 +139,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.consoleAssets.ServeHTTP(w, r)
 		return
 	}
+	setPrivateHeaders(w)
 
 	requestPath := r.URL.Path
 	if !knownRoute(requestPath) {
