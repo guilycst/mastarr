@@ -4641,7 +4641,7 @@
       ]
     },
     "U-05": {
-      "status": "in_progress",
+      "status": "in_review",
       "owner": "/root/c01_implementer",
       "baseSha": "61336c2aa6a30b3322e850809e421f37971303ce",
       "integratedSha": null,
@@ -4653,18 +4653,17 @@
         "a753fe0b3164cab2beb456d961d1c679da518ad7 U-05 product adds synthetic production-boundary browser/accessibility tests covering A-26, A-42, A-47 through A-51.",
         "U-05 handoff records exact request/effect counts, structural metadata/accessibility evidence, synthetic failures, and honest CUA/router limitations; live browser screenshots and composed-route traces remain deferred.",
         "cd710266c841980fc9191bb8e7350ec1c7fa8d48 U-05 handoff link correction fixes the repository-relative browser test reference; planning and fast guardrails pass.",
-        "aa258dc4a815d4df8a8c74064351612b775d36cd independent U-05 round-one review requests correction: retain partial synthetic evidence, correct A-47-A-50 mapping, remove unsupported claims, and defer unavailable browser/router cases."
+        "aa258dc4a815d4df8a8c74064351612b775d36cd independent U-05 round-one review requests correction: retain partial synthetic evidence, correct A-47-A-50 mapping, remove unsupported claims, and defer unavailable browser/router cases.",
+        "4a93164b98c09b687598538de7dfa6be8309d4e1 U-05 correction round one fixes acceptance mapping, marks unavailable browser/router scenarios NOT RUN / BLOCKED, and adds direct asset HEAD/cache/nosniff checks.",
+        "37aefb6156829a1db64239901fe4105596907f37 U-05 correction handoff records scoped partial evidence and the actual CUA/router blocker; full browser acceptance remains pending."
       ],
       "review": {
-        "status": "changes_requested",
-        "decision": "changes_requested",
+        "status": "pending",
+        "decision": null,
         "reviewer": "/root/c01_reviewer",
-        "commit": "aa258dc4a815d4df8a8c74064351612b775d36cd",
-        "findings": [
-          "P1-1 required browser/consequential-action evidence is absent; A-47 through A-50 ledger rows are mapped to adjacent acceptance cases and no cross-origin policy, stale approval/idempotency/effect-count, media deep-link identity, or live accessibility/theme evidence exists.",
-          "P2-1 ledger overclaims ETag context and asset HEAD/cache/nosniff assertions not exercised by the cited fixture."
-        ],
-        "round": 1
+        "commit": null,
+        "findings": [],
+        "round": 2
       },
       "dispatch": {
         "assignedAt": "2026-09-21",
@@ -4692,9 +4691,9 @@
         "reviewPath": "docs/execution/handoffs/U-05-review-round1.md",
         "handoffPath": "docs/execution/handoffs/U-05.md",
         "nextReviewer": "/root/c01_reviewer",
-        "status": "changes_requested",
-        "waitingOn": "/root/c01_implementer",
-        "waitingReason": "U-05 review found the browser/router prerequisite unavailable and ledger claims/mappings too broad; correction round one must preserve partial evidence and mark unavailable cases not run.",
+        "status": "awaiting_review",
+        "waitingOn": "/root/c01_reviewer",
+        "waitingReason": "U-05 correction round one product and handoff are complete; independent correction review round two is required before integrating the partial evidence.",
         "dependencyCommits": {
           "U-03": "a1b986a833d808b761a724f7522a1ece66a31748",
           "U-04": "9bd8b84d79d3086759d5872be43c4b0814a99948"
@@ -4705,7 +4704,7 @@
         "reviewRound": 1,
         "reviewCommit": "aa258dc4a815d4df8a8c74064351612b775d36cd",
         "reviewIntegrationCommit": null,
-        "correctionStatus": "dispatched",
+        "correctionStatus": "awaiting_review",
         "correctionRound": 1,
         "correctionOwner": "/root/c01_implementer",
         "correctionBaseSha": "aa258dc4a815d4df8a8c74064351612b775d36cd",
@@ -4713,13 +4712,15 @@
         "correctionReviewPath": "docs/execution/handoffs/U-05-review-round2.md",
         "correctionHandoffPath": "docs/execution/handoffs/U-05-correction-round1.md",
         "correctionReviewer": "/root/c01_reviewer",
-        "correctionImplementationCommit": null,
-        "correctionHandoffCommit": null,
-        "correctionReviewSourceCommit": null,
+        "correctionImplementationCommit": "4a93164b98c09b687598538de7dfa6be8309d4e1",
+        "correctionHandoffCommit": "37aefb6156829a1db64239901fe4105596907f37",
+        "correctionReviewSourceCommit": "4a93164b98c09b687598538de7dfa6be8309d4e1",
         "correctionReviewCommit": null,
         "correctionReviewIntegrationCommit": null,
-        "correctionDispatchCommit": null,
-        "correctionProductCommits": []
+        "correctionDispatchCommit": "d8eecc06414d1e7b02294128b5cdb7a7878a3205",
+        "correctionProductCommits": [
+          "4a93164b98c09b687598538de7dfa6be8309d4e1"
+        ]
       },
       "implementationCommit": "a753fe0b3164cab2beb456d961d1c679da518ad7",
       "handoffCommit": "cd710266c841980fc9191bb8e7350ec1c7fa8d48",
@@ -4738,6 +4739,16 @@
             "P1-1 required browser/consequential-action evidence is absent; A-47 through A-50 ledger rows are mapped to adjacent acceptance cases and no cross-origin policy, stale approval/idempotency/effect-count, media deep-link identity, or live accessibility/theme evidence exists.",
             "P2-1 ledger overclaims ETag context and asset HEAD/cache/nosniff assertions not exercised by the cited fixture."
           ]
+        },
+        {
+          "round": 2,
+          "reviewer": "/root/c01_reviewer",
+          "commit": null,
+          "status": "pending",
+          "sourceCommit": "4a93164b98c09b687598538de7dfa6be8309d4e1",
+          "receipt": "docs/execution/handoffs/U-05-review-round2.md",
+          "productCommit": "4a93164b98c09b687598538de7dfa6be8309d4e1",
+          "handoffCommit": "37aefb6156829a1db64239901fe4105596907f37"
         }
       ]
     },
@@ -6561,7 +6572,7 @@
       ]
     }
   },
-  "nextAction": "U-05 review aa258dc4a815d4df8a8c74064351612b775d36cd requests corrected acceptance mapping and honest not-run browser/router rows; dispatch /root/c01_implementer for correction round one, then independent re-review.",
+  "nextAction": "U-05 correction product 4a93164b98c09b687598538de7dfa6be8309d4e1 and handoff 37aefb6156829a1db64239901fe4105596907f37 are recorded; dispatch /root/c01_reviewer for independent correction review, with browser/router prerequisites still open.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
