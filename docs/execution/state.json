@@ -6576,7 +6576,7 @@
       ]
     },
     "U-06": {
-      "status": "in_progress",
+      "status": "in_review",
       "owner": "/root/c01_implementer",
       "baseSha": "5f8bc875beb1284e800b981a962f3a34d588d225",
       "integratedSha": null,
@@ -6588,7 +6588,10 @@
         "2c297e7cc7965ce4deae67fb61636d0e2cf34c66 U-06 handoff records route checks, limitations and independent review scope.",
         "fb6a874861f1a38fc62ee3f4b7b0a5df5d34f41a independent U-06 review requests correction for configured-origin/shared-shell metadata and static Pragma policy; all listed checks pass.",
         "docs/execution/handoffs/U-06-review-round1.md",
-        "Correction dispatch checkpoint 5d3a0abf566e3b802fb105767c5894b727156eb6 assigns router and shell composition correction to /root/c01_implementer after review fb6a874861f1a38fc62ee3f4b7b0a5df5d34f41a."
+        "Correction dispatch checkpoint 5d3a0abf566e3b802fb105767c5894b727156eb6 assigns router and shell composition correction to /root/c01_implementer after review fb6a874861f1a38fc62ee3f4b7b0a5df5d34f41a.",
+        "46fb15c234678f010bf5ddeb351eca9b6ee3e532 U-06 correction composes delegated pages through the shared shell and isolates static cache headers.",
+        "a152214f06918ff8ad9528f898e3218df9fa25b9 U-06 correction keeps one authoritative heading and adds metadata/static-header tests.",
+        "f530ad936c90328170416057fd0fc3413bd8ddb7 U-06 correction handoff records product checks, limitation and round-two review scope."
       ],
       "review": {
         "status": "changes_requested",
@@ -6627,21 +6630,21 @@
         "reviewPath": "docs/execution/handoffs/U-06-review-round1.md",
         "handoffPath": "docs/execution/handoffs/U-06.md",
         "nextReviewer": "/root/c01_reviewer",
-        "status": "dispatched",
-        "waitingOn": "/root/c01_implementer",
-        "waitingReason": "U-06 correction dispatched from the review checkpoint to restore the shared shell on delegated pages and isolate public static headers.",
+        "status": "in_review",
+        "waitingOn": "/root/c01_reviewer",
+        "waitingReason": "U-06 correction product and handoff are complete; independent round-two review is pending.",
         "dependencyCommits": {
           "U-03": "a1b986a833d808b761a724f7522a1ece66a31748",
           "U-04": "9bd8b84d79d3086759d5872be43c4b0814a99948",
           "U-05-corrected": "3eb7c415f8da12316a3ed3c0c9798229a3d68ec0"
         },
-        "implementationCommit": "d5b6484951dc0cda2611a3d3756c82634a0037d1",
-        "handoffCommit": "2c297e7cc7965ce4deae67fb61636d0e2cf34c66",
-        "reviewSourceCommit": "d5b6484951dc0cda2611a3d3756c82634a0037d1",
+        "implementationCommit": "a152214f06918ff8ad9528f898e3218df9fa25b9",
+        "handoffCommit": "f530ad936c90328170416057fd0fc3413bd8ddb7",
+        "reviewSourceCommit": "a152214f06918ff8ad9528f898e3218df9fa25b9",
         "reviewRound": 1,
         "reviewCommit": "fb6a874861f1a38fc62ee3f4b7b0a5df5d34f41a",
         "reviewIntegrationCommit": "fb6a874861f1a38fc62ee3f4b7b0a5df5d34f41a",
-        "correctionStatus": "dispatched",
+        "correctionStatus": "in_review",
         "correctionRound": 1,
         "correctionOwner": "/root/c01_implementer",
         "correctionReviewer": "/root/c01_reviewer",
@@ -6649,16 +6652,22 @@
         "correctionHandoffPath": "docs/execution/handoffs/U-06-correction-round1.md",
         "correctionBaseSha": "5d3a0abf566e3b802fb105767c5894b727156eb6",
         "correctionDispatchCheckpoint": "5d3a0abf566e3b802fb105767c5894b727156eb6",
-        "correctionProductCommits": [],
+        "correctionProductCommits": [
+          "46fb15c234678f010bf5ddeb351eca9b6ee3e532",
+          "a152214f06918ff8ad9528f898e3218df9fa25b9"
+        ],
         "correctionOwnedPaths": [
           "ui/cmd/mastarr/",
           "ui/internal/router/",
           "ui/internal/shell/"
-        ]
+        ],
+        "correctionImplementationCommit": "a152214f06918ff8ad9528f898e3218df9fa25b9",
+        "correctionHandoffCommit": "f530ad936c90328170416057fd0fc3413bd8ddb7",
+        "correctionReviewSourceCommit": "a152214f06918ff8ad9528f898e3218df9fa25b9"
       },
-      "implementationCommit": "d5b6484951dc0cda2611a3d3756c82634a0037d1",
-      "handoffCommit": "2c297e7cc7965ce4deae67fb61636d0e2cf34c66",
-      "reviewSourceCommit": "d5b6484951dc0cda2611a3d3756c82634a0037d1",
+      "implementationCommit": "a152214f06918ff8ad9528f898e3218df9fa25b9",
+      "handoffCommit": "f530ad936c90328170416057fd0fc3413bd8ddb7",
+      "reviewSourceCommit": "a152214f06918ff8ad9528f898e3218df9fa25b9",
       "reviewHistory": [
         {
           "round": 1,
@@ -6671,11 +6680,22 @@
             "P1-1: delegated inventory, review, workflow, trash and settings pages bypass shell.Render, so configured-origin canonical/OG/X metadata and shared shell/assets are absent on five production route families.",
             "P2-1: router sets Pragma: no-cache before static dispatch, so immutable/revalidation public assets retain contradictory Pragma."
           ]
+        },
+        {
+          "round": 2,
+          "reviewer": "/root/c01_reviewer",
+          "commit": null,
+          "status": "pending",
+          "sourceCommit": "a152214f06918ff8ad9528f898e3218df9fa25b9",
+          "receipt": "docs/execution/handoffs/U-06-review-round2.md",
+          "productCommit": "a152214f06918ff8ad9528f898e3218df9fa25b9",
+          "handoffCommit": "f530ad936c90328170416057fd0fc3413bd8ddb7",
+          "findings": []
         }
       ]
     }
   },
-  "nextAction": "U-06 correction dispatched from 5d3a0abf566e3b802fb105767c5894b727156eb6; await product and handoff, then obtain independent round-two review.",
+  "nextAction": "Independent round-two review of U-06 correction from a152214f06918ff8ad9528f898e3218df9fa25b9; integrate the receipt before rerunning blocked U-05 browser evidence.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
