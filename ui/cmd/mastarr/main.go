@@ -19,7 +19,13 @@ import (
 	uiassets "github.com/guilycst/mastarr/ui/internal/assets"
 	"github.com/guilycst/mastarr/ui/internal/client"
 	"github.com/guilycst/mastarr/ui/internal/config"
+	"github.com/guilycst/mastarr/ui/internal/inventory"
+	"github.com/guilycst/mastarr/ui/internal/review"
+	"github.com/guilycst/mastarr/ui/internal/router"
+	"github.com/guilycst/mastarr/ui/internal/settings"
 	"github.com/guilycst/mastarr/ui/internal/shell"
+	"github.com/guilycst/mastarr/ui/internal/trash"
+	"github.com/guilycst/mastarr/ui/internal/workflows"
 )
 
 func main() {
@@ -33,7 +39,12 @@ func main() {
 		log.Print("mastarr UI API client could not be initialized")
 		os.Exit(1)
 	}
-	if err := run(context.Background(), cfg, api); err != nil {
+	readers, err := newRouteDependencies(cfg)
+	if err != nil {
+		log.Print("mastarr UI route readers could not be initialized")
+		os.Exit(1)
+	}
+	if err := runWithReaders(context.Background(), cfg, api, readers); err != nil {
 		log.Print("mastarr UI server stopped with an error")
 		os.Exit(1)
 	}
@@ -56,6 +67,44 @@ func NewHandler(cfg config.Config, api client.Reader) http.Handler {
 		goshtoso:      goshtosoassets.Handler(),
 		consoleAssets: consoleshellassets.Handler(),
 	}
+}
+
+// NewHandlerWithReaders constructs the composed production BFF. NewHandler is
+// retained as the shell-only constructor used by focused startup tests and by
+// callers that have not yet supplied route readers.
+func NewHandlerWithReaders(cfg config.Config, api client.Reader, deps router.Dependencies) http.Handler {
+	deps.API = api
+	return router.New(cfg, deps)
+}
+
+func newRouteDependencies(cfg config.Config) (router.Dependencies, error) {
+	inventoryReader, err := inventory.NewHTTPReader(cfg.APIURL, nil, client.DefaultTimeout)
+	if err != nil {
+		return router.Dependencies{}, err
+	}
+	reviewReader, err := review.NewHTTPReader(cfg.APIURL, nil, client.DefaultTimeout)
+	if err != nil {
+		return router.Dependencies{}, err
+	}
+	workflowReader, err := workflows.NewHTTPReader(cfg.APIURL, nil, client.DefaultTimeout)
+	if err != nil {
+		return router.Dependencies{}, err
+	}
+	trashReader, err := trash.NewHTTPReader(cfg.APIURL, nil, client.DefaultTimeout)
+	if err != nil {
+		return router.Dependencies{}, err
+	}
+	settingsReader, err := settings.NewHTTPReader(cfg.APIURL, nil, client.DefaultTimeout)
+	if err != nil {
+		return router.Dependencies{}, err
+	}
+	return router.Dependencies{
+		Inventory: inventoryReader,
+		Review:    reviewReader,
+		Workflows: workflowReader,
+		Trash:     trashReader,
+		Settings:  settingsReader,
+	}, nil
 }
 
 type server struct {
@@ -172,6 +221,10 @@ func knownRoute(requestPath string) bool {
 // run owns only listener lifecycle. Shutdown stops accepting requests and
 // gives active rendering/API requests a bounded window to finish.
 func run(ctx context.Context, cfg config.Config, api client.Reader) error {
+	return runWithReaders(ctx, cfg, api, router.Dependencies{})
+}
+
+func runWithReaders(ctx context.Context, cfg config.Config, api client.Reader, deps router.Dependencies) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -183,7 +236,7 @@ func run(ctx context.Context, cfg config.Config, api client.Reader) error {
 		return err
 	}
 	server := &http.Server{
-		Handler:           NewHandler(cfg, api),
+		Handler:           NewHandlerWithReaders(cfg, api, deps),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
