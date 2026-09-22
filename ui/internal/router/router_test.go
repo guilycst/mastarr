@@ -171,6 +171,7 @@ func TestProductionRouterDispatchesReaderRoutes(t *testing.T) {
 			if !strings.Contains(response.Body.String(), tc.want) {
 				t.Fatalf("body = %q, want %q", response.Body.String(), tc.want)
 			}
+			assertComposedLandmarks(t, response.Body.String(), expectedContentLabel(tc.path))
 			if got := response.Header().Get("Cache-Control"); got != "no-store, private" {
 				t.Fatalf("Cache-Control = %q, want private no-store", got)
 			}
@@ -201,13 +202,71 @@ func TestProductionRouterComposesCompleteShellForDeepLinks(t *testing.T) {
 			if !strings.Contains(response.Body.String(), "<main") || !strings.Contains(response.Body.String(), "mastarr-page") {
 				t.Fatalf("response is not a complete shell document: %s", response.Body.String())
 			}
-			if headings := strings.Count(response.Body.String(), "<h1"); headings != 1 {
-				t.Fatalf("delegated shell has %d h1 headings, want one: %s", headings, response.Body.String())
-			}
+			assertComposedLandmarks(t, response.Body.String(), expectedContentLabel(tc.path))
 			if strings.Contains(response.Body.String(), "attacker.example") || strings.Contains(response.Body.String(), "forwarded.attacker.example") {
 				t.Fatalf("request host escaped into shell metadata: %s", response.Body.String())
 			}
 		})
+	}
+}
+
+func TestProductionRouterUnwrapsSuccessfulDelegateMain(t *testing.T) {
+	handler := &Handler{config: testConfig()}
+	delegate := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<main id="inventory-content" aria-labelledby="inventory-title"><h1 id="inventory-title">Media &amp; details</h1><p>escaped &lt;value&gt;</p></main>`))
+	})
+	response := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "https://attacker.example/media/opaque-id", nil)
+	handler.servePrivatePath(response, delegate, req, "/media/opaque-id")
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", response.Code, response.Body.String())
+	}
+	assertComposedLandmarks(t, response.Body.String(), "inventory-title")
+	for _, want := range []string{
+		`<main id="main-content"`,
+		`aria-labelledby="inventory-title"`,
+		`<h1 id="inventory-title">Media &amp; details</h1>`,
+		`<p>escaped &lt;value&gt;</p>`,
+	} {
+		if !strings.Contains(response.Body.String(), want) {
+			t.Fatalf("successful composition missing %q: %s", want, response.Body.String())
+		}
+	}
+}
+
+func assertComposedLandmarks(t *testing.T, body, label string) {
+	t.Helper()
+	if got := strings.Count(body, "<main "); got != 1 {
+		t.Fatalf("composed document has %d main landmarks, want one: %s", got, body)
+	}
+	if got := strings.Count(body, "<h1"); got != 1 {
+		t.Fatalf("composed document has %d h1 headings, want one: %s", got, body)
+	}
+	if label == "" {
+		return
+	}
+	for _, want := range []string{`aria-labelledby="` + label + `"`, `id="` + label + `"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("composed document missing %q: %s", want, body)
+		}
+	}
+}
+
+func expectedContentLabel(path string) string {
+	switch {
+	case routePrefix(path, "/discoveries"), routePrefix(path, "/media"), routePrefix(path, "/downloads"), routePrefix(path, "/descriptors"):
+		return "inventory-title"
+	case routePrefix(path, "/reviews"):
+		return "review-title"
+	case routePrefix(path, "/workflows"):
+		return "workflow-title"
+	case routePrefix(path, "/trash"):
+		return "trash-title"
+	case settingsPath(path):
+		return "settings-title"
+	default:
+		return ""
 	}
 }
 
@@ -291,23 +350,31 @@ func TestProductionRouterShellMetadataAssetsAndActionOverview(t *testing.T) {
 	if got := preview.Header().Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
 		t.Fatalf("preview Cache-Control = %q, want immutable public policy", got)
 	}
+	if got := preview.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("preview X-Content-Type-Options = %q, want nosniff", got)
+	}
 	consoleAsset := firstQuotedAsset(root.Body.String(), `/consoleshell/assets/shell.css`)
 	if consoleAsset == "" {
 		t.Fatalf("root shell did not expose a console stylesheet asset")
 	}
-	for _, path := range []string{"/consoleshell/assets/shell.css", consoleAsset, "/assets/styles.css"} {
-		asset := request(t, handler, http.MethodGet, path)
-		if asset.Code != http.StatusOK {
-			t.Fatalf("%s status = %d, want 200", path, asset.Code)
-		}
-		if got := asset.Header().Get("Pragma"); got != "" {
-			t.Fatalf("%s Pragma = %q, want absent", path, got)
-		}
-		if got := asset.Header().Get("Cache-Control"); got == "" || strings.Contains(got, "no-store") {
-			t.Fatalf("%s Cache-Control = %q, want public policy", path, got)
-		}
-		if strings.Contains(path, "?v=") && !strings.Contains(asset.Header().Get("Cache-Control"), "immutable") {
-			t.Fatalf("%s Cache-Control = %q, want immutable versioned policy", path, asset.Header().Get("Cache-Control"))
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		for _, path := range []string{"/consoleshell/assets/shell.css", consoleAsset, "/assets/styles.css"} {
+			asset := request(t, handler, method, path)
+			if asset.Code != http.StatusOK {
+				t.Fatalf("%s %s status = %d, want 200", method, path, asset.Code)
+			}
+			if got := asset.Header().Get("Pragma"); got != "" {
+				t.Fatalf("%s %s Pragma = %q, want absent", method, path, got)
+			}
+			if got := asset.Header().Get("Cache-Control"); got == "" || strings.Contains(got, "no-store") {
+				t.Fatalf("%s %s Cache-Control = %q, want public policy", method, path, got)
+			}
+			if got := asset.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+				t.Fatalf("%s %s X-Content-Type-Options = %q, want nosniff", method, path, got)
+			}
+			if strings.Contains(path, "?v=") && !strings.Contains(asset.Header().Get("Cache-Control"), "immutable") {
+				t.Fatalf("%s %s Cache-Control = %q, want immutable versioned policy", method, path, asset.Header().Get("Cache-Control"))
+			}
 		}
 	}
 }
@@ -349,5 +416,8 @@ func TestProductionRouterPreviewHeadHasNoBody(t *testing.T) {
 	}
 	if got := response.Header().Get("Content-Type"); got != "image/svg+xml" {
 		t.Fatalf("HEAD content-type = %q, want image/svg+xml", got)
+	}
+	if got := response.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("HEAD X-Content-Type-Options = %q, want nosniff", got)
 	}
 }

@@ -130,12 +130,15 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case r.URL.Path == uiassets.PreviewPath:
+		setStaticHeaders(w)
 		s.preview.ServeHTTP(w, r)
 		return
 	case strings.HasPrefix(r.URL.Path, "/assets/"):
+		setStaticHeaders(w)
 		s.goshtoso.ServeHTTP(w, r)
 		return
 	case strings.HasPrefix(r.URL.Path, "/consoleshell/assets/"):
+		setStaticHeaders(w)
 		s.consoleAssets.ServeHTTP(w, r)
 		return
 	}
@@ -203,6 +206,10 @@ func setPrivateHeaders(w http.ResponseWriter) {
 	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
+}
+
+func setStaticHeaders(w http.ResponseWriter) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 }
 
 func knownRoute(requestPath string) bool {

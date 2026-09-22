@@ -45,6 +45,10 @@ type View struct {
 	// router. It is emitted inside the shared shell after the route heading;
 	// only trusted, package-owned renderers may populate it.
 	ContentHTML string
+	// ContentAriaLabelledBy names the captured fragment's heading. The shared
+	// shell applies it to its single main landmark after the delegate main
+	// wrapper is removed by the router.
+	ContentAriaLabelledBy string
 }
 
 const (
@@ -179,8 +183,54 @@ func Render(ctx context.Context, w io.Writer, requestPath, publicOrigin string, 
 	if err := consoleshell.Layout(NewConfig(), page).Render(ctx, &rendered); err != nil {
 		return fmt.Errorf("render shell: %w", err)
 	}
-	_, err = rendered.WriteTo(w)
+	document := addMainAriaLabelledBy(rendered.Bytes(), view.ContentAriaLabelledBy)
+	_, err = w.Write(document)
 	return err
+}
+
+func addMainAriaLabelledBy(document []byte, value string) []byte {
+	value = validAriaLabelledBy(value)
+	if value == "" {
+		return document
+	}
+	lower := strings.ToLower(string(document))
+	start := strings.Index(lower, "<main")
+	if start < 0 {
+		return document
+	}
+	openEndRelative := strings.IndexByte(lower[start:], '>')
+	if openEndRelative < 0 {
+		return document
+	}
+	openEnd := start + openEndRelative
+	if strings.Contains(lower[start:openEnd], "aria-labelledby") {
+		return document
+	}
+	attribute := ` aria-labelledby="` + templ.EscapeString(value) + `"`
+	result := make([]byte, 0, len(document)+len(attribute))
+	result = append(result, document[:openEnd]...)
+	result = append(result, attribute...)
+	result = append(result, document[openEnd:]...)
+	return result
+}
+
+func validAriaLabelledBy(value string) string {
+	parts := strings.Fields(value)
+	if len(parts) == 0 || len(parts) > 8 {
+		return ""
+	}
+	for _, part := range parts {
+		if len(part) > 120 {
+			return ""
+		}
+		for index, char := range []byte(part) {
+			if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (index > 0 && char >= '0' && char <= '9') || (index > 0 && (char == '-' || char == '_' || char == ':')) {
+				continue
+			}
+			return ""
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 func localHTTPMetadata(metadata head.MetadataConfig, private templ.Component) templ.Component {

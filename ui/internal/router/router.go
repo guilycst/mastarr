@@ -83,12 +83,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	switch {
 	case path == assets.PreviewPath:
+		setStaticHeaders(w)
 		h.preview.ServeHTTP(w, r)
 		return
 	case strings.HasPrefix(path, "/assets/"):
+		setStaticHeaders(w)
 		h.goshtoso.ServeHTTP(w, r)
 		return
 	case strings.HasPrefix(path, "/consoleshell/assets/"):
+		setStaticHeaders(w)
 		h.console.ServeHTTP(w, r)
 		return
 	}
@@ -160,13 +163,18 @@ func (h *Handler) servePrivatePath(w http.ResponseWriter, delegate http.Handler,
 	if status == 0 {
 		status = http.StatusOK
 	}
+	contentHTML, contentAriaLabelledBy := extractMain(captured.body.String())
+	if contentHTML == "" {
+		contentAriaLabelledBy = ""
+	}
 	view := shell.View{
-		Route:           publicPath,
-		Active:          shell.ActiveID(publicPath),
-		APIState:        shell.APIAvailable,
-		ConfigSource:    h.config.Source,
-		RestartGuidance: h.config.RestartGuidance,
-		ContentHTML:     extractMain(captured.body.String()),
+		Route:                 publicPath,
+		Active:                shell.ActiveID(publicPath),
+		APIState:              shell.APIAvailable,
+		ConfigSource:          h.config.Source,
+		RestartGuidance:       h.config.RestartGuidance,
+		ContentHTML:           contentHTML,
+		ContentAriaLabelledBy: contentAriaLabelledBy,
 	}
 	if status >= http.StatusInternalServerError {
 		view.APIState = shell.APIUnavailable
@@ -175,6 +183,7 @@ func (h *Handler) servePrivatePath(w http.ResponseWriter, delegate http.Handler,
 		status = http.StatusServiceUnavailable
 		view.APIState = shell.APIUnavailable
 		view.ContentHTML = ""
+		view.ContentAriaLabelledBy = ""
 	}
 	h.renderShell(w, r, status, view)
 }
@@ -265,6 +274,13 @@ func setPrivateHeaders(w http.ResponseWriter) {
 	w.Header().Set("Referrer-Policy", "no-referrer")
 }
 
+// setStaticHeaders applies only security headers that are safe to share with
+// public, cacheable assets. In particular, it does not overwrite the asset
+// handler's public Cache-Control policy or add a private Pragma directive.
+func setStaticHeaders(w http.ResponseWriter) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+}
+
 const maxComposedBody = 1 << 20
 
 type composedResponseWriter struct {
@@ -298,21 +314,86 @@ func (w *composedResponseWriter) Write(body []byte) (int, error) {
 	return w.body.Write(body)
 }
 
-func extractMain(document string) string {
+func extractMain(document string) (string, string) {
 	lower := strings.ToLower(document)
-	start := strings.Index(lower, "<main")
+	start := indexMainStart(lower)
 	if start < 0 {
-		return ""
+		return "", ""
 	}
 	openEnd := strings.IndexByte(lower[start:], '>')
 	if openEnd < 0 {
-		return ""
+		return "", ""
 	}
 	openEnd += start + 1
 	endRelative := strings.Index(lower[openEnd:], "</main>")
 	if endRelative < 0 {
-		return ""
+		return "", ""
 	}
-	end := openEnd + endRelative + len("</main>")
-	return document[start:end]
+	end := openEnd + endRelative
+	return document[openEnd:end], mainAttribute(document[start:openEnd], "aria-labelledby")
+}
+
+func indexMainStart(lower string) int {
+	for offset := 0; offset < len(lower); {
+		relative := strings.Index(lower[offset:], "<main")
+		if relative < 0 {
+			return -1
+		}
+		start := offset + relative
+		after := start + len("<main")
+		if after == len(lower) || lower[after] == '>' || lower[after] == '/' || lower[after] == ' ' || lower[after] == '\t' || lower[after] == '\r' || lower[after] == '\n' {
+			return start
+		}
+		offset = after
+	}
+	return -1
+}
+
+func mainAttribute(opening, name string) string {
+	lower := strings.ToLower(opening)
+	needle := strings.ToLower(name)
+	for offset := 0; offset < len(lower); {
+		relative := strings.Index(lower[offset:], needle)
+		if relative < 0 {
+			return ""
+		}
+		start := offset + relative
+		beforeOK := start == 0 || !isHTMLNameChar(lower[start-1])
+		after := start + len(needle)
+		afterOK := after == len(lower) || !isHTMLNameChar(lower[after])
+		if !beforeOK || !afterOK {
+			offset = after
+			continue
+		}
+		for after < len(lower) && isHTMLSpace(lower[after]) {
+			after++
+		}
+		if after >= len(lower) || lower[after] != '=' {
+			offset = after
+			continue
+		}
+		after++
+		for after < len(lower) && isHTMLSpace(lower[after]) {
+			after++
+		}
+		if after >= len(lower) || (lower[after] != '\'' && lower[after] != '"') {
+			return ""
+		}
+		quote := lower[after]
+		valueStart := after + 1
+		valueEndRelative := strings.IndexByte(lower[valueStart:], quote)
+		if valueEndRelative < 0 {
+			return ""
+		}
+		return opening[valueStart : valueStart+valueEndRelative]
+	}
+	return ""
+}
+
+func isHTMLNameChar(value byte) bool {
+	return value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value >= '0' && value <= '9' || value == '-' || value == '_' || value == ':'
+}
+
+func isHTMLSpace(value byte) bool {
+	return value == ' ' || value == '\t' || value == '\r' || value == '\n' || value == '\f'
 }

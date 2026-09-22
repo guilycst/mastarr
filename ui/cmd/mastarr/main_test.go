@@ -161,6 +161,9 @@ func TestHandlerServesPreviewAndRejectsMutationMethods(t *testing.T) {
 	if asset.Code != http.StatusOK || asset.Header().Get("Content-Type") != "image/svg+xml" {
 		t.Fatalf("asset response = %d %q", asset.Code, asset.Header().Get("Content-Type"))
 	}
+	if got := asset.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("asset X-Content-Type-Options = %q, want nosniff", got)
+	}
 	if !strings.Contains(asset.Body.String(), `width="1200"`) {
 		t.Fatal("asset dimensions missing")
 	}
