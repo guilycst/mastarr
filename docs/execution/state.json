@@ -6576,7 +6576,7 @@
       ]
     },
     "U-06": {
-      "status": "in_review",
+      "status": "in_progress",
       "owner": "/root/c01_implementer",
       "baseSha": "5f8bc875beb1284e800b981a962f3a34d588d225",
       "integratedSha": null,
@@ -6591,18 +6591,20 @@
         "Correction dispatch checkpoint 5d3a0abf566e3b802fb105767c5894b727156eb6 assigns router and shell composition correction to /root/c01_implementer after review fb6a874861f1a38fc62ee3f4b7b0a5df5d34f41a.",
         "46fb15c234678f010bf5ddeb351eca9b6ee3e532 U-06 correction composes delegated pages through the shared shell and isolates static cache headers.",
         "a152214f06918ff8ad9528f898e3218df9fa25b9 U-06 correction keeps one authoritative heading and adds metadata/static-header tests.",
-        "f530ad936c90328170416057fd0fc3413bd8ddb7 U-06 correction handoff records product checks, limitation and round-two review scope."
+        "f530ad936c90328170416057fd0fc3413bd8ddb7 U-06 correction handoff records product checks, limitation and round-two review scope.",
+        "be2990cc8e4d0d0556bc31d6de0df58e32f60fc8 independent U-06 round-two review closes prior P1/P2 findings but requests P2 correction for nested main landmarks and missing Goshtoso nosniff.",
+        "docs/execution/handoffs/U-06-review-round2.md"
       ],
       "review": {
         "status": "changes_requested",
         "decision": "changes_requested",
         "reviewer": "/root/c01_reviewer",
-        "commit": "fb6a874861f1a38fc62ee3f4b7b0a5df5d34f41a",
+        "commit": "be2990cc8e4d0d0556bc31d6de0df58e32f60fc8",
         "findings": [
-          "P1-1: delegated inventory, review, workflow, trash and settings pages bypass shell.Render, so configured-origin canonical/OG/X metadata and shared shell/assets are absent on five production route families.",
-          "P2-1: router sets Pragma: no-cache before static dispatch, so immutable/revalidation public assets retain contradictory Pragma."
+          "P2-1: composed pages contain nested main landmarks because the captured delegate main wrapper is inserted inside the shared shell main.",
+          "P2-2: Goshtoso /assets responses lost X-Content-Type-Options nosniff when static dispatch moved ahead of private headers."
         ],
-        "round": 1
+        "round": 2
       },
       "dispatch": {
         "assignedAt": "2026-09-21",
@@ -6630,9 +6632,9 @@
         "reviewPath": "docs/execution/handoffs/U-06-review-round1.md",
         "handoffPath": "docs/execution/handoffs/U-06.md",
         "nextReviewer": "/root/c01_reviewer",
-        "status": "in_review",
-        "waitingOn": "/root/c01_reviewer",
-        "waitingReason": "U-06 correction product and handoff are complete; independent round-two review is pending.",
+        "status": "in_progress",
+        "waitingOn": "/root",
+        "waitingReason": "Round-two independent review found two P2 regressions: nested main landmarks and missing nosniff on Goshtoso assets.",
         "dependencyCommits": {
           "U-03": "a1b986a833d808b761a724f7522a1ece66a31748",
           "U-04": "9bd8b84d79d3086759d5872be43c4b0814a99948",
@@ -6642,20 +6644,17 @@
         "handoffCommit": "f530ad936c90328170416057fd0fc3413bd8ddb7",
         "reviewSourceCommit": "a152214f06918ff8ad9528f898e3218df9fa25b9",
         "reviewRound": 1,
-        "reviewCommit": "fb6a874861f1a38fc62ee3f4b7b0a5df5d34f41a",
-        "reviewIntegrationCommit": "fb6a874861f1a38fc62ee3f4b7b0a5df5d34f41a",
-        "correctionStatus": "in_review",
-        "correctionRound": 1,
+        "reviewCommit": "be2990cc8e4d0d0556bc31d6de0df58e32f60fc8",
+        "reviewIntegrationCommit": "be2990cc8e4d0d0556bc31d6de0df58e32f60fc8",
+        "correctionStatus": "pending",
+        "correctionRound": 2,
         "correctionOwner": "/root/c01_implementer",
         "correctionReviewer": "/root/c01_reviewer",
-        "correctionReviewPath": "docs/execution/handoffs/U-06-review-round2.md",
-        "correctionHandoffPath": "docs/execution/handoffs/U-06-correction-round1.md",
+        "correctionReviewPath": "docs/execution/handoffs/U-06-review-round3.md",
+        "correctionHandoffPath": "docs/execution/handoffs/U-06-correction-round2.md",
         "correctionBaseSha": "5d3a0abf566e3b802fb105767c5894b727156eb6",
         "correctionDispatchCheckpoint": "5d3a0abf566e3b802fb105767c5894b727156eb6",
-        "correctionProductCommits": [
-          "46fb15c234678f010bf5ddeb351eca9b6ee3e532",
-          "a152214f06918ff8ad9528f898e3218df9fa25b9"
-        ],
+        "correctionProductCommits": [],
         "correctionOwnedPaths": [
           "ui/cmd/mastarr/",
           "ui/internal/router/",
@@ -6684,18 +6683,21 @@
         {
           "round": 2,
           "reviewer": "/root/c01_reviewer",
-          "commit": null,
-          "status": "pending",
+          "commit": "be2990cc8e4d0d0556bc31d6de0df58e32f60fc8",
+          "status": "changes_requested",
           "sourceCommit": "a152214f06918ff8ad9528f898e3218df9fa25b9",
           "receipt": "docs/execution/handoffs/U-06-review-round2.md",
           "productCommit": "a152214f06918ff8ad9528f898e3218df9fa25b9",
           "handoffCommit": "f530ad936c90328170416057fd0fc3413bd8ddb7",
-          "findings": []
+          "findings": [
+            "P2-1: composed pages contain nested main landmarks because the captured delegate main wrapper is inserted inside the shared shell main.",
+            "P2-2: Goshtoso /assets responses lost X-Content-Type-Options nosniff when static dispatch moved ahead of private headers."
+          ]
         }
       ]
     }
   },
-  "nextAction": "Independent round-two review of U-06 correction from a152214f06918ff8ad9528f898e3218df9fa25b9; integrate the receipt before rerunning blocked U-05 browser evidence.",
+  "nextAction": "Dispatch U-06 correction round two from the review checkpoint; unwrap delegated main content and restore cache-neutral nosniff on all public assets, then obtain independent round-three review.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
