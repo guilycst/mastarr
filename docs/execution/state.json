@@ -4654,7 +4654,8 @@
         "aa258dc4a815d4df8a8c74064351612b775d36cd independent U-05 round-one review requests correction: retain partial synthetic evidence, correct A-47-A-50 mapping, remove unsupported claims, and defer unavailable browser/router cases.",
         "4a93164b98c09b687598538de7dfa6be8309d4e1 U-05 correction round one fixes acceptance mapping, marks unavailable browser/router scenarios NOT RUN / BLOCKED, and adds direct asset HEAD/cache/nosniff checks.",
         "37aefb6156829a1db64239901fe4105596907f37 U-05 correction handoff records scoped partial evidence and the actual CUA/router blocker; full browser acceptance remains pending.",
-        "3eb7c415f8da12316a3ed3c0c9798229a3d68ec0 independent U-05 correction review approves the corrected partial evidence record with no P1/P2 findings; browser-level completion remains blocked by CUA browsers:[] and uncomposed production router."
+        "3eb7c415f8da12316a3ed3c0c9798229a3d68ec0 independent U-05 correction review approves the corrected partial evidence record with no P1/P2 findings; browser-level completion remains blocked by CUA browsers:[] and uncomposed production router.",
+        "U-06 approved at 5b7d2ad4a3f20033de61d76c2e820790a9249030; remaining U-05 blocker is browser surface availability only."
       ],
       "review": {
         "status": "approved",
@@ -4691,11 +4692,12 @@
         "handoffPath": "docs/execution/handoffs/U-05.md",
         "nextReviewer": null,
         "status": "blocked",
-        "waitingOn": "U-06",
-        "waitingReason": "Corrected partial evidence is approved, but browser-level U-05 cases cannot run until the production UI router is composed and a browser surface is available.",
+        "waitingOn": "browser surface",
+        "waitingReason": "U-06 production route composition is approved; browser-level evidence remains unavailable because CUA reports browsers:[] in this environment.",
         "dependencyCommits": {
           "U-03": "a1b986a833d808b761a724f7522a1ece66a31748",
-          "U-04": "9bd8b84d79d3086759d5872be43c4b0814a99948"
+          "U-04": "9bd8b84d79d3086759d5872be43c4b0814a99948",
+          "U-06": "5b7d2ad4a3f20033de61d76c2e820790a9249030"
         },
         "implementationCommit": "a753fe0b3164cab2beb456d961d1c679da518ad7",
         "handoffCommit": "cd710266c841980fc9191bb8e7350ec1c7fa8d48",
@@ -4720,7 +4722,7 @@
         "correctionProductCommits": [
           "4a93164b98c09b687598538de7dfa6be8309d4e1"
         ],
-        "blocker": "CUA reports browsers:[] and ui/cmd/mastarr/main.go does not compose review, workflow, trash or settings handlers. Rerun U-05 after U-06 route composition and browser availability."
+        "blocker": "CUA reports browsers:[]; U-06 production BFF route composition is approved at 5b7d2ad4a3f20033de61d76c2e820790a9249030. Rerun U-05 when a browser surface is available."
       },
       "implementationCommit": "a753fe0b3164cab2beb456d961d1c679da518ad7",
       "handoffCommit": "cd710266c841980fc9191bb8e7350ec1c7fa8d48",
@@ -6644,7 +6646,7 @@
         "implementationCommit": "964eae21abf58cb0c8c73f2e4ba4235e9f0e1c0f",
         "handoffCommit": "4c61478dba6b1eead614ddbecbb371c49f750778",
         "reviewSourceCommit": "964eae21abf58cb0c8c73f2e4ba4235e9f0e1c0f",
-        "reviewRound": 1,
+        "reviewRound": 3,
         "reviewCommit": "5b7d2ad4a3f20033de61d76c2e820790a9249030",
         "reviewIntegrationCommit": "5b7d2ad4a3f20033de61d76c2e820790a9249030",
         "correctionStatus": "approved",
