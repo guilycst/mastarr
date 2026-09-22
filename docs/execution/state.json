@@ -6576,7 +6576,7 @@
       ]
     },
     "U-06": {
-      "status": "in_progress",
+      "status": "in_review",
       "owner": "/root/c01_implementer",
       "baseSha": "5f8bc875beb1284e800b981a962f3a34d588d225",
       "integratedSha": null,
@@ -6594,7 +6594,9 @@
         "f530ad936c90328170416057fd0fc3413bd8ddb7 U-06 correction handoff records product checks, limitation and round-two review scope.",
         "be2990cc8e4d0d0556bc31d6de0df58e32f60fc8 independent U-06 round-two review closes prior P1/P2 findings but requests P2 correction for nested main landmarks and missing Goshtoso nosniff.",
         "docs/execution/handoffs/U-06-review-round2.md",
-        "Correction round-two dispatch checkpoint f8f45b58ad7b27b9b6dadbe026de39084b4d7f49 assigns nested-main and Goshtoso-nosniff fixes after review be2990cc8e4d0d0556bc31d6de0df58e32f60fc8."
+        "Correction round-two dispatch checkpoint f8f45b58ad7b27b9b6dadbe026de39084b4d7f49 assigns nested-main and Goshtoso-nosniff fixes after review be2990cc8e4d0d0556bc31d6de0df58e32f60fc8.",
+        "964eae21abf58cb0c8c73f2e4ba4235e9f0e1c0f U-06 semantic correction removes nested main landmarks and restores nosniff on every public asset family.",
+        "4c61478dba6b1eead614ddbecbb371c49f750778 U-06 semantic correction handoff records regression checks and round-three review scope."
       ],
       "review": {
         "status": "changes_requested",
@@ -6633,21 +6635,21 @@
         "reviewPath": "docs/execution/handoffs/U-06-review-round1.md",
         "handoffPath": "docs/execution/handoffs/U-06.md",
         "nextReviewer": "/root/c01_reviewer",
-        "status": "dispatched",
-        "waitingOn": "/root/c01_implementer",
-        "waitingReason": "U-06 correction round two dispatched to remove nested main wrappers and restore nosniff on Goshtoso assets.",
+        "status": "in_review",
+        "waitingOn": "/root/c01_reviewer",
+        "waitingReason": "U-06 correction round two product and handoff are complete; independent round-three review is pending.",
         "dependencyCommits": {
           "U-03": "a1b986a833d808b761a724f7522a1ece66a31748",
           "U-04": "9bd8b84d79d3086759d5872be43c4b0814a99948",
           "U-05-corrected": "3eb7c415f8da12316a3ed3c0c9798229a3d68ec0"
         },
-        "implementationCommit": "a152214f06918ff8ad9528f898e3218df9fa25b9",
-        "handoffCommit": "f530ad936c90328170416057fd0fc3413bd8ddb7",
-        "reviewSourceCommit": "a152214f06918ff8ad9528f898e3218df9fa25b9",
+        "implementationCommit": "964eae21abf58cb0c8c73f2e4ba4235e9f0e1c0f",
+        "handoffCommit": "4c61478dba6b1eead614ddbecbb371c49f750778",
+        "reviewSourceCommit": "964eae21abf58cb0c8c73f2e4ba4235e9f0e1c0f",
         "reviewRound": 1,
         "reviewCommit": "be2990cc8e4d0d0556bc31d6de0df58e32f60fc8",
         "reviewIntegrationCommit": "be2990cc8e4d0d0556bc31d6de0df58e32f60fc8",
-        "correctionStatus": "dispatched",
+        "correctionStatus": "in_review",
         "correctionRound": 2,
         "correctionOwner": "/root/c01_implementer",
         "correctionReviewer": "/root/c01_reviewer",
@@ -6655,19 +6657,21 @@
         "correctionHandoffPath": "docs/execution/handoffs/U-06-correction-round2.md",
         "correctionBaseSha": "f8f45b58ad7b27b9b6dadbe026de39084b4d7f49",
         "correctionDispatchCheckpoint": "f8f45b58ad7b27b9b6dadbe026de39084b4d7f49",
-        "correctionProductCommits": [],
+        "correctionProductCommits": [
+          "964eae21abf58cb0c8c73f2e4ba4235e9f0e1c0f"
+        ],
         "correctionOwnedPaths": [
           "ui/cmd/mastarr/",
           "ui/internal/router/",
           "ui/internal/shell/"
         ],
-        "correctionImplementationCommit": "a152214f06918ff8ad9528f898e3218df9fa25b9",
-        "correctionHandoffCommit": "f530ad936c90328170416057fd0fc3413bd8ddb7",
-        "correctionReviewSourceCommit": "a152214f06918ff8ad9528f898e3218df9fa25b9"
+        "correctionImplementationCommit": "964eae21abf58cb0c8c73f2e4ba4235e9f0e1c0f",
+        "correctionHandoffCommit": "4c61478dba6b1eead614ddbecbb371c49f750778",
+        "correctionReviewSourceCommit": "964eae21abf58cb0c8c73f2e4ba4235e9f0e1c0f"
       },
-      "implementationCommit": "a152214f06918ff8ad9528f898e3218df9fa25b9",
-      "handoffCommit": "f530ad936c90328170416057fd0fc3413bd8ddb7",
-      "reviewSourceCommit": "a152214f06918ff8ad9528f898e3218df9fa25b9",
+      "implementationCommit": "964eae21abf58cb0c8c73f2e4ba4235e9f0e1c0f",
+      "handoffCommit": "4c61478dba6b1eead614ddbecbb371c49f750778",
+      "reviewSourceCommit": "964eae21abf58cb0c8c73f2e4ba4235e9f0e1c0f",
       "reviewHistory": [
         {
           "round": 1,
@@ -6694,11 +6698,22 @@
             "P2-1: composed pages contain nested main landmarks because the captured delegate main wrapper is inserted inside the shared shell main.",
             "P2-2: Goshtoso /assets responses lost X-Content-Type-Options nosniff when static dispatch moved ahead of private headers."
           ]
+        },
+        {
+          "round": 3,
+          "reviewer": "/root/c01_reviewer",
+          "commit": null,
+          "status": "pending",
+          "sourceCommit": "964eae21abf58cb0c8c73f2e4ba4235e9f0e1c0f",
+          "receipt": "docs/execution/handoffs/U-06-review-round3.md",
+          "productCommit": "964eae21abf58cb0c8c73f2e4ba4235e9f0e1c0f",
+          "handoffCommit": "4c61478dba6b1eead614ddbecbb371c49f750778",
+          "findings": []
         }
       ]
     }
   },
-  "nextAction": "U-06 correction round two dispatched from f8f45b58ad7b27b9b6dadbe026de39084b4d7f49; await product and handoff, then obtain independent round-three review.",
+  "nextAction": "Independent round-three review of U-06 semantic correction from 964eae21abf58cb0c8c73f2e4ba4235e9f0e1c0f; integrate the receipt before closing U-06 and rerunning blocked U-05 browser evidence.",
   "planningValidation": {
     "command": "python3 scripts/check_planning.py --self-test",
     "result": "passed",
